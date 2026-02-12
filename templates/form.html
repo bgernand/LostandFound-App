@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="card-body">
+    <h5 class="card-title">{{ "Edit item" if item else "New item" }}</h5>
+
+    <form method="post"
+          enctype="multipart/form-data"
+          action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}">
+      <div class="row g-3">
+
+        <div class="col-md-3">
+          <label class="form-label">Type</label>
+          <select class="form-select" name="kind">
+            <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost</option>
+            <option value="found" {% if item and item['kind']=='found' %}selected{% endif %}>Found</option>
+          </select>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">Title *</label>
+          <input class="form-control" name="title" required value="{{ item['title'] if item else '' }}">
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Status</label>
+          <select class="form-select" name="status">
+            {% for s in statuses %}
+              <option value="{{s}}" {% if item and item['status']==s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Category</label>
+          <select class="form-select" name="category">
+            {% for c in categories %}
+              <option value="{{c}}" {% if item and item['category']==c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Location</label>
+          <input class="form-control" name="location" value="{{ item['location'] if item else '' }}">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">Date</label>
+          <input class="form-control" type="date" name="event_date"
+                 value="{{ item['event_date'] if item and item['event_date'] else '' }}">
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Description</label>
+          <textarea class="form-control" rows="4" name="description">{{ item['description'] if item else '' }}</textarea>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Contact (phone/name/note)</label>
+          <input class="form-control" name="contact" value="{{ item['contact'] if item else '' }}">
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Photos (PNG/JPG/WEBP, multiple allowed)</label>
+          <input class="form-control" type="file" name="photos" multiple>
+          <div class="text-muted small mt-1">Uploads are appended (existing photos remain).</div>
+        </div>
+
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Cancel</a>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if matches and matches|length %}
+  <div class="alert alert-warning mt-3">
+    <div class="fw-bold">Possible matches:</div>
+    <ul class="mb-0">
+      {% for m in matches %}
+        <li>
+          <a href="{{ url_for('detail', item_id=m['id']) }}">
+            #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% endblock %}

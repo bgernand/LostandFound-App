@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h5 class="card-title mb-1">
+          {% if item['kind'] == 'lost' %}🔎 Lost:{% else %}📦 Found:{% endif %}
+          {{ item['title'] }}
+        </h5>
+        <div class="text-muted small">
+          Created: {{ item['created_at'] }}{% if item['updated_at'] %} · Updated: {{ item['updated_at'] }}{% endif %}
+        </div>
+      </div>
+      <span class="badge text-bg-secondary">{{ item['status'] }}</span>
+    </div>
+
+    <hr>
+
+    <dl class="row">
+      <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] }}</dd>
+      <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
+      <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
+      <dt class="col-sm-3">Contact</dt><dd class="col-sm-9">{{ item['contact'] or "—" }}</dd>
+      <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ item['description'] or "—" }}</dd>
+    </dl>
+
+    {% if photos and photos|length %}
+      <hr>
+      <div class="fw-bold mb-2">Photos</div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for p in photos %}
+          <div class="border rounded p-2 bg-white">
+            <a href="{{ url_for('uploaded_file', filename=p['filename']) }}" target="_blank">
+              <img src="{{ url_for('uploaded_file', filename=p['filename']) }}" style="height:120px;">
+            </a>
+            <div class="mt-2 d-flex justify-content-between align-items-center">
+              <small class="text-muted">{{ p['uploaded_at'] }}</small>
+              <form method="post" action="{{ url_for('delete_photo', photo_id=p['id']) }}"
+                    onsubmit="return confirm('Delete this photo?');">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <hr>
+
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
+
+      <a class="btn btn-outline-primary" href="{{ url_for('receipt', item_id=item['id']) }}">Receipt</a>
+
+      {% if (item['public_enabled'] == 1 or item['public_enabled'] == '1') %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('item_qr', item_id=item['id']) }}" target="_blank">QR PNG</a>
+        <a class="btn btn-outline-info" href="{{ url_for('public_view', token=item['public_token']) }}" target="_blank">Public view</a>
+      {% endif %}
+
+      {% if user['role'] in ['admin','staff'] %}
+        <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
+              onsubmit="return confirm('Toggle public link?');">
+          <button class="btn btn-outline-warning" type="submit">
+            {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
+              Lock public link
+            {% else %}
+              Enable public link
+            {% endif %}
+          </button>
+        </form>
+
+        <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
+              onsubmit="return confirm('Toggle public photos visibility?');">
+          <button class="btn btn-outline-secondary" type="submit">
+            {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
+              Privacy: public photos OFF
+            {% else %}
+              Privacy: public photos ON
+            {% endif %}
+          </button>
+        </form>
+
+        {% if user['role'] == 'admin' %}
+          <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
+                onsubmit="return confirm('Regenerate public link? The old one will stop working.');">
+            <button class="btn btn-outline-danger" type="submit">Regenerate public link</button>
+          </form>
+        {% endif %}
+      {% endif %}
+
+      {% if user['role'] == 'admin' %}
+        <form method="post" action="{{ url_for('delete_item', item_id=item['id']) }}"
+              onsubmit="return confirm('Delete this item? (Admin)');">
+          <button class="btn btn-outline-danger" type="submit">Delete</button>
+        </form>
+      {% endif %}
+
+      <a class="btn btn-outline-secondary ms-auto" href="{{ url_for('index') }}">Back</a>
+    </div>
+  </div>
+</div>
+
+{% if matches and matches|length %}
+  <div class="alert alert-warning mt-3">
+    <div class="fw-bold">Possible matches:</div>
+    <ul class="mb-0">
+      {% for m in matches %}
+        <li>
+          <a href="{{ url_for('detail', item_id=m['id']) }}">
+            #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% endblock %}

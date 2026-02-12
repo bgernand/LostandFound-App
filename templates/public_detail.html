@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lost & Found – Read-only</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<main class="container py-4">
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <h5 class="mb-1">
+            {% if item['kind'] == 'lost' %}🔎 Lost:{% else %}📦 Found:{% endif %}
+            {{ item['title'] }}
+          </h5>
+          <div class="text-muted small">
+            Status: <span class="badge text-bg-secondary">{{ item['status'] }}</span>
+          </div>
+        </div>
+      </div>
+
+      <hr>
+
+      <dl class="row mb-0">
+        <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] }}</dd>
+        <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
+        <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
+        <dt class="col-sm-3">Description</dt><dd class="col-sm-9" style="white-space: pre-wrap;">{{ item['description'] or "—" }}</dd>
+        <dt class="col-sm-3">Contact</dt><dd class="col-sm-9 text-muted">Internal only</dd>
+      </dl>
+
+      <hr>
+
+      {% if photos and photos|length %}
+        <div class="fw-bold mb-2">Photos</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for p in photos %}
+            <a href="{{ url_for('public_photo', token=item['public_token'], photo_id=p['id']) }}" target="_blank">
+              <img src="{{ url_for('public_photo', token=item['public_token'], photo_id=p['id']) }}"
+                   style="height:120px; border-radius:8px; border:1px solid #ddd;">
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted small">Photos are not publicly visible for privacy reasons.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="text-muted small mt-3">
+    This page is read-only. Please contact the lost & found office for any changes.
+  </div>
+</main>
+</body>
+</html>

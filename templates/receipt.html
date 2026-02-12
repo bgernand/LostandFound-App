@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+  @media print {
+    nav, .no-print { display: none !important; }
+    body { background: #fff !important; }
+    .card { border: none !important; box-shadow: none !important; }
+  }
+  .receipt-head { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+  .receipt-meta { font-size: 0.95rem; }
+  .sig-line { border-bottom: 1px solid #000; height: 28px; margin-top: 24px; }
+</style>
+
+<div class="no-print d-flex gap-2 mb-3">
+  <button class="btn btn-primary" onclick="window.print()">Print</button>
+  <a class="btn btn-outline-secondary" href="{{ url_for('detail', item_id=item['id']) }}">Back</a>
+</div>
+
+<div class="card">
+  <div class="card-body">
+
+    <div class="receipt-head">
+      <div>
+        <h4 class="mb-1">Pickup / Handover Receipt</h4>
+        <div class="text-muted receipt-meta">
+          Receipt number: <strong>{{ receipt_no }}</strong><br>
+          Issued: {{ issued_at }}<br>
+          Staff: {{ user['username'] }} ({{ user['role'] }})
+        </div>
+      </div>
+
+      <div class="text-center">
+        <div class="fw-bold small mb-1">QR to public view</div>
+        <img src="{{ qr_url }}" alt="QR Code" style="width:140px; height:140px;">
+        <div class="text-muted small mt-1">Scan opens read-only page</div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="mb-2">
+      <span class="badge text-bg-secondary">{{ item['status'] }}</span>
+      <span class="ms-2">{% if item['kind'] == 'lost' %}🔎 Lost{% else %}📦 Found{% endif %}</span>
+    </div>
+
+    <h5 class="mb-3">#{{ item['id'] }} – {{ item['title'] }}</h5>
+
+    <div class="row">
+      <div class="col-md-6">
+        <dl class="row">
+          <dt class="col-4">Category</dt><dd class="col-8">{{ item['category'] }}</dd>
+          <dt class="col-4">Location</dt><dd class="col-8">{{ item['location'] or "—" }}</dd>
+          <dt class="col-4">Date</dt><dd class="col-8">{{ item['event_date'] or "—" }}</dd>
+          <dt class="col-4">Contact</dt><dd class="col-8">{{ item['contact'] or "—" }}</dd>
+        </dl>
+      </div>
+      <div class="col-md-6">
+        <div class="fw-bold">Description</div>
+        <div class="text-muted" style="white-space: pre-wrap;">{{ item['description'] or "—" }}</div>
+      </div>
+    </div>
+
+    {% if photos and photos|length %}
+      <hr>
+      <div class="fw-bold mb-2">Photos (reference)</div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for p in photos[:4] %}
+          <img src="{{ url_for('uploaded_file', filename=p['filename']) }}"
+               style="height:110px; border:1px solid #ddd; border-radius:6px;">
+        {% endfor %}
+      </div>
+      <div class="text-muted small mt-2">Photos are for identification only.</div>
+    {% endif %}
+
+    <hr>
+
+    <div class="row mt-4">
+      <div class="col-md-6">
+        <div class="fw-bold">Recipient (pickup person)</div>
+        <div class="sig-line"></div>
+        <div class="text-muted small">Name & signature</div>
+      </div>
+      <div class="col-md-6">
+        <div class="fw-bold">Issuing office</div>
+        <div class="sig-line"></div>
+        <div class="text-muted small">Name & signature</div>
+      </div>
+    </div>
+
+    <div class="text-muted small mt-4">
+      By signing, the recipient confirms receipt / handover of the item described above.
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Create user</h5>
+        <form method="post" action="{{ url_for('users_create') }}">
+          <div class="mb-2">
+            <label class="form-label">Username</label>
+            <input class="form-control" name="username" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Password</label>
+            <input class="form-control" type="password" name="password" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Role</label>
+            <select class="form-select" name="role">
+              {% for r in roles %}
+                <option value="{{ r }}">{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Users</h5>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th></tr></thead>
+            <tbody>
+              {% for u in users %}
+                <tr>
+                  <td>{{ u['id'] }}</td>
+                  <td>{{ u['username'] }}</td>
+                  <td>{{ u['role'] }}</td>
+                  <td>{{ u['created_at'] }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="text-muted small">Passwords are stored as hashes.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
