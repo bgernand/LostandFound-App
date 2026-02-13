@@ -52,6 +52,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ```
 
 ## Quick Start (Debian/Linux)
+Tested on Debian 13.
+
 1. Copy and edit environment file:
 ```bash
 cp .env.example .env
