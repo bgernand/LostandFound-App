@@ -31,7 +31,7 @@
         {% for p in photos %}
           <a class="border rounded p-2 bg-white d-inline-block"
              href="{{ url_for('public_photo', token=item['public_token'], photo_id=p['id']) }}"
-             target="_blank">
+             target="_blank" rel="noopener noreferrer">
             <img class="img-fluid" src="{{ url_for('public_photo', token=item['public_token'], photo_id=p['id']) }}"
                  style="max-height:160px;">
           </a>

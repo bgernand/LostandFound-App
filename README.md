@@ -65,12 +65,25 @@ chmod +x deploy.sh
 - `DOMAIN` (required, e.g. `lostfound.example`)
 - `LOGIN_WINDOW_SECONDS` (optional, default `900`)
 - `LOGIN_MAX_ATTEMPTS` (optional, default `5`)
+- `MIN_PASSWORD_LENGTH` (optional, default `10`)
+- `TRUSTED_PROXY_CIDRS` (optional, default `127.0.0.1/32,::1/128,172.16.0.0/12`)
+- `SESSION_COOKIE_SECURE` (optional, default `1`)
+- `SESSION_COOKIE_SAMESITE` (optional, default `Lax`)
+- `MAX_CONTENT_LENGTH` (optional, default `20971520`)
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
 - Open redirect on login is blocked.
 - Brute-force protection for login attempts is enabled.
 - No default fallback `SECRET_KEY` is used.
+- Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
+- Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
+- Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
+- `.env` must never be committed; rotate secrets immediately if exposure is suspected.
 
 ## Documentation
 - Deployment details: `DeploymentGuide.md`
+
+## Disclaimer
+This project is provided without any warranty. No liability is assumed for any direct or indirect damages, data loss, outages, or any other consequences resulting from the use, operation, or distribution of this software. Use of this software is entirely at your own risk.
+

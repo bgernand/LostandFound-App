@@ -21,6 +21,13 @@ Set at minimum:
 - `BASE_URL` with full URL (`https://your-domain.example`)
 - `DOMAIN` with hostname only (`your-domain.example`)
 
+Recommended security settings:
+- `MIN_PASSWORD_LENGTH=10` (or higher)
+- `TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,172.16.0.0/12` (adapt to your proxy network)
+- `SESSION_COOKIE_SECURE=1`
+- `SESSION_COOKIE_SAMESITE=Lax`
+- `MAX_CONTENT_LENGTH=20971520` (20 MB)
+
 ## 3. One-Click Deploy
 ```bash
 chmod +x deploy.sh

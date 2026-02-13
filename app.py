@@ -13,6 +13,7 @@ import io
 import os
 import time
 import re
+import ipaddress
 from io import BytesIO
 import qrcode
 import secrets
@@ -25,6 +26,10 @@ secret_key = os.environ.get("SECRET_KEY")
 if not secret_key:
     raise RuntimeError("SECRET_KEY environment variable is required.")
 app.secret_key = secret_key
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "1") == "1"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH", str(20 * 1024 * 1024)))
 
 # -------------------------
 # Paths / Storage
@@ -39,8 +44,29 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp"}
 
 BASE_URL = os.environ.get("BASE_URL", "").strip()  # e.g. https://lostandfound.example
+if not BASE_URL:
+    raise RuntimeError("BASE_URL environment variable is required.")
 LOGIN_WINDOW_SECONDS = int(os.environ.get("LOGIN_WINDOW_SECONDS", "900"))  # 15 minutes
 LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
+MIN_PASSWORD_LENGTH = int(os.environ.get("MIN_PASSWORD_LENGTH", "10"))
+
+
+def _parse_proxy_networks(raw: str):
+    nets = []
+    for part in raw.split(","):
+        token = (part or "").strip()
+        if not token:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
+TRUSTED_PROXY_NETWORKS = _parse_proxy_networks(
+    os.environ.get("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128,172.16.0.0/12")
+)
 
 # -------------------------
 # Enums
@@ -473,8 +499,24 @@ def safe_next_url(target: str | None) -> str:
 
 
 def client_ip() -> str:
-    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-    return xff or (request.remote_addr or "unknown")
+    remote_raw = (request.remote_addr or "").strip()
+    try:
+        remote_ip = ipaddress.ip_address(remote_raw) if remote_raw else None
+    except ValueError:
+        remote_ip = None
+
+    trusted_proxy = bool(
+        remote_ip and any(remote_ip in net for net in TRUSTED_PROXY_NETWORKS)
+    )
+    if trusted_proxy:
+        xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        for candidate in (xff, (request.headers.get("X-Real-IP") or "").strip()):
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                continue
+
+    return str(remote_ip) if remote_ip else (remote_raw or "unknown")
 
 
 def is_login_blocked(conn, username: str, ip_addr: str, now_ts: int) -> bool:
@@ -510,9 +552,7 @@ def allowed_file(filename: str) -> bool:
 
 
 def public_base_url():
-    if BASE_URL:
-        return BASE_URL.rstrip("/") + "/"
-    return request.url_root
+    return BASE_URL.rstrip("/") + "/"
 
 
 def read_lost_fields_from_form():
@@ -1034,8 +1074,8 @@ def account_password_post():
     new_pw = request.form.get("new_password") or ""
     new_pw2 = request.form.get("new_password2") or ""
 
-    if len(new_pw) < 10:
-        flash("New password must be at least 10 characters long.", "danger")
+    if len(new_pw) < MIN_PASSWORD_LENGTH:
+        flash(f"New password must be at least {MIN_PASSWORD_LENGTH} characters long.", "danger")
         return redirect(url_for("account_password"))
     if new_pw != new_pw2:
         flash("New passwords do not match.", "danger")
@@ -1920,6 +1960,9 @@ def users_create():
     if not username or not password:
         flash("Username and password are required.", "danger")
         return redirect(url_for("users"))
+    if len(password) < MIN_PASSWORD_LENGTH:
+        flash(f"Password must be at least {MIN_PASSWORD_LENGTH} characters long.", "danger")
+        return redirect(url_for("users"))
     if role not in ROLES:
         role = "staff"
 
@@ -1963,9 +2006,9 @@ def users_reset_password(user_id: int):
         abort(404)
 
     new_pw = request.form.get("new_password") or ""
-    if len(new_pw) < 10:
+    if len(new_pw) < MIN_PASSWORD_LENGTH:
         conn.close()
-        flash("New password must be at least 10 characters long.", "danger")
+        flash(f"New password must be at least {MIN_PASSWORD_LENGTH} characters long.", "danger")
         return redirect(url_for("users"))
 
     conn.execute(

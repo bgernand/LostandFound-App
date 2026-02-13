@@ -66,6 +66,12 @@ if [[ ! -f ".env" ]]; then
   fail ".env is missing and no .env.example was found."
 fi
 
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+    fail ".env is tracked by git. Remove it from repository tracking (git rm --cached .env) before deployment."
+  fi
+fi
+
 set -a
 # shellcheck disable=SC1091
 source ./.env

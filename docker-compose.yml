@@ -2,6 +2,10 @@ services:
   app:
     build: .
     container_name: lostfound_app
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - BASE_URL=${BASE_URL}
@@ -9,6 +13,11 @@ services:
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
       - LOGIN_WINDOW_SECONDS=${LOGIN_WINDOW_SECONDS:-900}
       - LOGIN_MAX_ATTEMPTS=${LOGIN_MAX_ATTEMPTS:-5}
+      - MIN_PASSWORD_LENGTH=${MIN_PASSWORD_LENGTH:-10}
+      - TRUSTED_PROXY_CIDRS=${TRUSTED_PROXY_CIDRS:-127.0.0.1/32,::1/128,172.16.0.0/12}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-1}
+      - SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-Lax}
+      - MAX_CONTENT_LENGTH=${MAX_CONTENT_LENGTH:-20971520}
       - DATA_DIR=/app/data
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -19,6 +28,12 @@ services:
   nginx:
     build: ./nginx
     container_name: lostfound_nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     depends_on:
       - app
     ports:

@@ -12,6 +12,9 @@ COPY templates /app/templates
 
 # runtime dirs (also mounted by volumes)
 RUN mkdir -p /app/data /app/uploads
+RUN useradd --system --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
