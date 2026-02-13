@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h5 class="card-title mb-3">Possible Matches Overview</h5>
+
+    <form class="row g-2" method="get" action="{{ url_for('matches_overview') }}">
+      <div class="col-12 col-lg-4">
+        <input class="form-control" name="q" value="{{ q }}" placeholder="Search source items (id, title, names, location)">
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <select class="form-select" name="kind">
+          <option value="">Type (all)</option>
+          <option value="lost" {% if kind=="lost" %}selected{% endif %}>Lost Request</option>
+          <option value="found" {% if kind=="found" %}selected{% endif %}>Found Item</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <select class="form-select" name="source_status">
+          <option value="">Source status (all)</option>
+          {% for s in statuses %}
+            <option value="{{ s }}" {% if source_status==s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <select class="form-select" name="candidate_status">
+          <option value="">Candidate status (all)</option>
+          {% for s in statuses %}
+            <option value="{{ s }}" {% if candidate_status==s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <select class="form-select" name="category">
+          <option value="">Category (all)</option>
+          {% for c in categories %}
+            <option value="{{ c }}" {% if category==c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 col-md-4 col-lg-2">
+        <label class="form-label small text-muted mb-1">Min score</label>
+        <input class="form-control" type="number" name="min_score" min="0" max="200" value="{{ min_score }}">
+      </div>
+      <div class="col-12 col-md-4 col-lg-2">
+        <label class="form-label small text-muted mb-1">Source limit</label>
+        <input class="form-control" type="number" name="source_limit" min="5" max="200" value="{{ source_limit }}">
+      </div>
+      <div class="col-12 col-md-4 col-lg-3 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="include_linked" value="1" id="includeLinked"
+                 {% if include_linked==1 %}checked{% endif %}>
+          <label class="form-check-label" for="includeLinked">Include already linked pairs</label>
+        </div>
+      </div>
+      <div class="col-12 col-lg-3 d-grid d-lg-flex gap-2 align-items-end">
+        <button class="btn btn-primary" type="submit">Apply filters</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('matches_overview') }}">Reset</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div class="small text-muted">Matches found: {{ pairs|length }}</div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('index') }}">Back to items</a>
+</div>
+
+<div class="list-group">
+  {% for p in pairs %}
+    {% set src = p['source'] %}
+    {% set cand = p['candidate'] %}
+    <div class="list-group-item">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-semibold">
+            <a href="{{ url_for('detail', item_id=src['id']) }}">
+              #{{ src['id'] }} {{ "Lost Request" if src['kind']=="lost" else "Found Item" }}: {{ src['title'] }}
+            </a>
+            <span class="mx-2">↔</span>
+            <a href="{{ url_for('detail', item_id=cand['id']) }}">
+              #{{ cand['id'] }} {{ "Lost Request" if cand['kind']=="lost" else "Found Item" }}: {{ cand['title'] }}
+            </a>
+          </div>
+          <div class="small text-muted">
+            {{ src['category'] }} / {{ cand['category'] }} · {{ src['location'] or "—" }} / {{ cand['location'] or "—" }}
+          </div>
+        </div>
+        <div class="text-end">
+          <span class="badge text-bg-dark">Score {{ p['score'] }}</span>
+          <div class="mt-1">
+            {% for r in p['reasons'] %}
+              <span class="badge text-bg-secondary">{{ r }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="text-muted">No matches with current filters.</div>
+  {% endfor %}
+</div>
+
+{% endblock %}

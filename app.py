@@ -193,6 +193,16 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+    # Ensure usernames are unique case-insensitively (e.g. Admin == admin).
+    try:
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase
+            ON users(username COLLATE NOCASE)
+        """)
+    except sqlite3.IntegrityError:
+        # Existing historical duplicates (case-only differences) can block index creation.
+        # App-level checks below still prevent new duplicates.
+        pass
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS items (
@@ -859,6 +869,7 @@ def search_link_candidates(conn, item, q: str):
 
 def build_filters(args):
     q = (args.get("q") or "").strip()
+    kind = (args.get("kind") or "").strip()
     status = (args.get("status") or "").strip()
     category = (args.get("category") or "").strip()
 
@@ -870,6 +881,10 @@ def build_filters(args):
         like = f"%{q}%"
         params += [like, like, like, like, like, like]
 
+    if kind in {"lost", "found"}:
+        sql += " AND kind = ?"
+        params.append(kind)
+
     if status and status in STATUSES:
         sql += " AND status = ?"
         params.append(status)
@@ -880,7 +895,7 @@ def build_filters(args):
         params.append(category)
 
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, status, category
+    return sql, params, q, kind, status, category
 
 
 # -------------------------
@@ -907,30 +922,39 @@ def login():
 @app.post("/login")
 def login_post():
     username = (request.form.get("username") or "").strip()
+    username_key = username.lower()
     password = request.form.get("password") or ""
     nxt = safe_next_url(request.form.get("next"))
     now_ts = int(time.time())
     ip_addr = client_ip()
 
     conn = get_db()
-    if is_login_blocked(conn, username, ip_addr, now_ts):
+    if is_login_blocked(conn, username_key, ip_addr, now_ts):
         conn.close()
         flash("Too many failed logins. Please wait 15 minutes and try again.", "danger")
         return redirect(url_for("login", next=nxt))
 
-    u = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    rows = conn.execute(
+        "SELECT * FROM users WHERE username = ? COLLATE NOCASE ORDER BY id ASC LIMIT 2",
+        (username,)
+    ).fetchall()
+    u = rows[0] if rows else None
+    if len(rows) > 1:
+        conn.close()
+        flash("Multiple accounts with same username (case-insensitive) exist. Please contact admin.", "danger")
+        return redirect(url_for("login", next=nxt))
 
     if not u or not check_password_hash(u["password_hash"], password):
-        record_login_attempt(conn, username, ip_addr, False, now_ts)
+        record_login_attempt(conn, username_key, ip_addr, False, now_ts)
         conn.commit()
         conn.close()
         flash("Login failed.", "danger")
         return redirect(url_for("login", next=nxt))
 
-    record_login_attempt(conn, username, ip_addr, True, now_ts)
+    record_login_attempt(conn, username_key, ip_addr, True, now_ts)
     conn.execute(
         "DELETE FROM login_attempts WHERE username=? AND ip_address=? AND was_success=0",
-        (username, ip_addr)
+        (username_key, ip_addr)
     )
     conn.commit()
     conn.close()
@@ -999,7 +1023,7 @@ def account_password_post():
 @app.get("/")
 @login_required
 def index():
-    sql, params, q, status, category = build_filters(request.args)
+    sql, params, q, kind, status, category = build_filters(request.args)
 
     conn = get_db()
     items = conn.execute(sql, params).fetchall()
@@ -1012,10 +1036,122 @@ def index():
     return render_template(
         "index.html",
         items=items,
-        q=q, status=status, category=category,
+        q=q, kind=kind, status=status, category=category,
         categories=category_names(active_only=True),
         statuses=STATUSES,
         photo_counts=photo_counts,
+        user=current_user()
+    )
+
+
+def safe_int_arg(args, name, default, min_value=None, max_value=None):
+    raw = (args.get(name) or "").strip()
+    try:
+        val = int(raw) if raw else default
+    except ValueError:
+        val = default
+    if min_value is not None:
+        val = max(min_value, val)
+    if max_value is not None:
+        val = min(max_value, val)
+    return val
+
+
+@app.get("/matches")
+@login_required
+def matches_overview():
+    q = (request.args.get("q") or "").strip()
+    kind = (request.args.get("kind") or "").strip()
+    source_status = (request.args.get("source_status") or "").strip()
+    candidate_status = (request.args.get("candidate_status") or "").strip()
+    category = (request.args.get("category") or "").strip()
+    include_linked = 1 if (request.args.get("include_linked") == "1") else 0
+    min_score = safe_int_arg(request.args, "min_score", 35, 0, 200)
+    source_limit = safe_int_arg(request.args, "source_limit", 60, 5, 200)
+
+    source_sql = """
+        SELECT *
+        FROM items
+        WHERE status NOT IN ('Sent', 'Lost forever')
+    """
+    source_params = []
+
+    if q:
+        like = f"%{q}%"
+        source_sql += """
+            AND (
+                title LIKE ? OR description LIKE ? OR category LIKE ?
+                OR location LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?
+                OR CAST(id AS TEXT) = ?
+            )
+        """
+        source_params += [like, like, like, like, like, like, q]
+
+    if kind in {"lost", "found"}:
+        source_sql += " AND kind = ?"
+        source_params.append(kind)
+
+    if source_status and source_status in STATUSES:
+        source_sql += " AND status = ?"
+        source_params.append(source_status)
+
+    active_cats = set(category_names(active_only=True))
+    if category and category in active_cats:
+        source_sql += " AND category = ?"
+        source_params.append(category)
+
+    source_sql += " ORDER BY created_at DESC LIMIT ?"
+    source_params.append(source_limit)
+
+    conn = get_db()
+    sources = conn.execute(source_sql, tuple(source_params)).fetchall()
+
+    pairs = []
+    seen = set()
+    for src in sources:
+        src_item_id = None if include_linked else int(src["id"])
+        found = find_matches(
+            conn,
+            src["kind"], src["title"], src["category"], src["location"],
+            event_date=src["event_date"], item_id=src_item_id
+        )
+        for cand in found:
+            if candidate_status and candidate_status in STATUSES and cand["status"] != candidate_status:
+                continue
+            if int(cand.get("match_score") or 0) < min_score:
+                continue
+
+            pair_key = tuple(sorted((int(src["id"]), int(cand["id"]))))
+            if pair_key in seen:
+                continue
+            seen.add(pair_key)
+
+            pairs.append({
+                "source": src,
+                "candidate": cand,
+                "score": int(cand.get("match_score") or 0),
+                "reasons": cand.get("match_reasons") or []
+            })
+
+    pairs.sort(
+        key=lambda p: (p["score"], p["source"]["created_at"] or "", p["candidate"]["created_at"] or ""),
+        reverse=True
+    )
+    conn.close()
+
+    return render_template(
+        "matches.html",
+        pairs=pairs,
+        q=q,
+        kind=kind,
+        source_status=source_status,
+        candidate_status=candidate_status,
+        category=category,
+        include_linked=include_linked,
+        min_score=min_score,
+        source_limit=source_limit,
+        categories=category_names(active_only=True),
+        statuses=STATUSES,
         user=current_user()
     )
 
@@ -1665,7 +1801,7 @@ def public_photo(token: str, photo_id: int):
 @app.get("/export.csv")
 @login_required
 def export_csv():
-    sql, params, q, status, category = build_filters(request.args)
+    sql, params, q, kind, status, category = build_filters(request.args)
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -1681,7 +1817,7 @@ def export_csv():
         ])
 
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
-    audit("export", "items", None, f"q={q} status={status} category={category}")
+    audit("export", "items", None, f"q={q} kind={kind} status={status} category={category}")
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
 
 
@@ -1712,6 +1848,14 @@ def users_create():
 
     conn = get_db()
     try:
+        exists = conn.execute(
+            "SELECT id FROM users WHERE username = ? COLLATE NOCASE",
+            (username,)
+        ).fetchone()
+        if exists:
+            flash("Username already exists.", "danger")
+            return redirect(url_for("users"))
+
         conn.execute(
             "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
             (username, generate_password_hash(password), role, now_utc())

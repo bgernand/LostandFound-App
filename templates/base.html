@@ -25,6 +25,7 @@
         {% if user %}
           <span class="text-white-50 small">👤 {{ user['username'] }} ({{ user['role'] }})</span>
           <a class="btn btn-sm btn-success" href="{{ url_for('new_item') }}">+ New item</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('account_password') }}">Change password</a>
 
           {% if user['role'] == 'admin' %}
