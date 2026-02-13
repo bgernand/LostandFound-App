@@ -170,8 +170,6 @@
                      value="{{ item['lost_group_leader'] if item else '' }}">
             </div>
 
-            <div class="col-12"><hr class="my-1"></div>
-
             <div class="col-12 col-md-6">
               <label class="form-label">When are you leaving Taizé</label>
               <input class="form-control {% if errors.get('lost_leaving_date') %}is-invalid{% endif %}" type="date" name="lost_leaving_date"
@@ -189,6 +187,8 @@
               </select>
               {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
             </div>
+
+            <div class="col-12"><hr class="my-1"></div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Price of postage</label>
