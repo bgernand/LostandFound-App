@@ -8,6 +8,7 @@
 
     <form class="row g-2" method="get" action="{{ url_for('matches_overview') }}">
       <div class="col-12 col-lg-4">
+        <label class="form-label small text-muted mb-1">Search</label>
         <input class="form-control" name="q" value="{{ q }}" placeholder="Search source items (id, title, names, location)">
       </div>
       <div class="col-12 col-md-6 col-lg-2">

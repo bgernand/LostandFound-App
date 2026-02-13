@@ -8,6 +8,7 @@
 
     <form class="row g-2" method="get" action="{{ url_for('index') }}">
       <div class="col-12 col-lg-4">
+        <label class="form-label small text-muted mb-1">Search</label>
         <input class="form-control" name="q" placeholder="Search (title, name, location...)" value="{{ q }}">
       </div>
       <div class="col-12 col-md-6 col-lg-2">
@@ -41,33 +42,27 @@
         <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Clear all filters</a>
       </div>
     </form>
-
-    <div class="mt-3 d-flex gap-2 flex-wrap">
-      <form method="get" action="{{ url_for('export_csv') }}" class="d-inline">
-        <input type="hidden" name="q" value="{{ q }}">
-        {% for v in kinds_selected %}
-          <input type="hidden" name="kind" value="{{ v }}">
-        {% endfor %}
-        {% for v in statuses_selected %}
-          <input type="hidden" name="status" value="{{ v }}">
-        {% endfor %}
-        {% for v in categories_selected %}
-          <input type="hidden" name="category" value="{{ v }}">
-        {% endfor %}
-        <button class="btn btn-sm btn-outline-secondary" type="submit">
-          Export CSV
-        </button>
-      </form>
-      <a class="btn btn-sm btn-outline-primary ms-1" href="{{ url_for('matches_overview') }}">
-        Possible Matches Overview
-      </a>
-    </div>
   </div>
 </div>
 
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div class="small text-muted">Items found: {{ items|length }}</div>
-  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('matches_overview') }}">Open Possible Matches</a>
+  <div class="d-flex gap-2">
+    <form method="get" action="{{ url_for('export_csv') }}" class="d-inline">
+      <input type="hidden" name="q" value="{{ q }}">
+      {% for v in kinds_selected %}
+        <input type="hidden" name="kind" value="{{ v }}">
+      {% endfor %}
+      {% for v in statuses_selected %}
+        <input type="hidden" name="status" value="{{ v }}">
+      {% endfor %}
+      {% for v in categories_selected %}
+        <input type="hidden" name="category" value="{{ v }}">
+      {% endfor %}
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Export CSV</button>
+    </form>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('matches_overview') }}">Open Possible Matches</a>
+  </div>
 </div>
 
 <div class="list-group">
