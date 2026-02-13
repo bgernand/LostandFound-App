@@ -24,6 +24,7 @@
       <div class="ms-auto d-flex flex-column flex-lg-row gap-2 align-items-lg-center mt-3 mt-lg-0">
         {% if user %}
           <span class="text-white-50 small">👤 {{ user['username'] }} ({{ user['role'] }})</span>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('index') }}">Home</a>
           <a class="btn btn-sm btn-success" href="{{ url_for('new_item') }}">+ New item</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('account_password') }}">Change password</a>

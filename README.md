@@ -8,6 +8,21 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Photo uploads
 - Admin user and category management
 - Audit log and CSV export
+- n:n linking between `Found Item` and `Lost Request`
+- Link search by ID and text fields (title, description, category, location, names)
+- Possible Matches overview with scoring and direct link action
+- Saved searches (save, open, delete) on items overview and matches overview
+- CSV export with active filter set
+- Multi-select filters (status/category/type), linked/unlinked filter, date range + quick presets
+- Field-level validation errors with preserved form values
+- Clickable contact fields (`mailto:` / `tel:`) in detail and receipt views
+
+## Status Behavior
+- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Sent`, `Done`, `Lost forever`
+- New items are always created with default status `Lost` (independent of type)
+- When a link is created between items, all items in the linked graph are set to `Found`
+- Changing the status of one linked item synchronizes that status to all linked items
+- Daily automatic maintenance sets `Lost` items to `Lost forever` when `event_date` is older than 90 days
 
 ## Tech Stack
 - Flask 3
@@ -80,6 +95,7 @@ chmod +x deploy.sh
 - Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
+- Daily automatic maintenance updates stale `Lost` items (`event_date` older than 90 days) to `Lost forever`.
 
 ## Documentation
 - Deployment details: `DeploymentGuide.md`

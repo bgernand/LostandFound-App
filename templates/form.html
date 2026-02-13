@@ -295,13 +295,9 @@
       titleInput.value = lostWhat.value || "";
     }
 
-    // New item default status for Found Item
+    // New item default status
     if (!isEdit && statusSel) {
-      if (!isLost) {
-        statusSel.value = "Found, not assigned";
-      } else if (statusSel.value === "Found, not assigned") {
-        statusSel.value = "Lost";
-      }
+      statusSel.value = "Lost";
     }
   }
 

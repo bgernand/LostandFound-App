@@ -71,6 +71,13 @@
           <option value="unlinked" {% if linked_state=='unlinked' %}selected{% endif %}>Unlinked only</option>
         </select>
       </div>
+      <div class="col-12 col-md-6 col-lg-3 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="include_lost_forever" value="1" id="includeLostForever"
+                 {% if include_lost_forever==1 %}checked{% endif %}>
+          <label class="form-check-label" for="includeLostForever">Show items with status "Lost forever"</label>
+        </div>
+      </div>
       <div class="col-12 col-md-6 col-lg-2">
         <label class="form-label small text-muted mb-1">Date from</label>
         <input class="form-control" type="date" name="date_from" value="{{ date_from or '' }}">
@@ -113,6 +120,7 @@
         <input type="hidden" name="category" value="{{ v }}">
       {% endfor %}
       <input type="hidden" name="linked" value="{{ linked_state }}">
+      <input type="hidden" name="include_lost_forever" value="{{ include_lost_forever }}">
       <input type="hidden" name="date_from" value="{{ date_from }}">
       <input type="hidden" name="date_to" value="{{ date_to }}">
       <button class="btn btn-sm btn-outline-secondary" type="submit">Export CSV</button>

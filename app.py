@@ -3,7 +3,7 @@ from flask import (
     flash, abort, session, send_file, Response
 )
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -73,7 +73,6 @@ TRUSTED_PROXY_NETWORKS = _parse_proxy_networks(
 # -------------------------
 STATUSES = [
     "Lost",
-    "Found, not assigned",
     "Maybe Found -> Check",
     "Found",
     "In contact",
@@ -85,7 +84,6 @@ STATUSES = [
 
 STATUS_COLORS = {
     "Lost": "danger",
-    "Found, not assigned": "info",
     "Maybe Found -> Check": "info",
     "Found": "primary",
     "In contact": "secondary",
@@ -99,7 +97,7 @@ ROLES = ["admin", "staff"]
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
 SAVED_SEARCH_SCOPES = {"index", "matches"}
 SAVED_SEARCH_ALLOWED_KEYS = {
-    "index": {"q", "kind", "status", "category", "linked", "date_from", "date_to"},
+    "index": {"q", "kind", "status", "category", "linked", "date_from", "date_to", "include_lost_forever"},
     "matches": {
         "q", "kind", "source_status", "candidate_status", "category",
         "include_linked", "date_from", "date_to", "min_score", "source_limit"
@@ -112,6 +110,7 @@ SAVED_SEARCH_MULTI_KEYS = {
 
 _db_inited = False  # Flask 3 compatible init
 _fts5_available = None
+_status_maintenance_day = None
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "for", "with", "in", "on",
     "is", "are", "am", "my", "your", "our", "der", "die", "das", "und",
@@ -352,6 +351,7 @@ def init_db():
 
     # Legacy status cleanup
     conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
+    conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
 
     # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
@@ -408,6 +408,40 @@ def _ensure_db():
     if not _db_inited:
         init_db()
         _db_inited = True
+
+
+def auto_mark_lost_forever(conn):
+    cutoff = (datetime.utcnow().date() - timedelta(days=90)).isoformat()
+    cur = conn.execute(
+        """
+        UPDATE items
+        SET status='Lost forever', updated_at=?
+        WHERE status='Lost'
+          AND event_date IS NOT NULL
+          AND event_date <= ?
+        """,
+        (now_utc(), cutoff),
+    )
+    return cur.rowcount or 0
+
+
+@app.before_request
+def _auto_status_maintenance():
+    global _status_maintenance_day
+    today = datetime.utcnow().date().isoformat()
+    if _status_maintenance_day == today:
+        return
+
+    conn = get_db()
+    try:
+        changed = auto_mark_lost_forever(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    _status_maintenance_day = today
+    if changed > 0:
+        app.logger.info("Auto status maintenance: %s items set to 'Lost forever'.", changed)
 
 
 @app.context_processor
@@ -792,7 +826,7 @@ def score_match(src, cand, fts_hit=False):
         reasons.append("Full-text")
 
     # More actionable statuses are often more relevant for operators.
-    if cand["status"] in {"Found", "Found, not assigned", "In contact", "Ready to send"}:
+    if cand["status"] in {"Found", "In contact", "Ready to send"}:
         score += 5
 
     dedup_reasons = []
@@ -1005,6 +1039,7 @@ def build_filters(args):
     statuses_selected = get_multi_values(args, "status", set(STATUSES))
     categories_selected = get_multi_values(args, "category", set(category_names(active_only=True)))
     linked_state = (args.get("linked") or "").strip()
+    include_lost_forever = 1 if (args.get("include_lost_forever") == "1") else 0
     date_from = (args.get("date_from") or "").strip()
     date_to = (args.get("date_to") or "").strip()
     if linked_state not in {"linked", "unlinked"}:
@@ -1048,8 +1083,11 @@ def build_filters(args):
     elif linked_state == "unlinked":
         sql += " AND NOT EXISTS (SELECT 1 FROM item_links l WHERE l.found_item_id = items.id OR l.lost_item_id = items.id)"
 
+    if include_lost_forever != 1:
+        sql += " AND status <> 'Lost forever'"
+
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to
+    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to
 
 
 def saved_search_target(scope: str):
@@ -1239,7 +1277,7 @@ def account_password_post():
 @app.get("/")
 @login_required
 def index():
-    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(request.args)
 
     conn = get_db()
     ensure_item_links_schema(conn)
@@ -1270,6 +1308,7 @@ def index():
         statuses_selected=statuses_selected,
         categories_selected=categories_selected,
         linked_state=linked_state,
+        include_lost_forever=include_lost_forever,
         date_from=date_from,
         date_to=date_to,
         categories=category_names(active_only=True),
@@ -1580,7 +1619,7 @@ def create_item():
     notes = (request.form.get("lost_notes") or "").strip()
     status = (request.form.get("status") or "").strip()
     if not status:
-        status = "Found, not assigned" if kind == "found" else "Lost"
+        status = "Lost"
 
     # Lost fields
     lost = read_lost_fields_from_form() if kind == "lost" else {}
@@ -1606,7 +1645,7 @@ def create_item():
         category = safe_default_category(active_cats)
 
     if status not in STATUSES:
-        status = "Found, not assigned" if kind == "found" else "Lost"
+        status = "Lost"
 
     if event_date:
         try:
@@ -2206,7 +2245,7 @@ def public_photo(token: str, photo_id: int):
 @app.get("/export.csv")
 @login_required
 def export_csv():
-    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(request.args)
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -2224,7 +2263,7 @@ def export_csv():
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
     audit(
         "export", "items", None,
-        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state} date_from={date_from} date_to={date_to}"
+        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state} include_lost_forever={include_lost_forever} date_from={date_from} date_to={date_to}"
     )
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
 
