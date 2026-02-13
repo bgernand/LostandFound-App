@@ -192,6 +192,7 @@
         <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
       {% endif %}
       <a class="btn btn-outline-primary" href="{{ url_for('receipt', item_id=item['id']) }}">Receipt</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('receipt_pdf', item_id=item['id']) }}">Receipt PDF</a>
 
       {% if (item['public_enabled'] == 1 or item['public_enabled'] == '1') %}
         <a class="btn btn-outline-secondary" href="{{ url_for('item_qr', item_id=item['id']) }}" target="_blank" rel="noopener noreferrer">QR PNG</a>
@@ -245,31 +246,6 @@
   </div>
 </div>
 
-{% if timeline and timeline|length %}
-  <div class="card mt-3">
-    <div class="card-body">
-      <div class="fw-bold mb-2">Timeline</div>
-      <div class="list-group list-group-flush">
-        {% for ev in timeline %}
-          <div class="list-group-item px-0">
-            <div class="d-flex justify-content-between gap-2">
-              <div>
-                <span class="badge text-bg-secondary">{{ ev['action'] }}</span>
-                {% if ev['details'] %}
-                  <span class="small ms-2">{{ ev['details'] }}</span>
-                {% endif %}
-                <div class="small text-muted mt-1">
-                  {{ ev['username'] or "system" }} · {{ ev['created_at'] }}
-                </div>
-              </div>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-{% endif %}
-
 {% if matches and matches|length %}
   <div class="mt-3">
     <div class="fw-bold mb-2">Possible matches</div>
@@ -313,6 +289,31 @@
           </div>
         </div>
       {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+{% if timeline and timeline|length %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="fw-bold mb-2">Timeline</div>
+      <div class="list-group list-group-flush">
+        {% for ev in timeline %}
+          <div class="list-group-item px-0">
+            <div class="d-flex justify-content-between gap-2">
+              <div>
+                <span class="badge text-bg-secondary">{{ ev['action'] }}</span>
+                {% if ev['details'] %}
+                  <span class="small ms-2">{{ ev['details'] }}</span>
+                {% endif %}
+                <div class="small text-muted mt-1">
+                  {{ ev['username'] or "system" }} · {{ ev['created_at'] }}
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </div>
 {% endif %}

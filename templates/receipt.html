@@ -11,6 +11,10 @@
           Issued: {{ issued_at }}
         </div>
       </div>
+      <div class="d-flex gap-2">
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('receipt_pdf', item_id=item['id']) }}">Download PDF</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('detail', item_id=item['id']) }}">Back to item</a>
+      </div>
       <span class="badge text-bg-{{ STATUS_COLORS.get(item['status'], 'secondary') }}">
         {{ item['status'] }}
       </span>

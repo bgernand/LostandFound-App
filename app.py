@@ -19,6 +19,9 @@ import qrcode
 import secrets
 from urllib.parse import urlsplit, parse_qsl, urlencode
 from difflib import SequenceMatcher
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 
 app = Flask(__name__)
@@ -2438,6 +2441,92 @@ def receipt(item_id: int):
         issued_at=issued_at,
         user=current_user(),
         qr_url=url_for("item_qr", item_id=item_id)
+    )
+
+
+@app.get("/items/<int:item_id>/receipt.pdf")
+@login_required
+def receipt_pdf(item_id: int):
+    conn = get_db()
+    item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+    conn.close()
+    if not item:
+        abort(404)
+
+    receipt_no = f"LF-{item_id}-{datetime.utcnow().strftime('%Y%m%d')}"
+    issued_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    target_url = public_base_url().rstrip("/") + url_for("public_view", token=item["public_token"])
+    qr_img = qrcode.make(target_url)
+    qr_reader = ImageReader(qr_img)
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    page_w, page_h = A4
+
+    y = page_h - 50
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(40, y, "Receipt")
+    y -= 25
+
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, f"Receipt No: {receipt_no}")
+    y -= 14
+    c.drawString(40, y, f"Issued: {issued_at}")
+    y -= 20
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Item")
+    y -= 16
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, f"ID: {item['id']}")
+    y -= 14
+    c.drawString(40, y, f"Type: {'Lost Request' if item['kind'] == 'lost' else 'Found Item'}")
+    y -= 14
+    c.drawString(40, y, f"Title: {item['title'] or '—'}")
+    y -= 14
+    c.drawString(40, y, f"Category: {item['category'] or '—'}")
+    y -= 14
+    c.drawString(40, y, f"Location: {item['location'] or '—'}")
+    y -= 14
+    c.drawString(40, y, f"Date: {item['event_date'] or '—'}")
+    y -= 14
+    c.drawString(40, y, f"Status: {item['status'] or '—'}")
+    y -= 20
+
+    if item["kind"] == "lost":
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(40, y, "Shipping / Contact (internal)")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        c.drawString(40, y, f"Name: {(item['lost_first_name'] or '').strip()} {(item['lost_last_name'] or '').strip()}".strip())
+        y -= 14
+        c.drawString(40, y, f"Address: {(item['lost_street'] or '').strip()} {(item['lost_number'] or '').strip()}".strip() or "Address: —")
+        y -= 14
+        c.drawString(40, y, f"Town: {(item['lost_postcode'] or '').strip()} {(item['lost_town'] or '').strip()}".strip() or "Town: —")
+        y -= 14
+        c.drawString(40, y, f"Country: {item['lost_country'] or '—'}")
+        y -= 14
+        c.drawString(40, y, f"E-Mail: {item['lost_email'] or '—'}")
+        y -= 14
+        c.drawString(40, y, f"Phone: {item['lost_phone'] or '—'}")
+        y -= 20
+
+    qr_size = 130
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(page_w - qr_size - 40, page_h - 50, "Public link (QR)")
+    c.drawImage(qr_reader, page_w - qr_size - 40, page_h - qr_size - 75, qr_size, qr_size)
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    audit("receipt_pdf", "item", item_id, f"receipt_no={receipt_no}")
+    return send_file(
+        buf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"receipt_{item_id}.pdf",
     )
 
 
