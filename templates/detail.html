@@ -13,7 +13,9 @@
           Created: {{ item['created_at'] }}{% if item['updated_at'] %} · Updated: {{ item['updated_at'] }}{% endif %}
         </div>
       </div>
-      <span class="badge text-bg-secondary">{{ item['status'] }}</span>
+      <span class="badge text-bg-{{ STATUS_COLORS.get(item['status'], 'secondary') }}">
+        {{ item['status'] }}
+      </span>
     </div>
 
     <hr>
@@ -21,10 +23,47 @@
     <dl class="row">
       <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] }}</dd>
       <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
-      <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
-      <dt class="col-sm-3">Contact</dt><dd class="col-sm-9">{{ item['contact'] or "—" }}</dd>
+      <dt class="col-sm-3">Date Lost / Found</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
       <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ item['description'] or "—" }}</dd>
     </dl>
+
+    {% if item['kind'] == 'lost' %}
+      <hr>
+      <h6>Lost details (internal)</h6>
+      <dl class="row">
+        <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9">{{ item['lost_last_name'] or "—" }}</dd>
+        <dt class="col-sm-3">First Name</dt><dd class="col-sm-9">{{ item['lost_first_name'] or "—" }}</dd>
+        <dt class="col-sm-3">Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
+
+        <dt class="col-sm-3">Street</dt>
+        <dd class="col-sm-9">
+          {{ item['lost_street'] or "" }} {{ item['lost_number'] or "" }}
+          {% if item['lost_additional'] %}<span class="text-muted">({{ item['lost_additional'] }})</span>{% endif %}
+        </dd>
+
+        <dt class="col-sm-3">Postcode / Town</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "" }} {{ item['lost_town'] or "" }}</dd>
+        <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
+
+        <dt class="col-sm-3">E-Mail</dt><dd class="col-sm-9">{{ item['lost_email'] or "—" }}</dd>
+        <dt class="col-sm-3">Phone</dt><dd class="col-sm-9">{{ item['lost_phone'] or "—" }}</dd>
+
+        <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
+        <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
+
+        <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">{{ item['lost_notes'] or "—" }}</dd>
+
+        <dt class="col-sm-3">Postage</dt>
+        <dd class="col-sm-9">
+          {{ item['postage_price'] if item['postage_price'] is not none else "—" }}
+          · Paid:
+          {% if item['postage_paid'] == 1 or item['postage_paid'] == '1' %}
+            <span class="badge text-bg-success">Yes</span>
+          {% else %}
+            <span class="badge text-bg-secondary">No</span>
+          {% endif %}
+        </dd>
+      </dl>
+    {% endif %}
 
     {% if photos and photos|length %}
       <hr>
@@ -58,38 +97,34 @@
         <a class="btn btn-outline-info" href="{{ url_for('public_view', token=item['public_token']) }}" target="_blank">Public view</a>
       {% endif %}
 
-      {% if user['role'] in ['admin','staff'] %}
-        <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
-              onsubmit="return confirm('Toggle public link?');">
-          <button class="btn btn-outline-warning" type="submit">
-            {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
-              Lock public link
-            {% else %}
-              Enable public link
-            {% endif %}
-          </button>
+      <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
+            onsubmit="return confirm('Toggle public link?');">
+        <button class="btn btn-outline-warning" type="submit">
+          {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
+            Lock public link
+          {% else %}
+            Enable public link
+          {% endif %}
+        </button>
+      </form>
+
+      <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
+            onsubmit="return confirm('Toggle public photos visibility?');">
+        <button class="btn btn-outline-secondary" type="submit">
+          {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
+            Privacy: public photos OFF
+          {% else %}
+            Privacy: public photos ON
+          {% endif %}
+        </button>
+      </form>
+
+      {% if user and user['role'] == 'admin' %}
+        <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
+              onsubmit="return confirm('Regenerate public link? The old one will stop working.');">
+          <button class="btn btn-outline-danger" type="submit">Regenerate public link</button>
         </form>
 
-        <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
-              onsubmit="return confirm('Toggle public photos visibility?');">
-          <button class="btn btn-outline-secondary" type="submit">
-            {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
-              Privacy: public photos OFF
-            {% else %}
-              Privacy: public photos ON
-            {% endif %}
-          </button>
-        </form>
-
-        {% if user['role'] == 'admin' %}
-          <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
-                onsubmit="return confirm('Regenerate public link? The old one will stop working.');">
-            <button class="btn btn-outline-danger" type="submit">Regenerate public link</button>
-          </form>
-        {% endif %}
-      {% endif %}
-
-      {% if user['role'] == 'admin' %}
         <form method="post" action="{{ url_for('delete_item', item_id=item['id']) }}"
               onsubmit="return confirm('Delete this item? (Admin)');">
           <button class="btn btn-outline-danger" type="submit">Delete</button>

@@ -2,7 +2,7 @@
 {% block content %}
 
 <div class="row g-3">
-  <div class="col-md-5">
+  <div class="col-12 col-lg-5">
     <div class="card">
       <div class="card-body">
         <h5 class="card-title">Create category</h5>
@@ -21,7 +21,7 @@
     </div>
   </div>
 
-  <div class="col-md-7">
+  <div class="col-12 col-lg-7">
     <div class="card">
       <div class="card-body">
         <h5 class="card-title">Categories</h5>
@@ -29,7 +29,7 @@
           <table class="table table-sm align-middle">
             <thead>
               <tr>
-                <th>ID</th><th>Name</th><th>Active</th><th>Order</th><th>Actions</th>
+                <th>ID</th><th>Name</th><th>Active</th><th>Order</th><th class="text-end">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -47,14 +47,14 @@
                     {% if c['is_active'] == 1 %}<span class="badge text-bg-success">Yes</span>{% else %}<span class="badge text-bg-secondary">No</span>{% endif %}
                   </td>
                   <td>{{ c['sort_order'] }}</td>
-                  <td class="d-flex gap-2">
-                    <form method="post" action="{{ url_for('admin_categories_toggle', cat_id=c['id']) }}">
+                  <td class="text-end text-nowrap">
+                    <form method="post" action="{{ url_for('admin_categories_toggle', cat_id=c['id']) }}" class="d-inline">
                       <button class="btn btn-sm btn-outline-warning" type="submit">
                         {% if c['is_active'] == 1 %}Disable{% else %}Enable{% endif %}
                       </button>
                     </form>
                     <form method="post" action="{{ url_for('admin_categories_delete', cat_id=c['id']) }}"
-                          onsubmit="return confirm('Delete category?');">
+                          onsubmit="return confirm('Delete category?');" class="d-inline ms-1">
                       <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
                     </form>
                   </td>

@@ -1,27 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="card">
   <div class="card-body">
-    <h5 class="card-title">Audit log (latest 300)</h5>
+    <h5 class="card-title">Audit log</h5>
+
     <div class="table-responsive">
-      <table class="table table-sm">
+      <table class="table table-sm align-middle">
         <thead>
-          <tr><th>Time</th><th>Actor</th><th>Action</th><th>Type</th><th>ID</th><th>Details</th></tr>
+          <tr>
+            <th>Time</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Entity</th>
+            <th>Details</th>
+          </tr>
         </thead>
         <tbody>
           {% for l in logs %}
-            <tr>
-              <td>{{ l['created_at'] }}</td>
-              <td>{{ l['username'] or '—' }}</td>
-              <td>{{ l['action'] }}</td>
-              <td>{{ l['entity_type'] }}</td>
-              <td>{{ l['entity_id'] or '—' }}</td>
-              <td class="text-muted">{{ l['details'] or '—' }}</td>
-            </tr>
+          <tr>
+            <td class="text-nowrap small text-muted">{{ l['created_at'] }}</td>
+            <td class="text-nowrap">{{ l['username'] or '—' }}</td>
+            <td class="text-nowrap">{{ l['action'] }}</td>
+            <td class="text-nowrap">{{ l['entity_type'] }}{% if l['entity_id'] %} #{{ l['entity_id'] }}{% endif %}</td>
+            <td class="small" style="max-width: 520px; white-space: normal;">{{ l['details'] or '—' }}</td>
+          </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 </div>
+
 {% endblock %}

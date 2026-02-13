@@ -5,9 +5,9 @@
   <div class="card-body">
     <form class="row g-2" method="get" action="{{ url_for('index') }}">
       <div class="col-12 col-lg-6">
-        <input class="form-control" name="q" placeholder="Search (title, location, contact...)" value="{{ q }}">
+        <input class="form-control" name="q" placeholder="Search (title, name, location...)" value="{{ q }}">
       </div>
-      <div class="col-12 col-md-6 col-lg-2">
+      <div class="col-12 col-md-6 col-lg-3">
         <select class="form-select" name="status">
           <option value="">Status (all)</option>
           {% for s in statuses %}
@@ -15,7 +15,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-12 col-md-6 col-lg-2">
+      <div class="col-12 col-md-6 col-lg-3">
         <select class="form-select" name="category">
           <option value="">Category (all)</option>
           {% for c in categories %}
@@ -23,7 +23,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-12 col-lg-2 d-grid">
+      <div class="col-12 d-grid">
         <button class="btn btn-primary" type="submit">Filter</button>
       </div>
     </form>
@@ -54,7 +54,9 @@
             {{ item['category'] }} · {{ item['location'] or "—" }} · {{ item['event_date'] or "—" }}
           </div>
         </div>
-        <span class="badge text-bg-secondary align-self-start">{{ item['status'] }}</span>
+        <span class="badge text-bg-{{ STATUS_COLORS.get(item['status'], 'secondary') }} align-self-start">
+          {{ item['status'] }}
+        </span>
       </div>
     </a>
   {% else %}

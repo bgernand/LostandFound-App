@@ -3,7 +3,6 @@
 
 <div class="row g-3">
 
-  <!-- Create user -->
   <div class="col-12 col-lg-5">
     <div class="card h-100">
       <div class="card-body">
@@ -33,15 +32,10 @@
             <button class="btn btn-primary" type="submit">Create</button>
           </div>
         </form>
-
-        <div class="text-muted small mt-3">
-          Tip: Ask the user to change the password after first login.
-        </div>
       </div>
     </div>
   </div>
 
-  <!-- User list -->
   <div class="col-12 col-lg-7">
     <div class="card h-100">
       <div class="card-body">
@@ -75,7 +69,7 @@
                 </td>
                 <td class="text-nowrap small text-muted">{{ u['created_at'] }}</td>
 
-                <<td class="text-end text-nowrap">
+                <td class="text-end text-nowrap">
                   {% if user and u['id'] != user['id'] %}
                     <form method="post"
                           action="{{ url_for('users_reset_password', user_id=u['id']) }}"

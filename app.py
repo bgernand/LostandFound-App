@@ -15,6 +15,7 @@ from io import BytesIO
 import qrcode
 import secrets
 
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me-please")
 
@@ -30,11 +31,35 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp"}
 
-# English enums
-STATUSES = ["open", "found", "picked_up"]
-ROLES = ["admin", "staff"]
-
 BASE_URL = os.environ.get("BASE_URL", "").strip()  # e.g. https://lostandfound.example
+
+# -------------------------
+# Enums
+# -------------------------
+STATUSES = [
+    "Lost",
+    "Still lost",
+    "Maybe Found -> Check",
+    "Found",
+    "In contact",
+    "Ready to send",
+    "Sent",
+    "Lost forever"
+]
+
+STATUS_COLORS = {
+    "Lost": "danger",
+    "Still lost": "warning",
+    "Maybe Found -> Check": "info",
+    "Found": "primary",
+    "In contact": "secondary",
+    "Ready to send": "primary",
+    "Sent": "success",
+    "Lost forever": "dark",
+}
+
+ROLES = ["admin", "staff"]
+CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
 
 _db_inited = False  # Flask 3 compatible init
 
@@ -80,8 +105,8 @@ def init_db():
             category TEXT NOT NULL,
             location TEXT,
             event_date TEXT,                  -- ISO yyyy-mm-dd
-            contact TEXT,                     -- internal (phone/name/note)
-            status TEXT NOT NULL DEFAULT 'open',
+            contact TEXT,                     -- internal (legacy)
+            status TEXT NOT NULL DEFAULT 'Lost',
             created_by INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT,
@@ -112,7 +137,6 @@ def init_db():
         )
     """)
 
-    # Categories managed by admin
     conn.execute("""
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,8 +149,27 @@ def init_db():
 
     # Public link features
     ensure_column(conn, "items", "public_token", "TEXT")
-    ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")          # 1=public on, 0=locked
-    ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")  # 1=photos public, 0=hidden
+    ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")
+
+    # Lost-specific fields (PII) - internal only
+    ensure_column(conn, "items", "lost_what", "TEXT")
+    ensure_column(conn, "items", "lost_last_name", "TEXT")
+    ensure_column(conn, "items", "lost_first_name", "TEXT")
+    ensure_column(conn, "items", "lost_group_leader", "TEXT")
+    ensure_column(conn, "items", "lost_street", "TEXT")
+    ensure_column(conn, "items", "lost_number", "TEXT")
+    ensure_column(conn, "items", "lost_additional", "TEXT")
+    ensure_column(conn, "items", "lost_postcode", "TEXT")
+    ensure_column(conn, "items", "lost_town", "TEXT")
+    ensure_column(conn, "items", "lost_country", "TEXT")
+    ensure_column(conn, "items", "lost_email", "TEXT")
+    ensure_column(conn, "items", "lost_phone", "TEXT")
+    ensure_column(conn, "items", "lost_leaving_date", "TEXT")   # YYYY-MM-DD
+    ensure_column(conn, "items", "lost_contact_way", "TEXT")    # E-Mail / Phone / In person
+    ensure_column(conn, "items", "lost_notes", "TEXT")
+    ensure_column(conn, "items", "postage_price", "REAL")
+    ensure_column(conn, "items", "postage_paid", "INTEGER NOT NULL DEFAULT 0")
 
     # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
@@ -171,6 +214,11 @@ def _ensure_db():
     if not _db_inited:
         init_db()
         _db_inited = True
+
+
+@app.context_processor
+def inject_globals():
+    return dict(STATUS_COLORS=STATUS_COLORS, CONTACT_WAYS=CONTACT_WAYS)
 
 
 # -------------------------
@@ -221,7 +269,7 @@ def audit(action, entity_type, entity_id=None, details=None):
 
 
 # -------------------------
-# Categories (DB-driven)
+# Categories
 # -------------------------
 def get_categories(active_only: bool = True):
     conn = get_db()
@@ -268,7 +316,66 @@ def allowed_file(filename: str) -> bool:
 def public_base_url():
     if BASE_URL:
         return BASE_URL.rstrip("/") + "/"
-    return request.url_root  # local fallback
+    return request.url_root
+
+
+def read_lost_fields_from_form():
+    return {
+        "lost_what": (request.form.get("lost_what") or "").strip(),
+        "lost_last_name": (request.form.get("lost_last_name") or "").strip(),
+        "lost_first_name": (request.form.get("lost_first_name") or "").strip(),
+        "lost_group_leader": (request.form.get("lost_group_leader") or "").strip(),
+        "lost_street": (request.form.get("lost_street") or "").strip(),
+        "lost_number": (request.form.get("lost_number") or "").strip(),
+        "lost_additional": (request.form.get("lost_additional") or "").strip(),
+        "lost_postcode": (request.form.get("lost_postcode") or "").strip(),
+        "lost_town": (request.form.get("lost_town") or "").strip(),
+        "lost_country": (request.form.get("lost_country") or "").strip(),
+        "lost_email": (request.form.get("lost_email") or "").strip(),
+        "lost_phone": (request.form.get("lost_phone") or "").strip(),
+        "lost_leaving_date": (request.form.get("lost_leaving_date") or "").strip(),
+        "lost_contact_way": (request.form.get("lost_contact_way") or "").strip(),
+        "lost_notes": (request.form.get("lost_notes") or "").strip(),
+        "postage_price": (request.form.get("postage_price") or "").strip(),
+        "postage_paid": 1 if (request.form.get("postage_paid") == "on") else 0,
+    }
+
+
+def validate_lost_fields(lost: dict):
+    required = [
+        ("lost_what", "What is lost"),
+        ("lost_last_name", "Last Name"),
+        ("lost_first_name", "First Name"),
+        ("lost_street", "Street"),
+        ("lost_number", "Number"),
+        ("lost_postcode", "Postcode"),
+        ("lost_town", "Town"),
+        ("lost_country", "Country"),
+        ("lost_email", "E-Mail address"),
+        ("lost_phone", "Phone number"),
+    ]
+    missing = [label for key, label in required if not lost.get(key)]
+    if missing:
+        return False, "Missing required fields: " + ", ".join(missing)
+
+    if lost.get("lost_contact_way") and lost["lost_contact_way"] not in CONTACT_WAYS:
+        return False, "Invalid contact way."
+
+    if lost.get("lost_leaving_date"):
+        try:
+            datetime.strptime(lost["lost_leaving_date"], "%Y-%m-%d")
+        except ValueError:
+            return False, "When are you leaving Taizé must be a valid date."
+
+    if lost.get("postage_price"):
+        try:
+            lost["postage_price"] = float(lost["postage_price"].replace(",", "."))
+        except ValueError:
+            return False, "Price of postage must be a number."
+    else:
+        lost["postage_price"] = None
+
+    return True, ""
 
 
 def find_matches(conn, kind, title, category, location):
@@ -280,7 +387,7 @@ def find_matches(conn, kind, title, category, location):
         SELECT id, kind, title, category, location, status, created_at
         FROM items
         WHERE kind = ?
-          AND status != 'picked_up'
+          AND status NOT IN ('Sent', 'Lost forever')
           AND (
               category = ?
               OR title LIKE ?
@@ -302,9 +409,9 @@ def build_filters(args):
     params = []
 
     if q:
-        sql += " AND (title LIKE ? OR description LIKE ? OR location LIKE ? OR contact LIKE ?)"
+        sql += " AND (title LIKE ? OR description LIKE ? OR location LIKE ? OR contact LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?)"
         like = f"%{q}%"
-        params += [like, like, like, like]
+        params += [like, like, like, like, like, like]
 
     if status and status in STATUSES:
         sql += " AND status = ?"
@@ -317,6 +424,19 @@ def build_filters(args):
 
     sql += " ORDER BY created_at DESC"
     return sql, params, q, status, category
+
+
+# -------------------------
+# Public legal pages
+# -------------------------
+@app.get("/legal")
+def legal_notice():
+    return render_template("legal.html", user=current_user())
+
+
+@app.get("/privacy")
+def privacy_policy():
+    return render_template("privacy.html", user=current_user())
 
 
 # -------------------------
@@ -352,6 +472,7 @@ def logout():
     audit("logout", "user", session.get("user_id"))
     session.clear()
     return redirect(url_for("login"))
+
 
 # -------------------------
 # Account: change password
@@ -442,18 +563,35 @@ def create_item():
     u = current_user()
 
     kind = (request.form.get("kind", "lost") or "lost").strip()
+    if kind not in ["lost", "found"]:
+        kind = "lost"
+
+    # Generic fields
     title = (request.form.get("title") or "").strip()
     description = (request.form.get("description") or "").strip()
     category = (request.form.get("category") or "").strip()
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
-    contact = (request.form.get("contact") or "").strip()
-    status = (request.form.get("status") or "open").strip()
+    contact = None  # frozen legacy field, not used anymore
+    status = (request.form.get("status") or "Lost").strip()
 
-    if kind not in ["lost", "found"]:
-        kind = "lost"
+    # Lost fields
+    lost = read_lost_fields_from_form() if kind == "lost" else {}
+
+    if kind == "lost":
+        ok, msg = validate_lost_fields(lost)
+        if not ok:
+            flash(msg, "danger")
+            return redirect(url_for("new_item"))
+        # Make title automatically equal to what is lost
+        title = lost.get("lost_what", "").strip()
+
     if not title:
         flash("Title is required.", "danger")
+        return redirect(url_for("new_item"))
+    
+    if not description:
+        flash("Description is required.", "danger")
         return redirect(url_for("new_item"))
 
     active_cats = set(category_names(active_only=True))
@@ -461,7 +599,7 @@ def create_item():
         category = safe_default_category(active_cats)
 
     if status not in STATUSES:
-        status = "open"
+        status = "Lost"
 
     if event_date:
         try:
@@ -477,16 +615,42 @@ def create_item():
     conn = get_db()
     cur = conn.execute("""
         INSERT INTO items (
-          kind, title, description, category, location, event_date, contact,
-          status, created_by, public_token, created_at
+          kind, title, description, category, location, event_date,
+          status, created_by, public_token, created_at,
+          lost_what, lost_last_name, lost_first_name, lost_group_leader,
+          lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
+          lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
+          postage_price, postage_paid
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?)
     """, (
         kind, title, description, category, location, event_date, contact,
-        status, u["id"], public_token, now_utc()
+        status, u["id"], public_token, now_utc(),
+        (lost.get("lost_what") if kind == "lost" else None),
+        (lost.get("lost_last_name") if kind == "lost" else None),
+        (lost.get("lost_first_name") if kind == "lost" else None),
+        (lost.get("lost_group_leader") if kind == "lost" else None),
+        (lost.get("lost_street") if kind == "lost" else None),
+        (lost.get("lost_number") if kind == "lost" else None),
+        (lost.get("lost_additional") if kind == "lost" else None),
+        (lost.get("lost_postcode") if kind == "lost" else None),
+        (lost.get("lost_town") if kind == "lost" else None),
+        (lost.get("lost_country") if kind == "lost" else None),
+        (lost.get("lost_email") if kind == "lost" else None),
+        (lost.get("lost_phone") if kind == "lost" else None),
+        (lost.get("lost_leaving_date") if kind == "lost" else None),
+        (lost.get("lost_contact_way") if kind == "lost" else None),
+        (lost.get("lost_notes") if kind == "lost" else None),
+        (lost.get("postage_price") if kind == "lost" else None),
+        (lost.get("postage_paid") if kind == "lost" else 0),
     ))
     item_id = cur.lastrowid
 
+    # Photos
     files = request.files.getlist("photos")
     saved = 0
     for f in files:
@@ -509,11 +673,9 @@ def create_item():
     conn.close()
 
     audit("create", "item", item_id, f"{kind} '{title}' photos={saved}")
+    flash("Item created.", "success")
     if matches:
-        audit("match_found", "item", item_id, f"{len(matches)} possible matches")
-        flash(f"Item created. {len(matches)} possible matches found.", "info")
-    else:
-        flash("Item created.", "success")
+        flash(f"{len(matches)} possible matches found.", "info")
 
     return redirect(url_for("detail", item_id=item_id))
 
@@ -582,19 +744,34 @@ def update_item(item_id: int):
         abort(404)
 
     kind = (request.form.get("kind") or existing["kind"]).strip()
-    title = (request.form.get("title") or "").strip()
+    if kind not in ["lost", "found"]:
+        kind = existing["kind"]
+
+    title = (request.form.get("title") or existing["title"]).strip()
     description = (request.form.get("description") or "").strip()
     category = (request.form.get("category") or "").strip()
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
-    contact = (request.form.get("contact") or "").strip()
+    contact = None
     status = (request.form.get("status") or existing["status"]).strip()
 
-    if kind not in ["lost", "found"]:
-        kind = existing["kind"]
+    lost = read_lost_fields_from_form() if kind == "lost" else {}
+
+    if kind == "lost":
+        ok, msg = validate_lost_fields(lost)
+        if not ok:
+            flash(msg, "danger")
+            conn.close()
+            return redirect(url_for("edit_item", item_id=item_id))
+        title = lost.get("lost_what", "").strip()
+
     if not title:
         flash("Title is required.", "danger")
         conn.close()
+        return redirect(url_for("edit_item", item_id=item_id))
+    
+    if not description:
+        flash("Description is required.", "danger")
         return redirect(url_for("edit_item", item_id=item_id))
 
     active_cats = set(category_names(active_only=True))
@@ -602,7 +779,7 @@ def update_item(item_id: int):
         category = safe_default_category(active_cats)
 
     if status not in STATUSES:
-        status = existing["status"] if existing["status"] in STATUSES else "open"
+        status = existing["status"] if existing["status"] in STATUSES else "Lost"
 
     if event_date:
         try:
@@ -616,9 +793,33 @@ def update_item(item_id: int):
 
     conn.execute("""
         UPDATE items
-        SET kind=?, title=?, description=?, category=?, location=?, event_date=?, contact=?, status=?, updated_at=?
+        SET kind=?, title=?, description=?, category=?, location=?, event_date=?, status=?, updated_at=?,
+            lost_what=?, lost_last_name=?, lost_first_name=?, lost_group_leader=?,
+            lost_street=?, lost_number=?, lost_additional=?, lost_postcode=?, lost_town=?, lost_country=?,
+            lost_email=?, lost_phone=?, lost_leaving_date=?, lost_contact_way=?, lost_notes=?,
+            postage_price=?, postage_paid=?
         WHERE id=?
-    """, (kind, title, description, category, location, event_date, contact, status, now_utc(), item_id))
+    """, (
+        kind, title, description, category, location, event_date, contact, status, now_utc(),
+        (lost.get("lost_what") if kind == "lost" else None),
+        (lost.get("lost_last_name") if kind == "lost" else None),
+        (lost.get("lost_first_name") if kind == "lost" else None),
+        (lost.get("lost_group_leader") if kind == "lost" else None),
+        (lost.get("lost_street") if kind == "lost" else None),
+        (lost.get("lost_number") if kind == "lost" else None),
+        (lost.get("lost_additional") if kind == "lost" else None),
+        (lost.get("lost_postcode") if kind == "lost" else None),
+        (lost.get("lost_town") if kind == "lost" else None),
+        (lost.get("lost_country") if kind == "lost" else None),
+        (lost.get("lost_email") if kind == "lost" else None),
+        (lost.get("lost_phone") if kind == "lost" else None),
+        (lost.get("lost_leaving_date") if kind == "lost" else None),
+        (lost.get("lost_contact_way") if kind == "lost" else None),
+        (lost.get("lost_notes") if kind == "lost" else None),
+        (lost.get("postage_price") if kind == "lost" else None),
+        (lost.get("postage_paid") if kind == "lost" else 0),
+        item_id
+    ))
 
     files = request.files.getlist("photos")
     saved = 0
@@ -809,7 +1010,7 @@ def public_view(token: str):
 
     if int(item["public_enabled"] or 0) != 1:
         conn.close()
-        abort(404)  # intentionally hide existence
+        abort(404)  # hide existence
 
     photos = []
     if int(item["public_photos_enabled"] or 0) == 1:
@@ -819,7 +1020,7 @@ def public_view(token: str):
         ).fetchall()
 
     conn.close()
-    return render_template("public_detail.html", item=item, photos=photos)
+    return render_template("public_detail.html", item=item, photos=photos, user=current_user())
 
 
 @app.get("/p/<token>/photo/<int:photo_id>")
@@ -849,7 +1050,7 @@ def public_photo(token: str, photo_id: int):
 
 
 # -------------------------
-# CSV export
+# CSV export (internal)
 # -------------------------
 @app.get("/export.csv")
 @login_required
@@ -862,11 +1063,11 @@ def export_csv():
 
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["id", "kind", "title", "category", "location", "event_date", "contact", "status", "created_at", "updated_at"])
+    writer.writerow(["id", "kind", "title", "category", "location", "event_date", "status", "created_at", "updated_at"])
     for r in rows:
         writer.writerow([
             r["id"], r["kind"], r["title"], r["category"], r["location"],
-            r["event_date"], r["contact"], r["status"], r["created_at"], r["updated_at"]
+            r["event_date"], r["status"], r["created_at"], r["updated_at"]
         ])
 
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
@@ -915,38 +1116,6 @@ def users_create():
 
     return redirect(url_for("users"))
 
-@app.post("/admin/users/<int:user_id>/delete")
-@require_role("admin")
-def users_delete(user_id: int):
-    me = current_user()
-    if me and int(me["id"]) == int(user_id):
-        flash("You cannot delete your own account.", "danger")
-        return redirect(url_for("users"))
-
-    conn = get_db()
-
-    u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
-    if not u:
-        conn.close()
-        abort(404)
-
-    # Optional safety: prevent deleting the last admin
-    admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-    if u["role"] == "admin" and admins <= 1:
-        conn.close()
-        flash("You cannot delete the last admin user.", "danger")
-        return redirect(url_for("users"))
-
-    # Detach created_by references so item history remains intact
-    conn.execute("UPDATE items SET created_by=NULL WHERE created_by=?", (user_id,))
-
-    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-    audit("delete", "user", user_id, f"username={u['username']}")
-    flash("User deleted.", "warning")
-    return redirect(url_for("users"))
 
 @app.post("/admin/users/<int:user_id>/reset-password")
 @require_role("admin")
@@ -962,8 +1131,7 @@ def users_reset_password(user_id: int):
         conn.close()
         abort(404)
 
-    # generate a strong random password (URL-safe)
-    new_pw = secrets.token_urlsafe(12)  # ~16+ chars, good entropy
+    new_pw = secrets.token_urlsafe(12)
 
     conn.execute(
         "UPDATE users SET password_hash=? WHERE id=?",
@@ -974,6 +1142,36 @@ def users_reset_password(user_id: int):
 
     audit("password_reset", "user", user_id, f"username={u['username']}")
     flash(f"Password reset for '{u['username']}'. New password: {new_pw}", "warning")
+    return redirect(url_for("users"))
+
+
+@app.post("/admin/users/<int:user_id>/delete")
+@require_role("admin")
+def users_delete(user_id: int):
+    me = current_user()
+    if me and int(me["id"]) == int(user_id):
+        flash("You cannot delete your own account.", "danger")
+        return redirect(url_for("users"))
+
+    conn = get_db()
+    u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        abort(404)
+
+    admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
+    if u["role"] == "admin" and admins <= 1:
+        conn.close()
+        flash("You cannot delete the last admin user.", "danger")
+        return redirect(url_for("users"))
+
+    conn.execute("UPDATE items SET created_by=NULL WHERE created_by=?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    audit("delete", "user", user_id, f"username={u['username']}")
+    flash("User deleted.", "warning")
     return redirect(url_for("users"))
 
 
@@ -1103,18 +1301,6 @@ def admin_categories_delete(cat_id: int):
     audit("delete", "category", cat_id, f"name={cat['name']}")
     flash("Category deleted.", "warning")
     return redirect(url_for("admin_categories"))
-
-# -------------------------
-# Legal Notice · Privacy Policy
-# -------------------------
-
-@app.get("/legal")
-def legal_notice():
-    return render_template("legal.html", user=current_user())
-
-@app.get("/privacy")
-def privacy_policy():
-    return render_template("privacy.html", user=current_user())
 
 
 # -------------------------

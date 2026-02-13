@@ -12,15 +12,17 @@
 
         <div class="col-12 col-md-4">
           <label class="form-label">Type</label>
-          <select class="form-select" name="kind">
+          <select class="form-select" name="kind" id="kindSel">
             <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost</option>
             <option value="found" {% if item and item['kind']=='found' %}selected{% endif %}>Found</option>
           </select>
         </div>
 
-        <div class="col-12 col-md-8">
+        <!-- Title is kept for 'found'. For 'lost' it will be auto-filled from "What is lost" -->
+        <div class="col-12 col-md-8" id="titleBlock">
           <label class="form-label">Title *</label>
-          <input class="form-control" name="title" required value="{{ item['title'] if item else '' }}">
+          <input class="form-control" name="title" id="titleInput" required value="{{ item['title'] if item else '' }}">
+          <div class="form-text">For “Lost”, this is auto-filled from “What is lost”.</div>
         </div>
 
         <div class="col-12 col-md-4">
@@ -52,14 +54,124 @@
                  value="{{ item['event_date'] if item and item['event_date'] else '' }}">
         </div>
 
-        <div class="col-12">
-          <label class="form-label">Description</label>
-          <textarea class="form-control" rows="4" name="description">{{ item['description'] if item else '' }}</textarea>
+        <div class="col-12" id="descBlock">
+          <label class="form-label">Description <span class="text-danger">*</span></label>
+          <textarea class="form-control" rows="3" name="description" id="descInput" required>{{ item['description'] if item else '' }}</textarea>
         </div>
 
-        <div class="col-12">
-          <label class="form-label">Contact (phone/name/note)</label>
-          <input class="form-control" name="contact" value="{{ item['contact'] if item else '' }}">
+        <!-- LOST DETAILS -->
+        <div class="col-12" id="lostFields">
+          <hr>
+          <h6 class="mb-3">Lost form (internal)</h6>
+
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label class="form-label">What is lost *</label>
+              <input class="form-control" name="lost_what" id="lostWhat"
+                     value="{{ item['lost_what'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Name of Groupleader</label>
+              <input class="form-control" name="lost_group_leader"
+                     value="{{ item['lost_group_leader'] if item else '' }}">
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Last Name *</label>
+              <input class="form-control" name="lost_last_name"
+                     value="{{ item['lost_last_name'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">First Name *</label>
+              <input class="form-control" name="lost_first_name"
+                     value="{{ item['lost_first_name'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Street *</label>
+              <input class="form-control" name="lost_street"
+                     value="{{ item['lost_street'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-3">
+              <label class="form-label">Number *</label>
+              <input class="form-control" name="lost_number"
+                     value="{{ item['lost_number'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-3">
+              <label class="form-label">Additional (floor, etc.)</label>
+              <input class="form-control" name="lost_additional"
+                     value="{{ item['lost_additional'] if item else '' }}">
+            </div>
+
+            <div class="col-12 col-md-4">
+              <label class="form-label">Postcode *</label>
+              <input class="form-control" name="lost_postcode"
+                     value="{{ item['lost_postcode'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-4">
+              <label class="form-label">Town *</label>
+              <input class="form-control" name="lost_town"
+                     value="{{ item['lost_town'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-4">
+              <label class="form-label">Country *</label>
+              <input class="form-control" name="lost_country"
+                     value="{{ item['lost_country'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">E-Mail address *</label>
+              <input class="form-control" type="email" name="lost_email"
+                     value="{{ item['lost_email'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Phone number (with countrycode: +….) *</label>
+              <input class="form-control" name="lost_phone"
+                     value="{{ item['lost_phone'] if item else '' }}" required>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">When are you leaving Taizé</label>
+              <input class="form-control" type="date" name="lost_leaving_date"
+                     value="{{ item['lost_leaving_date'] if item and item['lost_leaving_date'] else '' }}">
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Way of contact</label>
+              <select class="form-select" name="lost_contact_way">
+                <option value="">—</option>
+                {% for w in CONTACT_WAYS %}
+                  <option value="{{ w }}" {% if item and item['lost_contact_way']==w %}selected{% endif %}>{{ w }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Notes</label>
+              <textarea class="form-control" rows="3" name="lost_notes">{{ item['lost_notes'] if item else '' }}</textarea>
+            </div>
+
+            <div class="col-12 col-md-4">
+              <label class="form-label">Price of postage</label>
+              <input class="form-control" name="postage_price" inputmode="decimal"
+                     value="{{ item['postage_price'] if item and item['postage_price'] is not none else '' }}">
+            </div>
+
+            <div class="col-12 col-md-4 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="postage_paid" id="postagePaid"
+                       {% if item and (item['postage_paid']==1 or item['postage_paid']=='1') %}checked{% endif %}>
+                <label class="form-check-label" for="postagePaid">Paid</label>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="col-12">
@@ -91,5 +203,30 @@
     </ul>
   </div>
 {% endif %}
+
+<script>
+  const kindSel = document.getElementById('kindSel');
+  const lostFields = document.getElementById('lostFields');
+  const titleBlock = document.getElementById('titleBlock');
+  const titleInput = document.getElementById('titleInput');
+  const lostWhat = document.getElementById('lostWhat');
+
+  function sync() {
+    const isLost = kindSel && kindSel.value === 'lost';
+
+    if (lostFields) lostFields.classList.toggle('d-none', !isLost);
+
+    // Hide title for lost (auto-filled from "What is lost")
+    if (titleBlock) titleBlock.classList.toggle('d-none', isLost);
+
+    if (isLost && titleInput && lostWhat) {
+      titleInput.value = lostWhat.value || "";
+    }
+  }
+
+  if (kindSel) kindSel.addEventListener('change', sync);
+  if (lostWhat) lostWhat.addEventListener('input', sync);
+  sync();
+</script>
 
 {% endblock %}
