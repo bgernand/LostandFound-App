@@ -85,7 +85,7 @@
           <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
             <div>
               <a href="{{ url_for('detail', item_id=li['id']) }}">
-                #{{ li['id'] }} - {{ li['title'] }}
+                {{ li['id'] }} - {{ li['title'] }}
               </a>
               <div class="small text-muted">
                 {{ li['kind'] }} · {{ li['status'] }} · linked at {{ li['link_created_at'] }}
@@ -139,7 +139,7 @@
             <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
               <div>
                 <a href="{{ url_for('detail', item_id=c['id']) }}">
-                  #{{ c['id'] }} - {{ c['title'] }}
+                  {{ c['id'] }} - {{ c['title'] }}
                 </a>
                 <div class="small text-muted">
                   {{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}
@@ -255,7 +255,8 @@
             <div>
               <div class="fw-semibold">
                 <a href="{{ url_for('detail', item_id=m['id']) }}">
-                  #{{ m['id'] }} {% if m['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ m['title'] }}
+                  {{ m['id'] }} {% if m['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ m['title'] }}
+                  <span class="text-muted fw-normal">(Item ID: {{ m['id'] }})</span>
                 </a>
               </div>
               <div class="small text-muted">
