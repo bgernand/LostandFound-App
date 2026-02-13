@@ -1424,23 +1424,28 @@ def matches_overview():
 def saved_search_create():
     u = current_user()
     scope = (request.form.get("scope") or "").strip()
-    name = (request.form.get("name") or "").strip()
+    name = (
+        request.form.get("name")
+        or request.form.get("saved_name")
+        or request.form.get("search_name")
+        or ""
+    ).strip()
     next_url = safe_next_url(request.form.get("next"))
     raw_query = (request.form.get("query_string") or "").strip()
 
     if scope not in SAVED_SEARCH_SCOPES:
         flash("Invalid search scope.", "danger")
         return redirect(next_url)
-    if not name:
-        flash("Please enter a name for the saved search.", "danger")
-        return redirect(next_url)
-    if len(name) > 80:
-        name = name[:80]
-
     query_string = clean_saved_query_string(scope, raw_query)
     if not query_string:
         flash("There are no valid filters to save.", "danger")
         return redirect(next_url)
+    if not name:
+        stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        prefix = "Items" if scope == "index" else "Matches"
+        name = f"{prefix} search {stamp}"
+    if len(name) > 80:
+        name = name[:80]
 
     conn = get_db()
     existing = conn.execute(
