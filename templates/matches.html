@@ -133,11 +133,11 @@
         <div>
           <div class="fw-semibold">
             <a href="{{ url_for('detail', item_id=src['id']) }}">
-              #{{ src['id'] }} {{ "Lost Request" if src['kind']=="lost" else "Found Item" }}: {{ src['title'] }}
+              #{{ src['id'] }} {% if src['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ src['title'] }}
             </a>
             <span class="mx-2">↔</span>
             <a href="{{ url_for('detail', item_id=cand['id']) }}">
-              #{{ cand['id'] }} {{ "Lost Request" if cand['kind']=="lost" else "Found Item" }}: {{ cand['title'] }}
+              #{{ cand['id'] }} {% if cand['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ cand['title'] }}
             </a>
           </div>
           <div class="small text-muted">

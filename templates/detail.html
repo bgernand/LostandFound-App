@@ -241,7 +241,7 @@
             <div>
               <div class="fw-semibold">
                 <a href="{{ url_for('detail', item_id=m['id']) }}">
-                  #{{ m['id'] }} {{ "Lost Request" if m['kind']=="lost" else "Found Item" }}: {{ m['title'] }}
+                  #{{ m['id'] }} {% if m['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ m['title'] }}
                 </a>
               </div>
               <div class="small text-muted">
