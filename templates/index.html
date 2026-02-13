@@ -18,6 +18,8 @@
             {% endfor %}
           </select>
           <button class="btn btn-outline-secondary" type="submit">Open</button>
+          <button class="btn btn-outline-danger" type="submit"
+                  formaction="{{ url_for('saved_search_delete_post') }}" formmethod="post">Delete</button>
         </form>
       </div>
       <div class="col-12 col-lg-6">
@@ -30,19 +32,6 @@
           <button class="btn btn-outline-primary" type="submit">Save current search</button>
         </form>
       </div>
-      {% if saved_searches %}
-        <div class="col-12">
-          <div class="d-flex flex-wrap gap-2">
-            {% for s in saved_searches %}
-              <form method="post" action="{{ url_for('saved_search_delete', search_id=s['id']) }}">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="next" value="{{ current_path }}">
-                <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete saved search">{{ s['name'] }} ×</button>
-              </form>
-            {% endfor %}
-          </div>
-        </div>
-      {% endif %}
     </div>
 
     <form class="row g-2" method="get" action="{{ url_for('index') }}">

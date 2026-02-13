@@ -1507,6 +1507,33 @@ def saved_search_open():
     return redirect(target)
 
 
+@app.post("/saved-searches/delete")
+@login_required
+def saved_search_delete_post():
+    u = current_user()
+    raw_id = (request.form.get("saved_search_id") or "").strip()
+    next_url = safe_next_url(request.form.get("next"))
+    try:
+        search_id = int(raw_id)
+    except ValueError:
+        flash("Please select a saved search.", "danger")
+        return redirect(next_url)
+
+    conn = get_db()
+    cur = conn.execute(
+        "DELETE FROM saved_searches WHERE id=? AND user_id=?",
+        (search_id, int(u["id"])),
+    )
+    conn.commit()
+    conn.close()
+
+    if cur.rowcount > 0:
+        flash("Saved search deleted.", "warning")
+    else:
+        flash("Saved search not found.", "danger")
+    return redirect(next_url)
+
+
 @app.post("/saved-searches/<int:search_id>/delete")
 @login_required
 def saved_search_delete(search_id: int):
