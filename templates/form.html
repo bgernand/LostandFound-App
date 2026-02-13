@@ -38,7 +38,6 @@
           <label class="form-label">What was found *</label>
           <input class="form-control {% if errors.get('title') %}is-invalid{% endif %}" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
           {% if errors.get('title') %}<div class="invalid-feedback">{{ errors.get('title') }}</div>{% endif %}
-          <div class="form-text">For “Lost”, this is auto-filled from “What is lost”.</div>
         </div>
 
         <!-- Lost-only primary title -->
