@@ -827,67 +827,74 @@ def create_item():
     public_token = secrets.token_urlsafe(16)
 
     conn = get_db()
-    cur = conn.execute("""
-        INSERT INTO items (
-        kind, title, description, category, location, event_date,
-        status, created_by, public_token, created_at,
-        lost_what, lost_last_name, lost_first_name, lost_group_leader,
-        lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
-        lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
-        postage_price, postage_paid
-        )
-        VALUES (
-        ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?
-        )
-    """, (
-        kind, title, description, category, location, event_date,
-        status, u["id"], public_token, now_utc(),
-        (lost.get("lost_what") if kind == "lost" else None),
-        (lost.get("lost_last_name") if kind == "lost" else None),
-        (lost.get("lost_first_name") if kind == "lost" else None),
-        (lost.get("lost_group_leader") if kind == "lost" else None),
-        (lost.get("lost_street") if kind == "lost" else None),
-        (lost.get("lost_number") if kind == "lost" else None),
-        (lost.get("lost_additional") if kind == "lost" else None),
-        (lost.get("lost_postcode") if kind == "lost" else None),
-        (lost.get("lost_town") if kind == "lost" else None),
-        (lost.get("lost_country") if kind == "lost" else None),
-        (lost.get("lost_email") if kind == "lost" else None),
-        (lost.get("lost_phone") if kind == "lost" else None),
-        (lost.get("lost_leaving_date") if kind == "lost" else None),
-        (lost.get("lost_contact_way") if kind == "lost" else None),
-        (lost.get("lost_notes") if kind == "lost" else None),
-        (lost.get("postage_price") if kind == "lost" else None),
-        (lost.get("postage_paid") if kind == "lost" else 0),
-    ))
+    try:
+        cur = conn.execute("""
+            INSERT INTO items (
+            kind, title, description, category, location, event_date,
+            status, created_by, public_token, created_at,
+            lost_what, lost_last_name, lost_first_name, lost_group_leader,
+            lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
+            lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
+            postage_price, postage_paid
+            )
+            VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?
+            )
+        """, (
+            kind, title, description, category, location, event_date,
+            status, u["id"], public_token, now_utc(),
+            (lost.get("lost_what") if kind == "lost" else None),
+            (lost.get("lost_last_name") if kind == "lost" else None),
+            (lost.get("lost_first_name") if kind == "lost" else None),
+            (lost.get("lost_group_leader") if kind == "lost" else None),
+            (lost.get("lost_street") if kind == "lost" else None),
+            (lost.get("lost_number") if kind == "lost" else None),
+            (lost.get("lost_additional") if kind == "lost" else None),
+            (lost.get("lost_postcode") if kind == "lost" else None),
+            (lost.get("lost_town") if kind == "lost" else None),
+            (lost.get("lost_country") if kind == "lost" else None),
+            (lost.get("lost_email") if kind == "lost" else None),
+            (lost.get("lost_phone") if kind == "lost" else None),
+            (lost.get("lost_leaving_date") if kind == "lost" else None),
+            (lost.get("lost_contact_way") if kind == "lost" else None),
+            (lost.get("lost_notes") if kind == "lost" else None),
+            (lost.get("postage_price") if kind == "lost" else None),
+            (lost.get("postage_paid") if kind == "lost" else 0),
+        ))
 
-    item_id = cur.lastrowid
+        item_id = cur.lastrowid
 
-    # Photos
-    files = request.files.getlist("photos")
-    saved = 0
-    for f in files:
-        if not f or f.filename == "":
-            continue
-        if not allowed_file(f.filename):
-            continue
-        safe = secure_filename(f.filename)
-        ext = safe.rsplit(".", 1)[1].lower()
-        filename = f"item_{item_id}_{int(datetime.utcnow().timestamp())}_{saved}.{ext}"
-        f.save(UPLOAD_DIR / filename)
-        conn.execute(
-            "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
-            (item_id, filename, now_utc())
-        )
-        saved += 1
+        # Photos
+        files = request.files.getlist("photos")
+        saved = 0
+        for f in files:
+            if not f or f.filename == "":
+                continue
+            if not allowed_file(f.filename):
+                continue
+            safe = secure_filename(f.filename)
+            ext = safe.rsplit(".", 1)[1].lower()
+            filename = f"item_{item_id}_{int(datetime.utcnow().timestamp())}_{saved}.{ext}"
+            f.save(UPLOAD_DIR / filename)
+            conn.execute(
+                "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
+                (item_id, filename, now_utc())
+            )
+            saved += 1
 
-    matches = find_matches(conn, kind, title, category, location)
-    conn.commit()
+        matches = find_matches(conn, kind, title, category, location)
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        conn.close()
+        flash("Database error while saving item. Please retry.", "danger")
+        draft = build_item_form_draft()
+        return render_item_form(item=draft, matches=[], errors={})
     conn.close()
 
     audit("create", "item", item_id, f"{kind} '{title}' photos={saved}")
@@ -913,7 +920,10 @@ def detail(item_id: int):
     ).fetchall()
 
     matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
-    linked_items = get_linked_items(conn, item)
+    try:
+        linked_items = get_linked_items(conn, item)
+    except sqlite3.Error:
+        linked_items = []
     conn.close()
 
     return render_template(

@@ -20,7 +20,7 @@
 
     <form method="post"
           enctype="multipart/form-data"
-          action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}"
+          action="{{ url_for('update_item', item_id=item['id']) if (item and item['id']) else url_for('create_item') }}"
           novalidate>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <div class="row g-3">
