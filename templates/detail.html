@@ -299,7 +299,7 @@
       <div class="fw-bold mb-2">Timeline</div>
       <div class="list-group list-group-flush">
         {% for ev in timeline %}
-          <div class="list-group-item px-0">
+          <div class="list-group-item px-0{% if loop.index > 3 %} d-none js-timeline-extra{% endif %}">
             <div class="d-flex justify-content-between gap-2">
               <div>
                 <span class="badge text-bg-secondary">{{ ev['action'] }}</span>
@@ -314,8 +314,28 @@
           </div>
         {% endfor %}
       </div>
+      {% if timeline|length > 3 %}
+        <div class="mt-2">
+          <button id="timeline-more-btn" type="button" class="btn btn-sm btn-outline-secondary">More</button>
+        </div>
+      {% endif %}
     </div>
   </div>
+{% endif %}
+
+{% if timeline and timeline|length > 3 %}
+<script>
+  (function () {
+    var btn = document.getElementById("timeline-more-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".js-timeline-extra").forEach(function (el) {
+        el.classList.remove("d-none");
+      });
+      btn.remove();
+    });
+  })();
+</script>
 {% endif %}
 
 {% endblock %}

@@ -2552,7 +2552,7 @@ def receipt_pdf(item_id: int):
         buf,
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"receipt_{item_id}.pdf",
+        download_name=f"{receipt_no}.pdf",
     )
 
 
