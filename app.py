@@ -17,7 +17,7 @@ import ipaddress
 from io import BytesIO
 import qrcode
 import secrets
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qsl, urlencode
 from difflib import SequenceMatcher
 
 
@@ -97,6 +97,18 @@ STATUS_COLORS = {
 
 ROLES = ["admin", "staff"]
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
+SAVED_SEARCH_SCOPES = {"index", "matches"}
+SAVED_SEARCH_ALLOWED_KEYS = {
+    "index": {"q", "kind", "status", "category", "linked", "date_from", "date_to"},
+    "matches": {
+        "q", "kind", "source_status", "candidate_status", "category",
+        "include_linked", "date_from", "date_to", "min_score", "source_limit"
+    },
+}
+SAVED_SEARCH_MULTI_KEYS = {
+    "index": {"kind", "status", "category"},
+    "matches": {"kind", "source_status", "candidate_status", "category"},
+}
 
 _db_inited = False  # Flask 3 compatible init
 _fts5_available = None
@@ -296,6 +308,22 @@ def init_db():
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup
         ON login_attempts (username, ip_address, attempted_at)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS saved_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            scope TEXT NOT NULL,
+            name TEXT NOT NULL,
+            query_string TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_searches_user_scope
+        ON saved_searches(user_id, scope, created_at)
     """)
 
     # Public link features
@@ -1024,6 +1052,68 @@ def build_filters(args):
     return sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to
 
 
+def saved_search_target(scope: str):
+    return "index" if scope == "index" else "matches_overview"
+
+
+def clean_saved_query_string(scope: str, raw_query: str):
+    if scope not in SAVED_SEARCH_SCOPES:
+        return ""
+    allowed = SAVED_SEARCH_ALLOWED_KEYS[scope]
+    multi = SAVED_SEARCH_MULTI_KEYS[scope]
+
+    counts = {}
+    out = []
+    for key, raw_val in parse_qsl(raw_query or "", keep_blank_values=False):
+        key = (key or "").strip()
+        val = (raw_val or "").strip()
+        if not key or not val or key not in allowed:
+            continue
+
+        max_count = 50 if key in multi else 1
+        c = counts.get(key, 0)
+        if c >= max_count:
+            continue
+
+        if key in {"date_from", "date_to"} and not parse_iso_date(val):
+            continue
+        if key == "include_linked" and val != "1":
+            continue
+        if key in {"min_score", "source_limit"}:
+            try:
+                iv = int(val)
+            except ValueError:
+                continue
+            if key == "min_score":
+                iv = min(200, max(0, iv))
+            else:
+                iv = min(200, max(5, iv))
+            val = str(iv)
+        if key == "linked" and val not in {"linked", "unlinked"}:
+            continue
+        if len(val) > 300:
+            val = val[:300]
+
+        out.append((key, val))
+        counts[key] = c + 1
+
+    return urlencode(out, doseq=True)
+
+
+def get_saved_searches(conn, user_id: int, scope: str):
+    if scope not in SAVED_SEARCH_SCOPES:
+        return []
+    return conn.execute(
+        """
+        SELECT id, name, query_string, created_at, updated_at
+        FROM saved_searches
+        WHERE user_id=? AND scope=?
+        ORDER BY lower(name) ASC, created_at DESC
+        """,
+        (user_id, scope),
+    ).fetchall()
+
+
 # -------------------------
 # Public legal pages
 # -------------------------
@@ -1165,7 +1255,12 @@ def index():
             SELECT lost_item_id AS id FROM item_links
         """).fetchall()
     }
+    u = current_user()
+    saved_searches = get_saved_searches(conn, int(u["id"]), "index") if u else []
     conn.close()
+    current_path = request.full_path if request.query_string else request.path
+    if current_path.endswith("?"):
+        current_path = current_path[:-1]
 
     return render_template(
         "index.html",
@@ -1181,7 +1276,10 @@ def index():
         statuses=STATUSES,
         photo_counts=photo_counts,
         linked_item_ids=linked_item_ids,
-        user=current_user()
+        saved_searches=saved_searches,
+        current_query=(request.query_string.decode("utf-8") if request.query_string else ""),
+        current_path=current_path,
+        user=u
     )
 
 
@@ -1292,7 +1390,12 @@ def matches_overview():
         key=lambda p: (p["score"], p["source"]["created_at"] or "", p["candidate"]["created_at"] or ""),
         reverse=True
     )
+    u = current_user()
+    saved_searches = get_saved_searches(conn, int(u["id"]), "matches") if u else []
     conn.close()
+    current_path = request.full_path if request.query_string else request.path
+    if current_path.endswith("?"):
+        current_path = current_path[:-1]
 
     return render_template(
         "matches.html",
@@ -1309,8 +1412,118 @@ def matches_overview():
         source_limit=source_limit,
         categories=category_names(active_only=True),
         statuses=STATUSES,
-        user=current_user()
+        saved_searches=saved_searches,
+        current_query=(request.query_string.decode("utf-8") if request.query_string else ""),
+        current_path=current_path,
+        user=u
     )
+
+
+@app.post("/saved-searches")
+@login_required
+def saved_search_create():
+    u = current_user()
+    scope = (request.form.get("scope") or "").strip()
+    name = (request.form.get("name") or "").strip()
+    next_url = safe_next_url(request.form.get("next"))
+    raw_query = (request.form.get("query_string") or "").strip()
+
+    if scope not in SAVED_SEARCH_SCOPES:
+        flash("Invalid search scope.", "danger")
+        return redirect(next_url)
+    if not name:
+        flash("Please enter a name for the saved search.", "danger")
+        return redirect(next_url)
+    if len(name) > 80:
+        name = name[:80]
+
+    query_string = clean_saved_query_string(scope, raw_query)
+    if not query_string:
+        flash("There are no valid filters to save.", "danger")
+        return redirect(next_url)
+
+    conn = get_db()
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM saved_searches
+        WHERE user_id=? AND scope=? AND name=? COLLATE NOCASE
+        LIMIT 1
+        """,
+        (int(u["id"]), scope, name),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE saved_searches SET query_string=?, updated_at=? WHERE id=?",
+            (query_string, now_utc(), int(existing["id"])),
+        )
+        flash(f"Saved search '{name}' updated.", "success")
+    else:
+        conn.execute(
+            """
+            INSERT INTO saved_searches (user_id, scope, name, query_string, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (int(u["id"]), scope, name, query_string, now_utc()),
+        )
+        flash(f"Saved search '{name}' created.", "success")
+    conn.commit()
+    conn.close()
+    return redirect(next_url)
+
+
+@app.post("/saved-searches/open")
+@login_required
+def saved_search_open():
+    u = current_user()
+    raw_id = (request.form.get("saved_search_id") or "").strip()
+    next_url = safe_next_url(request.form.get("next"))
+    try:
+        search_id = int(raw_id)
+    except ValueError:
+        flash("Please select a saved search.", "danger")
+        return redirect(next_url)
+
+    conn = get_db()
+    row = conn.execute(
+        """
+        SELECT id, scope, query_string, name
+        FROM saved_searches
+        WHERE id=? AND user_id=?
+        """,
+        (search_id, int(u["id"])),
+    ).fetchone()
+    conn.close()
+    if not row:
+        flash("Saved search not found.", "danger")
+        return redirect(next_url)
+
+    target = url_for(saved_search_target(row["scope"]))
+    query_string = (row["query_string"] or "").strip()
+    if query_string:
+        target += "?" + query_string
+    return redirect(target)
+
+
+@app.post("/saved-searches/<int:search_id>/delete")
+@login_required
+def saved_search_delete(search_id: int):
+    u = current_user()
+    next_url = safe_next_url(request.form.get("next"))
+
+    conn = get_db()
+    cur = conn.execute(
+        "DELETE FROM saved_searches WHERE id=? AND user_id=?",
+        (search_id, int(u["id"])),
+    )
+    conn.commit()
+    conn.close()
+
+    if cur.rowcount > 0:
+        flash("Saved search deleted.", "warning")
+    else:
+        flash("Saved search not found.", "danger")
+    return redirect(next_url)
 
 
 @app.get("/items/new")
