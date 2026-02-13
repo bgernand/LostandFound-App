@@ -1,143 +1,186 @@
-Deployment guide (English): Docker + Nginx + Let’s Encrypt (Certbot)
+# 🚀 Deployment Guide --- Docker + Nginx + Let's Encrypt (Certbot)
 
 This setup runs:
 
-Flask app (Gunicorn) in one container
+-   **Flask app** (Gunicorn) inside a container
+-   **Nginx** as reverse proxy (ports 80/443)
+-   **Certbot** for Let's Encrypt certificates + automatic renewal
 
-Nginx as reverse proxy (ports 80/443)
+------------------------------------------------------------------------
 
-Certbot for Let’s Encrypt certificates + automatic renewal
+## 📋 Prerequisites
 
-1) Prerequisites
+You need:
 
-A server with Docker and Docker Compose installed
+-   A server with **Docker** and **Docker Compose** installed
+-   A domain name (e.g. `your-domain.example`)
+-   DNS `A/AAAA` record pointing to your server's public IP
+-   Firewall / security group allowing inbound:
 
-A domain name, e.g. your-domain.example
+  Port   Protocol
+  ------ ----------
+  80     TCP
+  443    TCP
 
-DNS A/AAAA record pointing to your server’s public IP
+------------------------------------------------------------------------
 
-Firewall/security group allows inbound:
-
-80/tcp
-
-443/tcp
-
-2) Create required directories and files
+## 📁 Create Required Directories
 
 From your project root:
 
+``` bash
 mkdir -p nginx/templates
 mkdir -p certbot/www certbot/conf
 
 mkdir -p data uploads
 sudo chown -R $USER:$USER data uploads
 sudo chmod -R 755 data uploads
+```
 
+------------------------------------------------------------------------
 
-3) Set your DOMAIN and BASE_URL
+## 🌐 Configure DOMAIN and BASE_URL
 
-Edit docker-compose.yml:
+Edit `docker-compose.yml`:
 
-In the nginx service:
+### In the **nginx** service
 
-DOMAIN=your-domain.example
+    DOMAIN=your-domain.example
 
-In the app service:
+### In the **app** service
 
-BASE_URL=https://your-domain.example
+    BASE_URL=https://your-domain.example
 
-This is important because the QR code uses BASE_URL to generate public links.
+> ⚠️ Important:\
+> The QR code uses `BASE_URL` to generate public links.
 
-4) Start the app and Nginx (before requesting the cert)
+------------------------------------------------------------------------
+
+## ▶️ Start App & Nginx (Before Certificate)
 
 Build and start:
 
+``` bash
 docker compose up -d --build app nginx
-
+```
 
 At this point:
 
-Nginx listens on port 80 and serves the ACME challenge path.
+-   Nginx listens on **port 80**
+-   Serves ACME challenge path
+-   ❌ HTTPS will NOT work yet (no certificate)
 
-HTTPS won’t work yet (no certificate).
+------------------------------------------------------------------------
 
-5) Obtain the initial Let’s Encrypt certificate (one-time)
+## 🔐 Obtain Initial Let's Encrypt Certificate (One-Time)
 
-Run Certbot (replace domain + email):
+Replace domain and email:
 
+``` bash
 docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot -w /var/www/certbot \
   -d your-domain.example \
   --email you@your-domain.example \
-  --agree-tos --no-eff-email
-  --cert-name your-domain.example \
+  --agree-tos --no-eff-email \
+  --cert-name your-domain.example
+```
 
+Reload nginx:
 
+``` bash
 docker compose exec nginx sh -lc '
-  mkdir -p /etc/nginx/ssl-dummy/lostandfound.bgernand.de &&
-  ln -sf /etc/letsencrypt/live/lostandfound.bgernand.de/fullchain.pem /etc/nginx/ssl-dummy/lostandfound.bgernand.de/fullchain.pem &&
-  ln -sf /etc/letsencrypt/live/lostandfound.bgernand.de/privkey.pem   /etc/nginx/ssl-dummy/lostandfound.bgernand.de/privkey.pem &&
+  mkdir -p /etc/nginx/ssl-dummy/your-domain.example &&
+  ln -sf /etc/letsencrypt/live/your-domain.example/fullchain.pem /etc/nginx/ssl-dummy/your-domain.example/fullchain.pem &&
+  ln -sf /etc/letsencrypt/live/your-domain.example/privkey.pem   /etc/nginx/ssl-dummy/your-domain.example/privkey.pem &&
   nginx -s reload
 '
+```
 
-If this fails, the most common causes are:
+### Common failure causes
 
-DNS not pointing correctly yet
+-   DNS not propagated yet
+-   Port 80 blocked by firewall
+-   Another service already using port 80
 
-Port 80 blocked by firewall
+------------------------------------------------------------------------
 
-Another service already using port 80
+## 🔄 Restart Nginx
 
-
-
-6) Restart Nginx to load the certificate
+``` bash
 docker compose restart nginx
+```
 
+Your site should now be available at:
 
-Now your site should be available at:
+    https://your-domain.example
 
-https://your-domain.example
+------------------------------------------------------------------------
 
-7) Start automatic certificate renewal
+## ♻️ Automatic Certificate Renewal
 
-The certbot service in docker-compose.yml runs renewals every 12 hours. Start it:
+The `certbot` service runs renewals every 12 hours.
 
+Start it:
+
+``` bash
 docker compose up -d certbot
+```
 
-8) Updating / redeploying later
+------------------------------------------------------------------------
+
+## 🔄 Updating / Redeploying
 
 After code changes:
 
+``` bash
 docker compose up -d --build app
 docker compose restart nginx
+```
 
-9) Data persistence
+------------------------------------------------------------------------
 
-This setup persists:
+## 💾 Data Persistence
 
-SQLite database: ./lostfound.db ↔ /app/lostfound.db
+The following data is stored permanently:
 
-Uploaded photos: ./uploads/ ↔ /app/uploads
+  Type           Local               Container
+  -------------- ------------------- ---------------------
+  SQLite DB      `./lostfound.db`    `/app/lostfound.db`
+  Uploads        `./uploads/`        `/app/uploads`
+  Certificates   `./certbot/conf/`   `/etc/letsencrypt`
+  ACME webroot   `./certbot/www/`    `/var/www/certbot`
 
-Certificates: ./certbot/conf/ and ACME webroot: ./certbot/www/
+### Recommended Backups
 
-Back up at minimum:
+-   `lostfound.db`
+-   `uploads/`
+-   `certbot/conf/` *(optional but useful)*
 
-lostfound.db
+------------------------------------------------------------------------
 
-uploads/
+## 🧪 Quick Sanity Checks
 
-certbot/conf/ (optional but useful)
+### Running containers
 
-10) Quick sanity checks
-
-Check running containers:
-
+``` bash
 docker compose ps
+```
 
+### View logs
 
-View logs:
-
+``` bash
 docker compose logs -f nginx
 docker compose logs -f app
 docker compose logs -f certbot
+```
+
+------------------------------------------------------------------------
+
+## ✅ Done
+
+Your Flask application is now deployed with:
+
+-   HTTPS encryption
+-   Automatic certificate renewal
+-   Persistent data storage
+-   Production-ready reverse proxy
