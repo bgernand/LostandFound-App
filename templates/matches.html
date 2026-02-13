@@ -13,7 +13,8 @@
       </div>
       <div class="col-12 col-md-6 col-lg-2">
         <label class="form-label small text-muted mb-1">Type</label>
-        <select class="form-select" name="kind" multiple size="2">
+        <select class="form-select" name="kind">
+          <option value="" {% if not kinds_selected %}selected{% endif %}>All</option>
           <option value="lost" {% if 'lost' in kinds_selected %}selected{% endif %}>Lost Request</option>
           <option value="found" {% if 'found' in kinds_selected %}selected{% endif %}>Found Item</option>
         </select>
@@ -50,6 +51,22 @@
       <div class="col-12 col-md-4 col-lg-2">
         <label class="form-label small text-muted mb-1">Source limit</label>
         <input class="form-control" type="number" name="source_limit" min="5" max="200" value="{{ source_limit }}">
+      </div>
+      <div class="col-12 col-md-4 col-lg-2">
+        <label class="form-label small text-muted mb-1">Date from</label>
+        <input class="form-control" type="date" name="date_from" value="{{ date_from or '' }}">
+      </div>
+      <div class="col-12 col-md-4 col-lg-2">
+        <label class="form-label small text-muted mb-1">Date to</label>
+        <input class="form-control" type="date" name="date_to" value="{{ date_to or '' }}">
+      </div>
+      <div class="col-12 col-lg-3">
+        <label class="form-label small text-muted mb-1">Quick date presets</label>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-sm btn-outline-secondary js-date-preset" type="button" data-preset="last7">Last 7 days</button>
+          <button class="btn btn-sm btn-outline-secondary js-date-preset" type="button" data-preset="last30">Last 30 days</button>
+          <button class="btn btn-sm btn-outline-secondary js-date-preset" type="button" data-preset="month">This month</button>
+        </div>
       </div>
       <div class="col-12 col-md-4 col-lg-3 d-flex align-items-end">
         <div class="form-check">
@@ -113,5 +130,44 @@
     <div class="text-muted">No matches with current filters.</div>
   {% endfor %}
 </div>
+
+<script>
+  (function () {
+    const fromInput = document.querySelector('input[name="date_from"]');
+    const toInput = document.querySelector('input[name="date_to"]');
+    if (!fromInput || !toInput) return;
+
+    function toIsoDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function setRange(daysBack) {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - daysBack);
+      fromInput.value = toIsoDate(start);
+      toInput.value = toIsoDate(end);
+    }
+
+    document.querySelectorAll('.js-date-preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const preset = btn.getAttribute('data-preset');
+        if (preset === 'last7') {
+          setRange(7);
+        } else if (preset === 'last30') {
+          setRange(30);
+        } else if (preset === 'month') {
+          const now = new Date();
+          const start = new Date(now.getFullYear(), now.getMonth(), 1);
+          fromInput.value = toIsoDate(start);
+          toInput.value = toIsoDate(now);
+        }
+      });
+    });
+  })();
+</script>
 
 {% endblock %}

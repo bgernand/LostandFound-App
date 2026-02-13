@@ -47,20 +47,18 @@ LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
 # -------------------------
 STATUSES = [
     "Lost",
-    "Still lost",
     "Found, not assigned",
     "Maybe Found -> Check",
     "Found",
     "In contact",
     "Ready to send",
-    "Done",
     "Sent",
+    "Done",
     "Lost forever"
 ]
 
 STATUS_COLORS = {
     "Lost": "danger",
-    "Still lost": "warning",
     "Found, not assigned": "info",
     "Maybe Found -> Check": "info",
     "Found": "primary",
@@ -297,6 +295,9 @@ def init_db():
     ensure_column(conn, "items", "lost_notes", "TEXT")
     ensure_column(conn, "items", "postage_price", "REAL")
     ensure_column(conn, "items", "postage_paid", "INTEGER NOT NULL DEFAULT 0")
+
+    # Legacy status cleanup
+    conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
 
     # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
@@ -893,8 +894,16 @@ def build_filters(args):
     statuses_selected = get_multi_values(args, "status", set(STATUSES))
     categories_selected = get_multi_values(args, "category", set(category_names(active_only=True)))
     linked_state = (args.get("linked") or "").strip()
+    date_from = (args.get("date_from") or "").strip()
+    date_to = (args.get("date_to") or "").strip()
     if linked_state not in {"linked", "unlinked"}:
         linked_state = ""
+    if date_from and not parse_iso_date(date_from):
+        date_from = ""
+    if date_to and not parse_iso_date(date_to):
+        date_to = ""
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
 
     sql = "SELECT * FROM items WHERE 1=1"
     params = []
@@ -916,13 +925,20 @@ def build_filters(args):
         sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
         params += categories_selected
 
+    if date_from:
+        sql += " AND event_date IS NOT NULL AND event_date >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND event_date IS NOT NULL AND event_date <= ?"
+        params.append(date_to)
+
     if linked_state == "linked":
         sql += " AND EXISTS (SELECT 1 FROM item_links l WHERE l.found_item_id = items.id OR l.lost_item_id = items.id)"
     elif linked_state == "unlinked":
         sql += " AND NOT EXISTS (SELECT 1 FROM item_links l WHERE l.found_item_id = items.id OR l.lost_item_id = items.id)"
 
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state
+    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to
 
 
 # -------------------------
@@ -1050,7 +1066,7 @@ def account_password_post():
 @app.get("/")
 @login_required
 def index():
-    sql, params, q, kinds, statuses_selected, categories_selected, linked_state = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to = build_filters(request.args)
 
     conn = get_db()
     ensure_item_links_schema(conn)
@@ -1076,6 +1092,8 @@ def index():
         statuses_selected=statuses_selected,
         categories_selected=categories_selected,
         linked_state=linked_state,
+        date_from=date_from,
+        date_to=date_to,
         categories=category_names(active_only=True),
         statuses=STATUSES,
         photo_counts=photo_counts,
@@ -1106,8 +1124,16 @@ def matches_overview():
     candidate_statuses_selected = get_multi_values(request.args, "candidate_status", set(STATUSES))
     categories_selected = get_multi_values(request.args, "category", set(category_names(active_only=True)))
     include_linked = 1 if (request.args.get("include_linked") == "1") else 0
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
     min_score = safe_int_arg(request.args, "min_score", 35, 0, 200)
     source_limit = safe_int_arg(request.args, "source_limit", 60, 5, 200)
+    if date_from and not parse_iso_date(date_from):
+        date_from = ""
+    if date_to and not parse_iso_date(date_to):
+        date_to = ""
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
 
     source_sql = """
         SELECT *
@@ -1138,6 +1164,13 @@ def matches_overview():
     if categories_selected:
         source_sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
         source_params += categories_selected
+
+    if date_from:
+        source_sql += " AND event_date IS NOT NULL AND event_date >= ?"
+        source_params.append(date_from)
+    if date_to:
+        source_sql += " AND event_date IS NOT NULL AND event_date <= ?"
+        source_params.append(date_to)
 
     source_sql += " ORDER BY created_at DESC LIMIT ?"
     source_params.append(source_limit)
@@ -1187,6 +1220,8 @@ def matches_overview():
         candidate_statuses_selected=candidate_statuses_selected,
         categories_selected=categories_selected,
         include_linked=include_linked,
+        date_from=date_from,
+        date_to=date_to,
         min_score=min_score,
         source_limit=source_limit,
         categories=category_names(active_only=True),
@@ -1840,7 +1875,7 @@ def public_photo(token: str, photo_id: int):
 @app.get("/export.csv")
 @login_required
 def export_csv():
-    sql, params, q, kinds, statuses_selected, categories_selected, linked_state = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state, date_from, date_to = build_filters(request.args)
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -1858,7 +1893,7 @@ def export_csv():
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
     audit(
         "export", "items", None,
-        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state}"
+        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state} date_from={date_from} date_to={date_to}"
     )
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
 
