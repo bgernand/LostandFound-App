@@ -33,12 +33,20 @@
           </select>
         </div>
 
-        <!-- Title is kept for 'found'. For 'lost' it will be auto-filled from "What is lost" -->
+        <!-- Found-only primary title -->
         <div class="col-12 col-md-8" id="titleBlock">
-          <label class="form-label">Title *</label>
+          <label class="form-label">What was found *</label>
           <input class="form-control {% if errors.get('title') %}is-invalid{% endif %}" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
           {% if errors.get('title') %}<div class="invalid-feedback">{{ errors.get('title') }}</div>{% endif %}
           <div class="form-text">For “Lost”, this is auto-filled from “What is lost”.</div>
+        </div>
+
+        <!-- Lost-only primary title -->
+        <div class="col-12 col-md-8 d-none" id="lostWhatBlock">
+          <label class="form-label">What is lost *</label>
+          <input class="form-control {% if errors.get('lost_what') %}is-invalid{% endif %}" name="lost_what" id="lostWhat"
+                 value="{{ item['lost_what'] if item else '' }}">
+          {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ errors.get('lost_what') }}</div>{% endif %}
         </div>
 
         <div class="col-12 col-md-4">
@@ -88,13 +96,6 @@
           <h6 class="mb-3">Lost form (internal)</h6>
 
           <div class="row g-3">
-            <div class="col-12 col-md-6">
-              <label class="form-label">What is lost *</label>
-              <input class="form-control {% if errors.get('lost_what') %}is-invalid{% endif %}" name="lost_what" id="lostWhat"
-                     value="{{ item['lost_what'] if item else '' }}">
-              {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ errors.get('lost_what') }}</div>{% endif %}
-            </div>
-
             <div class="col-12 col-md-6">
               <label class="form-label">Name of Groupleader</label>
               <input class="form-control" name="lost_group_leader"
@@ -246,6 +247,7 @@
 <script>
   const kindSel = document.getElementById('kindSel');
   const lostFields = document.getElementById('lostFields');
+  const lostWhatBlock = document.getElementById('lostWhatBlock');
   const titleBlock = document.getElementById('titleBlock');
   const titleInput = document.getElementById('titleInput');
   const lostWhat = document.getElementById('lostWhat');
@@ -278,6 +280,7 @@
 
     // show/hide lost block
     if (lostFields) lostFields.classList.toggle('d-none', !isLost);
+    if (lostWhatBlock) lostWhatBlock.classList.toggle('d-none', !isLost);
 
     // title should be required only for Found Item
     if (titleBlock) titleBlock.classList.toggle('d-none', isLost);
