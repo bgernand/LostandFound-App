@@ -22,13 +22,17 @@ Firewall/security group allows inbound:
 
 443/tcp
 
-2) Create required directories
+2) Create required directories and files
 
 From your project root:
 
-mkdir -p uploads
 mkdir -p nginx/templates
 mkdir -p certbot/www certbot/conf
+
+mkdir -p data uploads
+sudo chown -R $USER:$USER data uploads
+sudo chmod -R 755 data uploads
+
 
 3) Set your DOMAIN and BASE_URL
 
@@ -61,12 +65,20 @@ HTTPS won’t work yet (no certificate).
 
 Run Certbot (replace domain + email):
 
-docker compose run --rm certbot certonly \
+docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot -w /var/www/certbot \
   -d your-domain.example \
   --email you@your-domain.example \
   --agree-tos --no-eff-email
+  --cert-name your-domain.example \
 
+
+docker compose exec nginx sh -lc '
+  mkdir -p /etc/nginx/ssl-dummy/lostandfound.bgernand.de &&
+  ln -sf /etc/letsencrypt/live/lostandfound.bgernand.de/fullchain.pem /etc/nginx/ssl-dummy/lostandfound.bgernand.de/fullchain.pem &&
+  ln -sf /etc/letsencrypt/live/lostandfound.bgernand.de/privkey.pem   /etc/nginx/ssl-dummy/lostandfound.bgernand.de/privkey.pem &&
+  nginx -s reload
+'
 
 If this fails, the most common causes are:
 
@@ -75,6 +87,8 @@ DNS not pointing correctly yet
 Port 80 blocked by firewall
 
 Another service already using port 80
+
+
 
 6) Restart Nginx to load the certificate
 docker compose restart nginx

@@ -2,19 +2,24 @@
 {% block content %}
 
 <div class="row g-3">
-  <div class="col-md-6">
-    <div class="card">
+
+  <!-- Create user -->
+  <div class="col-12 col-lg-5">
+    <div class="card h-100">
       <div class="card-body">
         <h5 class="card-title">Create user</h5>
+
         <form method="post" action="{{ url_for('users_create') }}">
-          <div class="mb-2">
+          <div class="mb-3">
             <label class="form-label">Username</label>
             <input class="form-control" name="username" required>
           </div>
-          <div class="mb-2">
+
+          <div class="mb-3">
             <label class="form-label">Password</label>
             <input class="form-control" type="password" name="password" required>
           </div>
+
           <div class="mb-3">
             <label class="form-label">Role</label>
             <select class="form-select" name="role">
@@ -23,35 +28,92 @@
               {% endfor %}
             </select>
           </div>
-          <button class="btn btn-primary" type="submit">Create</button>
+
+          <div class="d-grid">
+            <button class="btn btn-primary" type="submit">Create</button>
+          </div>
         </form>
+
+        <div class="text-muted small mt-3">
+          Tip: Ask the user to change the password after first login.
+        </div>
       </div>
     </div>
   </div>
 
-  <div class="col-md-6">
-    <div class="card">
+  <!-- User list -->
+  <div class="col-12 col-lg-7">
+    <div class="card h-100">
       <div class="card-body">
         <h5 class="card-title">Users</h5>
+
         <div class="table-responsive">
-          <table class="table table-sm">
-            <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th></tr></thead>
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Created</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {% for u in users %}
-                <tr>
-                  <td>{{ u['id'] }}</td>
-                  <td>{{ u['username'] }}</td>
-                  <td>{{ u['role'] }}</td>
-                  <td>{{ u['created_at'] }}</td>
-                </tr>
+              <tr>
+                <td class="text-nowrap">{{ u['id'] }}</td>
+                <td>
+                  {{ u['username'] }}
+                  {% if user and u['id'] == user['id'] %}
+                    <span class="badge text-bg-secondary ms-1">you</span>
+                  {% endif %}
+                </td>
+                <td class="text-nowrap">
+                  <span class="badge {% if u['role']=='admin' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">
+                    {{ u['role'] }}
+                  </span>
+                </td>
+                <td class="text-nowrap small text-muted">{{ u['created_at'] }}</td>
+
+                <<td class="text-end text-nowrap">
+                  {% if user and u['id'] != user['id'] %}
+                    <form method="post"
+                          action="{{ url_for('users_reset_password', user_id=u['id']) }}"
+                          onsubmit="return confirm('Reset password for {{ u['username'] }}?');"
+                          class="d-inline">
+                      <button class="btn btn-sm btn-outline-warning" type="submit">Reset password</button>
+                    </form>
+
+                    <form method="post"
+                          action="{{ url_for('users_delete', user_id=u['id']) }}"
+                          onsubmit="return confirm('Delete user {{ u['username'] }}?');"
+                          class="d-inline ms-1">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                    </form>
+                  {% else %}
+                    <span class="text-muted small">self</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-muted text-center py-4">
+                  No users found.
+                </td>
+              </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-        <div class="text-muted small">Passwords are stored as hashes.</div>
+
+        <div class="text-muted small mt-3">
+          The last admin account cannot be deleted.
+        </div>
+
       </div>
     </div>
   </div>
+
 </div>
 
 {% endblock %}

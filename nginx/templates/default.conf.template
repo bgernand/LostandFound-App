@@ -8,10 +8,12 @@ server {
 
   client_max_body_size 20m;
 
+  # ACME challenge must be reachable via HTTP
   location /.well-known/acme-challenge/ {
     root /var/www/certbot;
   }
 
+  # Everything else -> redirect to HTTPS
   location / {
     return 301 https://$host$request_uri;
   }
@@ -23,8 +25,12 @@ server {
 
   client_max_body_size 20m;
 
-  ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+  # IMPORTANT:
+  # We always point Nginx to a "dummy" certificate path.
+  # After Certbot successfully issues a real LE certificate, you replace these
+  # dummy files with symlinks to /etc/letsencrypt/live/${DOMAIN}/...
+  ssl_certificate     /etc/nginx/ssl-dummy/${DOMAIN}/fullchain.pem;
+  ssl_certificate_key /etc/nginx/ssl-dummy/${DOMAIN}/privkey.pem;
 
   ssl_session_cache shared:SSL:10m;
   ssl_session_timeout 10m;

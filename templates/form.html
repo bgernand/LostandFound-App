@@ -10,7 +10,7 @@
           action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}">
       <div class="row g-3">
 
-        <div class="col-md-3">
+        <div class="col-12 col-md-4">
           <label class="form-label">Type</label>
           <select class="form-select" name="kind">
             <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost</option>
@@ -18,12 +18,12 @@
           </select>
         </div>
 
-        <div class="col-md-6">
+        <div class="col-12 col-md-8">
           <label class="form-label">Title *</label>
           <input class="form-control" name="title" required value="{{ item['title'] if item else '' }}">
         </div>
 
-        <div class="col-md-3">
+        <div class="col-12 col-md-4">
           <label class="form-label">Status</label>
           <select class="form-select" name="status">
             {% for s in statuses %}
@@ -32,7 +32,7 @@
           </select>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-12 col-md-4">
           <label class="form-label">Category</label>
           <select class="form-select" name="category">
             {% for c in categories %}
@@ -41,12 +41,12 @@
           </select>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-12 col-md-4">
           <label class="form-label">Location</label>
           <input class="form-control" name="location" value="{{ item['location'] if item else '' }}">
         </div>
 
-        <div class="col-md-4">
+        <div class="col-12 col-md-4">
           <label class="form-label">Date</label>
           <input class="form-control" type="date" name="event_date"
                  value="{{ item['event_date'] if item and item['event_date'] else '' }}">
@@ -68,7 +68,7 @@
           <div class="text-muted small mt-1">Uploads are appended (existing photos remain).</div>
         </div>
 
-        <div class="col-12 d-flex gap-2">
+        <div class="col-12 d-grid d-sm-flex gap-2">
           <button class="btn btn-primary" type="submit">Save</button>
           <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Cancel</a>
         </div>

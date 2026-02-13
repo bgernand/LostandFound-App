@@ -18,18 +18,25 @@ import secrets
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-me-please")
 
-DB_PATH = "lostfound.db"
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+# -------------------------
+# Paths / Storage
+# -------------------------
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = str(DATA_DIR / "lostfound.db")
+
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/app/uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp"}
 
-# English UI enums
-CATEGORIES = ["General", "Electronics", "Clothing", "Documents", "Keys", "Other"]
+# English enums
 STATUSES = ["open", "found", "picked_up"]
 ROLES = ["admin", "staff"]
 
-BASE_URL = os.environ.get("BASE_URL", "").strip()  # e.g. https://lostfound.example
+BASE_URL = os.environ.get("BASE_URL", "").strip()  # e.g. https://lostandfound.example
+
+_db_inited = False  # Flask 3 compatible init
 
 
 # -------------------------
@@ -105,12 +112,23 @@ def init_db():
         )
     """)
 
-    # Migrations: public token + toggles
-    ensure_column(conn, "items", "public_token", "TEXT")
-    ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")         # 1=public on, 0=locked
-    ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1") # 1=photos public, 0=hidden
+    # Categories managed by admin
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL
+        )
+    """)
 
-    # Create default admin if none exist
+    # Public link features
+    ensure_column(conn, "items", "public_token", "TEXT")
+    ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")          # 1=public on, 0=locked
+    ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")  # 1=photos public, 0=hidden
+
+    # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
         conn.execute("""
@@ -118,6 +136,23 @@ def init_db():
             VALUES (?, ?, ?, ?)
         """, ("admin", generate_password_hash("admin123"), "admin", now_utc()))
         conn.commit()
+
+    # Seed default categories if empty
+    cat_count = conn.execute("SELECT COUNT(*) AS c FROM categories").fetchone()["c"]
+    if cat_count == 0:
+        defaults = [
+            ("General", 1, 10),
+            ("Electronics", 1, 20),
+            ("Clothing", 1, 30),
+            ("Documents", 1, 40),
+            ("Keys", 1, 50),
+            ("Other", 1, 60),
+        ]
+        for name, active, order in defaults:
+            conn.execute(
+                "INSERT INTO categories (name, is_active, sort_order, created_at) VALUES (?, ?, ?, ?)",
+                (name, active, order, now_utc())
+            )
 
     # Ensure existing items have a public token
     rows = conn.execute("SELECT id, public_token FROM items").fetchall()
@@ -130,9 +165,12 @@ def init_db():
     conn.close()
 
 
-@app.before_first_request
-def _startup():
-    init_db()
+@app.before_request
+def _ensure_db():
+    global _db_inited
+    if not _db_inited:
+        init_db()
+        _db_inited = True
 
 
 # -------------------------
@@ -180,6 +218,41 @@ def audit(action, entity_type, entity_id=None, details=None):
     """, (u["id"] if u else None, action, entity_type, entity_id, details, now_utc()))
     conn.commit()
     conn.close()
+
+
+# -------------------------
+# Categories (DB-driven)
+# -------------------------
+def get_categories(active_only: bool = True):
+    conn = get_db()
+    if active_only:
+        rows = conn.execute("""
+            SELECT name
+            FROM categories
+            WHERE is_active=1
+            ORDER BY sort_order ASC, name ASC
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT *
+            FROM categories
+            ORDER BY sort_order ASC, name ASC
+        """).fetchall()
+    conn.close()
+    return rows
+
+
+def category_names(active_only: bool = True):
+    rows = get_categories(active_only=active_only)
+    return [r["name"] for r in rows]
+
+
+def safe_default_category(active_cats: set[str]) -> str:
+    if "General" in active_cats:
+        return "General"
+    if "Other" in active_cats:
+        return "Other"
+    return next(iter(active_cats), "General")
 
 
 # -------------------------
@@ -237,7 +310,8 @@ def build_filters(args):
         sql += " AND status = ?"
         params.append(status)
 
-    if category and category in CATEGORIES:
+    active_cats = set(category_names(active_only=True))
+    if category and category in active_cats:
         sql += " AND category = ?"
         params.append(category)
 
@@ -279,6 +353,48 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+# -------------------------
+# Account: change password
+# -------------------------
+@app.get("/account/password")
+@login_required
+def account_password():
+    return render_template("account_password.html", user=current_user())
+
+
+@app.post("/account/password")
+@login_required
+def account_password_post():
+    u = current_user()
+    current_pw = request.form.get("current_password") or ""
+    new_pw = request.form.get("new_password") or ""
+    new_pw2 = request.form.get("new_password2") or ""
+
+    if len(new_pw) < 10:
+        flash("New password must be at least 10 characters long.", "danger")
+        return redirect(url_for("account_password"))
+    if new_pw != new_pw2:
+        flash("New passwords do not match.", "danger")
+        return redirect(url_for("account_password"))
+
+    conn = get_db()
+    db_user = conn.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone()
+    if not db_user or not check_password_hash(db_user["password_hash"], current_pw):
+        conn.close()
+        flash("Current password is incorrect.", "danger")
+        return redirect(url_for("account_password"))
+
+    conn.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (generate_password_hash(new_pw), u["id"])
+    )
+    conn.commit()
+    conn.close()
+
+    audit("password_change", "user", u["id"], f"username={u['username']}")
+    flash("Password updated.", "success")
+    return redirect(url_for("index"))
+
 
 # -------------------------
 # Internal app (login required)
@@ -300,7 +416,8 @@ def index():
         "index.html",
         items=items,
         q=q, status=status, category=category,
-        categories=CATEGORIES, statuses=STATUSES,
+        categories=category_names(active_only=True),
+        statuses=STATUSES,
         photo_counts=photo_counts,
         user=current_user()
     )
@@ -309,7 +426,14 @@ def index():
 @app.get("/items/new")
 @login_required
 def new_item():
-    return render_template("form.html", item=None, categories=CATEGORIES, statuses=STATUSES, user=current_user(), matches=[])
+    return render_template(
+        "form.html",
+        item=None,
+        categories=category_names(active_only=True),
+        statuses=STATUSES,
+        user=current_user(),
+        matches=[]
+    )
 
 
 @app.post("/items")
@@ -320,7 +444,7 @@ def create_item():
     kind = (request.form.get("kind", "lost") or "lost").strip()
     title = (request.form.get("title") or "").strip()
     description = (request.form.get("description") or "").strip()
-    category = (request.form.get("category") or "General").strip()
+    category = (request.form.get("category") or "").strip()
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
     contact = (request.form.get("contact") or "").strip()
@@ -331,8 +455,11 @@ def create_item():
     if not title:
         flash("Title is required.", "danger")
         return redirect(url_for("new_item"))
-    if category not in CATEGORIES:
-        category = "General"
+
+    active_cats = set(category_names(active_only=True))
+    if category not in active_cats:
+        category = safe_default_category(active_cats)
+
     if status not in STATUSES:
         status = "open"
 
@@ -399,10 +526,12 @@ def detail(item_id: int):
     if not item:
         conn.close()
         abort(404)
+
     photos = conn.execute(
         "SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC",
         (item_id,)
     ).fetchall()
+
     matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
     conn.close()
 
@@ -428,9 +557,18 @@ def edit_item(item_id: int):
     if not item:
         conn.close()
         abort(404)
+
     matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
     conn.close()
-    return render_template("form.html", item=item, categories=CATEGORIES, statuses=STATUSES, user=current_user(), matches=matches)
+
+    return render_template(
+        "form.html",
+        item=item,
+        categories=category_names(active_only=True),
+        statuses=STATUSES,
+        user=current_user(),
+        matches=matches
+    )
 
 
 @app.post("/items/<int:item_id>/update")
@@ -446,7 +584,7 @@ def update_item(item_id: int):
     kind = (request.form.get("kind") or existing["kind"]).strip()
     title = (request.form.get("title") or "").strip()
     description = (request.form.get("description") or "").strip()
-    category = (request.form.get("category") or existing["category"]).strip()
+    category = (request.form.get("category") or "").strip()
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
     contact = (request.form.get("contact") or "").strip()
@@ -458,10 +596,13 @@ def update_item(item_id: int):
         flash("Title is required.", "danger")
         conn.close()
         return redirect(url_for("edit_item", item_id=item_id))
-    if category not in CATEGORIES:
-        category = existing["category"]
+
+    active_cats = set(category_names(active_only=True))
+    if category not in active_cats:
+        category = safe_default_category(active_cats)
+
     if status not in STATUSES:
-        status = existing["status"]
+        status = existing["status"] if existing["status"] in STATUSES else "open"
 
     if event_date:
         try:
@@ -774,6 +915,67 @@ def users_create():
 
     return redirect(url_for("users"))
 
+@app.post("/admin/users/<int:user_id>/delete")
+@require_role("admin")
+def users_delete(user_id: int):
+    me = current_user()
+    if me and int(me["id"]) == int(user_id):
+        flash("You cannot delete your own account.", "danger")
+        return redirect(url_for("users"))
+
+    conn = get_db()
+
+    u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        abort(404)
+
+    # Optional safety: prevent deleting the last admin
+    admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
+    if u["role"] == "admin" and admins <= 1:
+        conn.close()
+        flash("You cannot delete the last admin user.", "danger")
+        return redirect(url_for("users"))
+
+    # Detach created_by references so item history remains intact
+    conn.execute("UPDATE items SET created_by=NULL WHERE created_by=?", (user_id,))
+
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    audit("delete", "user", user_id, f"username={u['username']}")
+    flash("User deleted.", "warning")
+    return redirect(url_for("users"))
+
+@app.post("/admin/users/<int:user_id>/reset-password")
+@require_role("admin")
+def users_reset_password(user_id: int):
+    me = current_user()
+    if me and int(me["id"]) == int(user_id):
+        flash("Use 'Change password' for your own account.", "danger")
+        return redirect(url_for("users"))
+
+    conn = get_db()
+    u = conn.execute("SELECT id, username FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        abort(404)
+
+    # generate a strong random password (URL-safe)
+    new_pw = secrets.token_urlsafe(12)  # ~16+ chars, good entropy
+
+    conn.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (generate_password_hash(new_pw), user_id)
+    )
+    conn.commit()
+    conn.close()
+
+    audit("password_reset", "user", user_id, f"username={u['username']}")
+    flash(f"Password reset for '{u['username']}'. New password: {new_pw}", "warning")
+    return redirect(url_for("users"))
+
 
 @app.get("/admin/audit")
 @require_role("admin")
@@ -790,6 +992,134 @@ def audit_view():
     return render_template("audit.html", logs=logs, user=current_user())
 
 
+# -------------------------
+# Admin: Categories
+# -------------------------
+@app.get("/admin/categories")
+@require_role("admin")
+def admin_categories():
+    cats = get_categories(active_only=False)
+    return render_template("categories.html", categories=cats, user=current_user())
+
+
+@app.post("/admin/categories")
+@require_role("admin")
+def admin_categories_create():
+    name = (request.form.get("name") or "").strip()
+    sort_order_raw = request.form.get("sort_order") or "100"
+    try:
+        sort_order = int(sort_order_raw)
+    except ValueError:
+        sort_order = 100
+
+    if not name:
+        flash("Category name is required.", "danger")
+        return redirect(url_for("admin_categories"))
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO categories (name, is_active, sort_order, created_at) VALUES (?, 1, ?, ?)",
+            (name, sort_order, now_utc())
+        )
+        conn.commit()
+        audit("create", "category", None, f"name={name} sort_order={sort_order}")
+        flash("Category created.", "success")
+    except sqlite3.IntegrityError:
+        flash("Category already exists.", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for("admin_categories"))
+
+
+@app.post("/admin/categories/<int:cat_id>/toggle")
+@require_role("admin")
+def admin_categories_toggle(cat_id: int):
+    conn = get_db()
+    c = conn.execute("SELECT id, is_active, name FROM categories WHERE id=?", (cat_id,)).fetchone()
+    if not c:
+        conn.close()
+        abort(404)
+
+    new_val = 0 if int(c["is_active"]) == 1 else 1
+    conn.execute("UPDATE categories SET is_active=? WHERE id=?", (new_val, cat_id))
+    conn.commit()
+    conn.close()
+
+    audit("toggle", "category", cat_id, f"name={c['name']} is_active={new_val}")
+    flash("Category " + ("enabled." if new_val == 1 else "disabled."), "warning" if new_val == 0 else "success")
+    return redirect(url_for("admin_categories"))
+
+
+@app.post("/admin/categories/<int:cat_id>/update")
+@require_role("admin")
+def admin_categories_update(cat_id: int):
+    name = (request.form.get("name") or "").strip()
+    sort_order_raw = request.form.get("sort_order") or "100"
+    try:
+        sort_order = int(sort_order_raw)
+    except ValueError:
+        sort_order = 100
+
+    if not name:
+        flash("Category name is required.", "danger")
+        return redirect(url_for("admin_categories"))
+
+    conn = get_db()
+    try:
+        conn.execute("UPDATE categories SET name=?, sort_order=? WHERE id=?", (name, sort_order, cat_id))
+        conn.commit()
+        audit("update", "category", cat_id, f"name={name} sort_order={sort_order}")
+        flash("Category updated.", "success")
+    except sqlite3.IntegrityError:
+        flash("Category name already exists.", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for("admin_categories"))
+
+
+@app.post("/admin/categories/<int:cat_id>/delete")
+@require_role("admin")
+def admin_categories_delete(cat_id: int):
+    conn = get_db()
+
+    cat = conn.execute("SELECT id, name FROM categories WHERE id=?", (cat_id,)).fetchone()
+    if not cat:
+        conn.close()
+        abort(404)
+
+    used = conn.execute("SELECT COUNT(*) AS c FROM items WHERE category=?", (cat["name"],)).fetchone()["c"]
+    if used > 0:
+        conn.close()
+        flash("Category is in use by items. Disable it instead.", "danger")
+        return redirect(url_for("admin_categories"))
+
+    conn.execute("DELETE FROM categories WHERE id=?", (cat_id,))
+    conn.commit()
+    conn.close()
+
+    audit("delete", "category", cat_id, f"name={cat['name']}")
+    flash("Category deleted.", "warning")
+    return redirect(url_for("admin_categories"))
+
+# -------------------------
+# Legal Notice · Privacy Policy
+# -------------------------
+
+@app.get("/legal")
+def legal_notice():
+    return render_template("legal.html", user=current_user())
+
+@app.get("/privacy")
+def privacy_policy():
+    return render_template("privacy.html", user=current_user())
+
+
+# -------------------------
+# Errors
+# -------------------------
 @app.errorhandler(403)
 def forbidden(_):
     return ("403 – Forbidden", 403)

@@ -3,15 +3,17 @@ services:
     build: .
     container_name: lostfound_app
     environment:
-      - SECRET_KEY=please-change-me
-      - BASE_URL=https://your-domain.example
+      - SECRET_KEY=change-this-in-prod
+      - BASE_URL=https://domain.de
+      - DATA_DIR=/app/data
+      - UPLOAD_DIR=/app/uploads
     volumes:
-      - ./lostfound.db:/app/lostfound.db
+      - ./data:/app/data
       - ./uploads:/app/uploads
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.27-alpine
+    build: ./nginx
     container_name: lostfound_nginx
     depends_on:
       - app
@@ -19,11 +21,11 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - DOMAIN=your-domain.example
+      - DOMAIN=domain.de
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./certbot/www:/var/www/certbot:ro
-      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/conf:/etc/letsencrypt:rw
     restart: unless-stopped
 
   certbot:
@@ -32,7 +34,6 @@ services:
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
-    restart: unless-stopped
     entrypoint: /bin/sh -c
     command: >
       "trap exit TERM;
@@ -40,3 +41,4 @@ services:
          certbot renew --webroot -w /var/www/certbot --quiet;
          sleep 12h;
        done"
+    restart: unless-stopped

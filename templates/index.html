@@ -4,10 +4,10 @@
 <div class="card mb-3">
   <div class="card-body">
     <form class="row g-2" method="get" action="{{ url_for('index') }}">
-      <div class="col-md-6">
+      <div class="col-12 col-lg-6">
         <input class="form-control" name="q" placeholder="Search (title, location, contact...)" value="{{ q }}">
       </div>
-      <div class="col-md-2">
+      <div class="col-12 col-md-6 col-lg-2">
         <select class="form-select" name="status">
           <option value="">Status (all)</option>
           {% for s in statuses %}
@@ -15,7 +15,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2">
+      <div class="col-12 col-md-6 col-lg-2">
         <select class="form-select" name="category">
           <option value="">Category (all)</option>
           {% for c in categories %}
@@ -23,7 +23,7 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2 d-grid">
+      <div class="col-12 col-lg-2 d-grid">
         <button class="btn btn-primary" type="submit">Filter</button>
       </div>
     </form>
@@ -40,8 +40,8 @@
 <div class="list-group">
   {% for item in items %}
     <a class="list-group-item list-group-item-action" href="{{ url_for('detail', item_id=item['id']) }}">
-      <div class="d-flex justify-content-between align-items-start">
-        <div>
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <div class="me-2">
           <div class="fw-bold">
             {% if item['kind'] == 'lost' %}🔎 Lost:{% else %}📦 Found:{% endif %}
             {{ item['title'] }}
@@ -54,7 +54,7 @@
             {{ item['category'] }} · {{ item['location'] or "—" }} · {{ item['event_date'] or "—" }}
           </div>
         </div>
-        <span class="badge text-bg-secondary">{{ item['status'] }}</span>
+        <span class="badge text-bg-secondary align-self-start">{{ item['status'] }}</span>
       </div>
     </a>
   {% else %}

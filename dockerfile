@@ -1,23 +1,17 @@
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
 WORKDIR /app
 
-# Minimal libs for Pillow
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libjpeg62-turbo \
-    zlib1g \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --upgrade pip
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . .
+COPY app.py /app/app.py
+COPY templates /app/templates
 
-RUN mkdir -p /app/uploads
+# runtime dirs (also mounted by volumes)
+RUN mkdir -p /app/data /app/uploads
 
 EXPOSE 8000
-
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app", "--workers", "2", "--timeout", "60"]
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]

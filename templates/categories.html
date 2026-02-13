@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-3">
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Create category</h5>
+        <form method="post" action="{{ url_for('admin_categories_create') }}">
+          <div class="mb-2">
+            <label class="form-label">Name</label>
+            <input class="form-control" name="name" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Sort order</label>
+            <input class="form-control" name="sort_order" type="number" value="100">
+          </div>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Categories</h5>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Active</th><th>Order</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in categories %}
+                <tr>
+                  <td>{{ c['id'] }}</td>
+                  <td>
+                    <form class="d-flex gap-2" method="post" action="{{ url_for('admin_categories_update', cat_id=c['id']) }}">
+                      <input class="form-control form-control-sm" name="name" value="{{ c['name'] }}" required>
+                      <input class="form-control form-control-sm" style="max-width:110px" name="sort_order" type="number" value="{{ c['sort_order'] }}">
+                      <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+                    </form>
+                  </td>
+                  <td>
+                    {% if c['is_active'] == 1 %}<span class="badge text-bg-success">Yes</span>{% else %}<span class="badge text-bg-secondary">No</span>{% endif %}
+                  </td>
+                  <td>{{ c['sort_order'] }}</td>
+                  <td class="d-flex gap-2">
+                    <form method="post" action="{{ url_for('admin_categories_toggle', cat_id=c['id']) }}">
+                      <button class="btn btn-sm btn-outline-warning" type="submit">
+                        {% if c['is_active'] == 1 %}Disable{% else %}Enable{% endif %}
+                      </button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin_categories_delete', cat_id=c['id']) }}"
+                          onsubmit="return confirm('Delete category?');">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="text-muted small">
+          Tip: If a category is used by items, delete is blocked—disable it instead.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
