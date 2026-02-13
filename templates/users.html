@@ -9,6 +9,7 @@
         <h5 class="card-title">Create user</h5>
 
         <form method="post" action="{{ url_for('users_create') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label">Username</label>
             <input class="form-control" name="username" required>
@@ -75,6 +76,10 @@
                           action="{{ url_for('users_reset_password', user_id=u['id']) }}"
                           onsubmit="return confirm('Reset password for {{ u['username'] }}?');"
                           class="d-inline">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                      <input class="form-control form-control-sm d-inline-block" style="width: 180px;"
+                             type="password" name="new_password" minlength="10"
+                             placeholder="New password (min 10)" required>
                       <button class="btn btn-sm btn-outline-warning" type="submit">Reset password</button>
                     </form>
 
@@ -82,6 +87,7 @@
                           action="{{ url_for('users_delete', user_id=u['id']) }}"
                           onsubmit="return confirm('Delete user {{ u['username'] }}?');"
                           class="d-inline ms-1">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                       <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
                     </form>
                   {% else %}

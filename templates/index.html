@@ -43,7 +43,7 @@
       <div class="d-flex justify-content-between align-items-start gap-2">
         <div class="me-2">
           <div class="fw-bold">
-            {% if item['kind'] == 'lost' %}🔎 Lost:{% else %}📦 Found:{% endif %}
+            {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
             {{ item['title'] }}
             {% set pc = photo_counts.get(item['id'], 0) %}
             {% if pc %}

@@ -3,8 +3,12 @@ services:
     build: .
     container_name: lostfound_app
     environment:
-      - SECRET_KEY=change-this-in-prod
-      - BASE_URL=https://domain.de
+      - SECRET_KEY=${SECRET_KEY}
+      - BASE_URL=${BASE_URL}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
+      - LOGIN_WINDOW_SECONDS=${LOGIN_WINDOW_SECONDS:-900}
+      - LOGIN_MAX_ATTEMPTS=${LOGIN_MAX_ATTEMPTS:-5}
       - DATA_DIR=/app/data
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -21,7 +25,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - DOMAIN=domain.de
+      - DOMAIN=${DOMAIN}
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./certbot/www:/var/www/certbot:ro

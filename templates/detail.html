@@ -6,7 +6,7 @@
     <div class="d-flex justify-content-between align-items-start gap-2">
       <div>
         <h5 class="card-title mb-1">
-          {% if item['kind'] == 'lost' %}🔎 Lost:{% else %}📦 Found:{% endif %}
+          {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
           {{ item['title'] }}
         </h5>
         <div class="text-muted small">
@@ -78,6 +78,7 @@
               <small class="text-muted">{{ p['uploaded_at'] }}</small>
               <form method="post" action="{{ url_for('delete_photo', photo_id=p['id']) }}"
                     onsubmit="return confirm('Delete this photo?');">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
               </form>
             </div>
@@ -99,6 +100,7 @@
 
       <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
             onsubmit="return confirm('Toggle public link?');">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-outline-warning" type="submit">
           {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
             Lock public link
@@ -110,6 +112,7 @@
 
       <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
             onsubmit="return confirm('Toggle public photos visibility?');">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-outline-secondary" type="submit">
           {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
             Privacy: public photos OFF
@@ -122,11 +125,13 @@
       {% if user and user['role'] == 'admin' %}
         <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
               onsubmit="return confirm('Regenerate public link? The old one will stop working.');">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-outline-danger" type="submit">Regenerate public link</button>
         </form>
 
         <form method="post" action="{{ url_for('delete_item', item_id=item['id']) }}"
               onsubmit="return confirm('Delete this item? (Admin)');">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-outline-danger" type="submit">Delete</button>
         </form>
       {% endif %}

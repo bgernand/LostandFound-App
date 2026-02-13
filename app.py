@@ -11,13 +11,18 @@ from pathlib import Path
 import csv
 import io
 import os
+import time
 from io import BytesIO
 import qrcode
 import secrets
+from urllib.parse import urlsplit
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-me-please")
+secret_key = os.environ.get("SECRET_KEY")
+if not secret_key:
+    raise RuntimeError("SECRET_KEY environment variable is required.")
+app.secret_key = secret_key
 
 # -------------------------
 # Paths / Storage
@@ -32,6 +37,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp"}
 
 BASE_URL = os.environ.get("BASE_URL", "").strip()  # e.g. https://lostandfound.example
+LOGIN_WINDOW_SECONDS = int(os.environ.get("LOGIN_WINDOW_SECONDS", "900"))  # 15 minutes
+LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
 
 # -------------------------
 # Enums
@@ -147,6 +154,20 @@ def init_db():
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            ip_address TEXT NOT NULL,
+            was_success INTEGER NOT NULL,
+            attempted_at INTEGER NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup
+        ON login_attempts (username, ip_address, attempted_at)
+    """)
+
     # Public link features
     ensure_column(conn, "items", "public_token", "TEXT")
     ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")
@@ -174,10 +195,22 @@ def init_db():
     # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
+        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
+        initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+        if not initial_admin_password:
+            conn.close()
+            raise RuntimeError(
+                "INITIAL_ADMIN_PASSWORD environment variable is required for first startup."
+            )
         conn.execute("""
             INSERT INTO users (username, password_hash, role, created_at)
             VALUES (?, ?, ?, ?)
-        """, ("admin", generate_password_hash("admin123"), "admin", now_utc()))
+        """, (
+            initial_admin_username,
+            generate_password_hash(initial_admin_password),
+            "admin",
+            now_utc()
+        ))
         conn.commit()
 
     # Seed default categories if empty
@@ -218,7 +251,16 @@ def _ensure_db():
 
 @app.context_processor
 def inject_globals():
-    return dict(STATUS_COLORS=STATUS_COLORS, CONTACT_WAYS=CONTACT_WAYS)
+    return dict(STATUS_COLORS=STATUS_COLORS, CONTACT_WAYS=CONTACT_WAYS, csrf_token=csrf_token)
+
+
+@app.before_request
+def csrf_protect():
+    if request.method == "POST":
+        token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token") or ""
+        expected = session.get("_csrf_token") or ""
+        if not token or not expected or not secrets.compare_digest(token, expected):
+            abort(400)
 
 
 # -------------------------
@@ -301,6 +343,53 @@ def safe_default_category(active_cats: set[str]) -> str:
     if "Other" in active_cats:
         return "Other"
     return next(iter(active_cats), "General")
+
+
+def csrf_token():
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+def safe_next_url(target: str | None) -> str:
+    if not target:
+        return url_for("index")
+    target = target.strip()
+    parts = urlsplit(target)
+    if parts.scheme or parts.netloc:
+        return url_for("index")
+    if not target.startswith("/") or target.startswith("//"):
+        return url_for("index")
+    return target
+
+
+def client_ip() -> str:
+    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return xff or (request.remote_addr or "unknown")
+
+
+def is_login_blocked(conn, username: str, ip_addr: str, now_ts: int) -> bool:
+    cutoff = now_ts - LOGIN_WINDOW_SECONDS
+    row = conn.execute("""
+        SELECT COUNT(*) AS c
+        FROM login_attempts
+        WHERE username=? AND ip_address=? AND was_success=0 AND attempted_at>=?
+    """, (username, ip_addr, cutoff)).fetchone()
+    return int(row["c"]) >= LOGIN_MAX_ATTEMPTS
+
+
+def record_login_attempt(conn, username: str, ip_addr: str, was_success: bool, now_ts: int):
+    conn.execute("""
+        INSERT INTO login_attempts (username, ip_address, was_success, attempted_at)
+        VALUES (?, ?, ?, ?)
+    """, (username, ip_addr, 1 if was_success else 0, now_ts))
+    # Keep table size bounded.
+    conn.execute(
+        "DELETE FROM login_attempts WHERE attempted_at < ?",
+        (now_ts - max(LOGIN_WINDOW_SECONDS * 4, 86400),)
+    )
 
 
 # -------------------------
@@ -444,24 +533,43 @@ def privacy_policy():
 # -------------------------
 @app.get("/login")
 def login():
-    return render_template("login.html", next=request.args.get("next") or url_for("index"))
+    return render_template("login.html", next=safe_next_url(request.args.get("next")))
 
 
 @app.post("/login")
 def login_post():
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
-    nxt = request.form.get("next") or url_for("index")
+    nxt = safe_next_url(request.form.get("next"))
+    now_ts = int(time.time())
+    ip_addr = client_ip()
 
     conn = get_db()
+    if is_login_blocked(conn, username, ip_addr, now_ts):
+        conn.close()
+        flash("Too many failed logins. Please wait 15 minutes and try again.", "danger")
+        return redirect(url_for("login", next=nxt))
+
     u = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    conn.close()
 
     if not u or not check_password_hash(u["password_hash"], password):
+        record_login_attempt(conn, username, ip_addr, False, now_ts)
+        conn.commit()
+        conn.close()
         flash("Login failed.", "danger")
         return redirect(url_for("login", next=nxt))
 
+    record_login_attempt(conn, username, ip_addr, True, now_ts)
+    conn.execute(
+        "DELETE FROM login_attempts WHERE username=? AND ip_address=? AND was_success=0",
+        (username, ip_addr)
+    )
+    conn.commit()
+    conn.close()
+
+    session.clear()
     session["user_id"] = u["id"]
+    session["_csrf_token"] = secrets.token_urlsafe(32)
     audit("login", "user", u["id"], f"username={u['username']}")
     return redirect(nxt)
 
@@ -615,20 +723,23 @@ def create_item():
     conn = get_db()
     cur = conn.execute("""
         INSERT INTO items (
-          kind, title, description, category, location, event_date,
-          status, created_by, public_token, created_at,
-          lost_what, lost_last_name, lost_first_name, lost_group_leader,
-          lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
-          lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
-          postage_price, postage_paid
+        kind, title, description, category, location, event_date,
+        status, created_by, public_token, created_at,
+        lost_what, lost_last_name, lost_first_name, lost_group_leader,
+        lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
+        lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
+        postage_price, postage_paid
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?)
+        VALUES (
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?
+        )
     """, (
-        kind, title, description, category, location, event_date, contact,
+        kind, title, description, category, location, event_date,
         status, u["id"], public_token, now_utc(),
         (lost.get("lost_what") if kind == "lost" else None),
         (lost.get("lost_last_name") if kind == "lost" else None),
@@ -648,6 +759,7 @@ def create_item():
         (lost.get("postage_price") if kind == "lost" else None),
         (lost.get("postage_paid") if kind == "lost" else 0),
     ))
+
     item_id = cur.lastrowid
 
     # Photos
@@ -772,6 +884,7 @@ def update_item(item_id: int):
     
     if not description:
         flash("Description is required.", "danger")
+        conn.close()
         return redirect(url_for("edit_item", item_id=item_id))
 
     active_cats = set(category_names(active_only=True))
@@ -800,7 +913,7 @@ def update_item(item_id: int):
             postage_price=?, postage_paid=?
         WHERE id=?
     """, (
-        kind, title, description, category, location, event_date, contact, status, now_utc(),
+        kind, title, description, category, location, event_date, status, now_utc(),
         (lost.get("lost_what") if kind == "lost" else None),
         (lost.get("lost_last_name") if kind == "lost" else None),
         (lost.get("lost_first_name") if kind == "lost" else None),
@@ -850,9 +963,16 @@ def update_item(item_id: int):
 @require_role("admin")
 def delete_item(item_id: int):
     conn = get_db()
+    photos = conn.execute("SELECT filename FROM photos WHERE item_id=?", (item_id,)).fetchall()
     conn.execute("DELETE FROM items WHERE id=?", (item_id,))
     conn.commit()
     conn.close()
+
+    for p in photos:
+        path = (UPLOAD_DIR / p["filename"]).resolve()
+        if UPLOAD_DIR.resolve() in path.parents and path.exists():
+            path.unlink()
+
     audit("delete", "item", item_id)
     flash("Item deleted (admin).", "warning")
     return redirect(url_for("index"))
@@ -1131,7 +1251,11 @@ def users_reset_password(user_id: int):
         conn.close()
         abort(404)
 
-    new_pw = secrets.token_urlsafe(12)
+    new_pw = request.form.get("new_password") or ""
+    if len(new_pw) < 10:
+        conn.close()
+        flash("New password must be at least 10 characters long.", "danger")
+        return redirect(url_for("users"))
 
     conn.execute(
         "UPDATE users SET password_hash=? WHERE id=?",
@@ -1141,7 +1265,7 @@ def users_reset_password(user_id: int):
     conn.close()
 
     audit("password_reset", "user", user_id, f"username={u['username']}")
-    flash(f"Password reset for '{u['username']}'. New password: {new_pw}", "warning")
+    flash(f"Password reset for '{u['username']}'.", "warning")
     return redirect(url_for("users"))
 
 
@@ -1313,4 +1437,4 @@ def forbidden(_):
 
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True)
+    app.run(debug=(os.environ.get("FLASK_DEBUG") == "1"))

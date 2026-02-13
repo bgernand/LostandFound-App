@@ -8,13 +8,14 @@
     <form method="post"
           enctype="multipart/form-data"
           action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <div class="row g-3">
 
         <div class="col-12 col-md-4">
           <label class="form-label">Type</label>
           <select class="form-select" name="kind" id="kindSel">
-            <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost</option>
-            <option value="found" {% if item and item['kind']=='found' %}selected{% endif %}>Found</option>
+            <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost Request</option>
+            <option value="found" {% if item and item['kind']=='found' %}selected{% endif %}>Found Item</option>
           </select>
         </div>
 
@@ -68,7 +69,7 @@
             <div class="col-12 col-md-6">
               <label class="form-label">What is lost *</label>
               <input class="form-control" name="lost_what" id="lostWhat"
-                     value="{{ item['lost_what'] if item else '' }}" required>
+                     value="{{ item['lost_what'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
@@ -80,25 +81,25 @@
             <div class="col-12 col-md-6">
               <label class="form-label">Last Name *</label>
               <input class="form-control" name="lost_last_name"
-                     value="{{ item['lost_last_name'] if item else '' }}" required>
+                     value="{{ item['lost_last_name'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">First Name *</label>
               <input class="form-control" name="lost_first_name"
-                     value="{{ item['lost_first_name'] if item else '' }}" required>
+                     value="{{ item['lost_first_name'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Street *</label>
               <input class="form-control" name="lost_street"
-                     value="{{ item['lost_street'] if item else '' }}" required>
+                     value="{{ item['lost_street'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-3">
               <label class="form-label">Number *</label>
               <input class="form-control" name="lost_number"
-                     value="{{ item['lost_number'] if item else '' }}" required>
+                     value="{{ item['lost_number'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-3">
@@ -110,31 +111,31 @@
             <div class="col-12 col-md-4">
               <label class="form-label">Postcode *</label>
               <input class="form-control" name="lost_postcode"
-                     value="{{ item['lost_postcode'] if item else '' }}" required>
+                     value="{{ item['lost_postcode'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Town *</label>
               <input class="form-control" name="lost_town"
-                     value="{{ item['lost_town'] if item else '' }}" required>
+                     value="{{ item['lost_town'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Country *</label>
               <input class="form-control" name="lost_country"
-                     value="{{ item['lost_country'] if item else '' }}" required>
+                     value="{{ item['lost_country'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">E-Mail address *</label>
               <input class="form-control" type="email" name="lost_email"
-                     value="{{ item['lost_email'] if item else '' }}" required>
+                     value="{{ item['lost_email'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Phone number (with countrycode: +….) *</label>
               <input class="form-control" name="lost_phone"
-                     value="{{ item['lost_phone'] if item else '' }}" required>
+                     value="{{ item['lost_phone'] if item else '' }}">
             </div>
 
             <div class="col-12 col-md-6">
@@ -211,14 +212,41 @@
   const titleInput = document.getElementById('titleInput');
   const lostWhat = document.getElementById('lostWhat');
 
+  // Fields required ONLY for Lost Request
+  const lostRequiredNames = [
+    "lost_what",
+    "lost_last_name",
+    "lost_first_name",
+    "lost_street",
+    "lost_number",
+    "lost_postcode",
+    "lost_town",
+    "lost_country",
+    "lost_email",
+    "lost_phone",
+  ];
+
+  function setRequiredByName(names, required) {
+    names.forEach(n => {
+      const el = document.querySelector(`[name="${n}"]`);
+      if (el) el.required = required;
+    });
+  }
+
   function sync() {
     const isLost = kindSel && kindSel.value === 'lost';
 
+    // show/hide lost block
     if (lostFields) lostFields.classList.toggle('d-none', !isLost);
 
-    // Hide title for lost (auto-filled from "What is lost")
+    // title should be required only for Found Item
     if (titleBlock) titleBlock.classList.toggle('d-none', isLost);
+    if (titleInput) titleInput.required = !isLost;
 
+    // lost fields are required only for Lost Request
+    setRequiredByName(lostRequiredNames, isLost);
+
+    // auto-fill title from what is lost
     if (isLost && titleInput && lostWhat) {
       titleInput.value = lostWhat.value || "";
     }

@@ -20,7 +20,10 @@
 
     <dl class="row">
       <dt class="col-sm-3">Item</dt><dd class="col-sm-9">{{ item['title'] }}</dd>
-      <dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ item['kind'] }}</dd>
+      <dt class="col-sm-3">Type</dt>
+        <dd class="col-sm-9">
+          {% if item['kind'] == 'lost' %}Lost Request{% else %}Found Item{% endif %}
+        </dd>
       <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] }}</dd>
       <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
       <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
