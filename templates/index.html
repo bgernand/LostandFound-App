@@ -149,6 +149,7 @@
                 <a class="text-decoration-none" href="{{ url_for('detail', item_id=item['id']) }}">
                   {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
                   {{ item['title'] }}
+                  <span class="text-muted fw-normal">(Item ID: {{ item['id'] }})</span>
                 </a>
                 {% set pc = photo_counts.get(item['id'], 0) %}
                 {% if pc %}

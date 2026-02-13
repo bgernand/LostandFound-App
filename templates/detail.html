@@ -8,6 +8,7 @@
         <h5 class="card-title mb-1">
           {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
           {{ item['title'] }}
+          <span class="text-muted fs-6">(Item ID: {{ item['id'] }})</span>
         </h5>
         <div class="text-muted small">
           Created: {{ item['created_at'] }}{% if item['updated_at'] %} · Updated: {{ item['updated_at'] }}{% endif %}
@@ -21,9 +22,10 @@
     <hr>
 
     <dl class="row">
-      <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] }}</dd>
+      <dt class="col-sm-3">Status</dt><dd class="col-sm-9">{{ item['status'] or "—" }}</dd>
+      <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] or "—" }}</dd>
       <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
-      <dt class="col-sm-3">Date Lost / Found</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
+      <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
       <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ item['description'] or "—" }}</dd>
       <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">{{ item['lost_notes'] or "—" }}</dd>
     </dl>
@@ -34,15 +36,11 @@
       <dl class="row">
         <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9">{{ item['lost_last_name'] or "—" }}</dd>
         <dt class="col-sm-3">First Name</dt><dd class="col-sm-9">{{ item['lost_first_name'] or "—" }}</dd>
-        <dt class="col-sm-3">Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
-
-        <dt class="col-sm-3">Street</dt>
-        <dd class="col-sm-9">
-          {{ item['lost_street'] or "" }} {{ item['lost_number'] or "" }}
-          {% if item['lost_additional'] %}<span class="text-muted">({{ item['lost_additional'] }})</span>{% endif %}
-        </dd>
-
-        <dt class="col-sm-3">Postcode / Town</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "" }} {{ item['lost_town'] or "" }}</dd>
+        <dt class="col-sm-3">Street</dt><dd class="col-sm-9">{{ item['lost_street'] or "—" }}</dd>
+        <dt class="col-sm-3">Number</dt><dd class="col-sm-9">{{ item['lost_number'] or "—" }}</dd>
+        <dt class="col-sm-3">Additional (floor, etc.)</dt><dd class="col-sm-9">{{ item['lost_additional'] or "—" }}</dd>
+        <dt class="col-sm-3">Postcode</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "—" }}</dd>
+        <dt class="col-sm-3">Town</dt><dd class="col-sm-9">{{ item['lost_town'] or "—" }}</dd>
         <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
 
         <dt class="col-sm-3">E-Mail</dt>
@@ -64,6 +62,7 @@
 
         <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
         <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
+        <dt class="col-sm-3">Name of Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
 
         <dt class="col-sm-3">Postage</dt>
         <dd class="col-sm-9">
