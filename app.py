@@ -92,6 +92,24 @@ def ensure_column(conn, table, col_name, col_def_sql):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def_sql}")
 
 
+def ensure_item_links_schema(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS item_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            found_item_id INTEGER NOT NULL,
+            lost_item_id INTEGER NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(found_item_id) REFERENCES items(id),
+            FOREIGN KEY(lost_item_id) REFERENCES items(id),
+            FOREIGN KEY(created_by) REFERENCES users(id),
+            UNIQUE(found_item_id, lost_item_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)")
+
+
 def init_db():
     conn = get_db()
 
@@ -156,21 +174,7 @@ def init_db():
         )
     """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS item_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            found_item_id INTEGER NOT NULL,
-            lost_item_id INTEGER NOT NULL,
-            created_by INTEGER,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(found_item_id) REFERENCES items(id),
-            FOREIGN KEY(lost_item_id) REFERENCES items(id),
-            FOREIGN KEY(created_by) REFERENCES users(id),
-            UNIQUE(found_item_id, lost_item_id)
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)")
+    ensure_item_links_schema(conn)
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS login_attempts (
@@ -571,6 +575,7 @@ def normalize_link_pair(item_a, item_b):
 
 
 def get_linked_items(conn, item):
+    ensure_item_links_schema(conn)
     item_id = int(item["id"])
     if item["kind"] == "lost":
         rows = conn.execute("""
@@ -1081,6 +1086,7 @@ def create_link(item_id: int):
 
     u = current_user()
     conn = get_db()
+    ensure_item_links_schema(conn)
     src = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (item_id,)).fetchone()
     tgt = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (target_id,)).fetchone()
     if not src or not tgt:
@@ -1123,6 +1129,7 @@ def delete_link(item_id: int, target_id: int):
         return redirect(url_for("detail", item_id=item_id))
 
     conn = get_db()
+    ensure_item_links_schema(conn)
     src = conn.execute("SELECT id, kind FROM items WHERE id=?", (item_id,)).fetchone()
     tgt = conn.execute("SELECT id, kind FROM items WHERE id=?", (target_id,)).fetchone()
     if not src or not tgt:
@@ -1155,6 +1162,7 @@ def delete_link(item_id: int, target_id: int):
 @require_role("admin")
 def delete_item(item_id: int):
     conn = get_db()
+    ensure_item_links_schema(conn)
     photos = conn.execute("SELECT filename FROM photos WHERE item_id=?", (item_id,)).fetchall()
     conn.execute("DELETE FROM item_links WHERE found_item_id=? OR lost_item_id=?", (item_id, item_id))
     conn.execute("DELETE FROM items WHERE id=?", (item_id,))
