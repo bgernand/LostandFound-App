@@ -77,6 +77,11 @@
           {% if errors.get('description') %}<div class="invalid-feedback">{{ errors.get('description') }}</div>{% endif %}
         </div>
 
+        <div class="col-12">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" rows="3" name="lost_notes">{{ item['lost_notes'] if item else '' }}</textarea>
+        </div>
+
         <!-- LOST DETAILS -->
         <div class="col-12" id="lostFields">
           <hr>
@@ -183,11 +188,6 @@
               {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
             </div>
 
-            <div class="col-12">
-              <label class="form-label">Notes</label>
-              <textarea class="form-control" rows="3" name="lost_notes">{{ item['lost_notes'] if item else '' }}</textarea>
-            </div>
-
             <div class="col-12 col-md-4">
               <label class="form-label">Price of postage</label>
               <input class="form-control {% if errors.get('postage_price') %}is-invalid{% endif %}" name="postage_price" inputmode="decimal"
@@ -229,6 +229,14 @@
           <a href="{{ url_for('detail', item_id=m['id']) }}">
             #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
           </a>
+          {% if m.get('match_score') %}
+            <span class="badge text-bg-dark ms-1">Score {{ m['match_score'] }}</span>
+          {% endif %}
+          {% if m.get('match_reasons') %}
+            {% for reason in m['match_reasons'] %}
+              <span class="badge text-bg-secondary ms-1">{{ reason }}</span>
+            {% endfor %}
+          {% endif %}
         </li>
       {% endfor %}
     </ul>

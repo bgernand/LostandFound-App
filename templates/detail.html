@@ -25,6 +25,7 @@
       <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
       <dt class="col-sm-3">Date Lost / Found</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
       <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ item['description'] or "—" }}</dd>
+      <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">{{ item['lost_notes'] or "—" }}</dd>
     </dl>
 
     {% if item['kind'] == 'lost' %}
@@ -49,8 +50,6 @@
 
         <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
         <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
-
-        <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">{{ item['lost_notes'] or "—" }}</dd>
 
         <dt class="col-sm-3">Postage</dt>
         <dd class="col-sm-9">
@@ -101,6 +100,46 @@
         <button class="btn btn-outline-primary" type="submit">Create link</button>
       </div>
     </form>
+
+    <form class="row g-2 align-items-end mb-2" method="get" action="{{ url_for('detail', item_id=item['id']) }}">
+      <div class="col-12 col-md-6">
+        <label class="form-label">Search and link</label>
+        <input class="form-control" name="link_q" value="{{ link_q or '' }}"
+               placeholder='Search {{ "Found Items" if item["kind"]=="lost" else "Lost Requests" }} by ID, title, description, category, location'>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button class="btn btn-outline-secondary" type="submit">Search</button>
+      </div>
+    </form>
+
+    {% if link_q %}
+      <div class="small text-muted mb-2">
+        Search results for "{{ link_q }}"
+      </div>
+      {% if link_candidates and link_candidates|length %}
+        <ul class="list-group mb-3">
+          {% for c in link_candidates %}
+            <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+              <div>
+                <a href="{{ url_for('detail', item_id=c['id']) }}">
+                  #{{ c['id'] }} - {{ c['title'] }}
+                </a>
+                <div class="small text-muted">
+                  {{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}
+                </div>
+              </div>
+              <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-muted small mb-3">No matching items found.</div>
+      {% endif %}
+    {% endif %}
 
     {% if photos and photos|length %}
       <hr>
@@ -187,6 +226,14 @@
           <a href="{{ url_for('detail', item_id=m['id']) }}">
             #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
           </a>
+          {% if m.get('match_score') %}
+            <span class="badge text-bg-dark ms-1">Score {{ m['match_score'] }}</span>
+          {% endif %}
+          {% if m.get('match_reasons') %}
+            {% for reason in m['match_reasons'] %}
+              <span class="badge text-bg-secondary ms-1">{{ reason }}</span>
+            {% endfor %}
+          {% endif %}
           <form class="d-inline ms-2" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="target_item_id" value="{{ m['id'] }}">

@@ -12,10 +12,12 @@ import csv
 import io
 import os
 import time
+import re
 from io import BytesIO
 import qrcode
 import secrets
 from urllib.parse import urlsplit
+from difflib import SequenceMatcher
 
 
 app = Flask(__name__)
@@ -71,6 +73,12 @@ ROLES = ["admin", "staff"]
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
 
 _db_inited = False  # Flask 3 compatible init
+_fts5_available = None
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "to", "for", "with", "in", "on",
+    "is", "are", "am", "my", "your", "our", "der", "die", "das", "und",
+    "ein", "eine", "mit", "im", "am", "zu", "von", "la", "le", "de"
+}
 
 
 # -------------------------
@@ -108,6 +116,69 @@ def ensure_item_links_schema(conn):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)")
+
+
+def ensure_item_search_schema(conn):
+    global _fts5_available
+    if _fts5_available is False:
+        return False
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
+                item_id UNINDEXED,
+                kind,
+                title,
+                description,
+                category,
+                location,
+                lost_last_name,
+                lost_first_name
+            )
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS item_search_ai AFTER INSERT ON items BEGIN
+              INSERT INTO item_search(
+                rowid, item_id, kind, title, description, category, location, lost_last_name, lost_first_name
+              ) VALUES (
+                new.id, new.id, new.kind,
+                coalesce(new.title, ''), coalesce(new.description, ''), coalesce(new.category, ''),
+                coalesce(new.location, ''), coalesce(new.lost_last_name, ''), coalesce(new.lost_first_name, '')
+              );
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS item_search_au AFTER UPDATE ON items BEGIN
+              DELETE FROM item_search WHERE rowid = old.id;
+              INSERT INTO item_search(
+                rowid, item_id, kind, title, description, category, location, lost_last_name, lost_first_name
+              ) VALUES (
+                new.id, new.id, new.kind,
+                coalesce(new.title, ''), coalesce(new.description, ''), coalesce(new.category, ''),
+                coalesce(new.location, ''), coalesce(new.lost_last_name, ''), coalesce(new.lost_first_name, '')
+              );
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS item_search_ad AFTER DELETE ON items BEGIN
+              DELETE FROM item_search WHERE rowid = old.id;
+            END
+        """)
+        conn.execute("""
+            INSERT INTO item_search(
+                rowid, item_id, kind, title, description, category, location, lost_last_name, lost_first_name
+            )
+            SELECT
+                i.id, i.id, i.kind,
+                coalesce(i.title, ''), coalesce(i.description, ''), coalesce(i.category, ''),
+                coalesce(i.location, ''), coalesce(i.lost_last_name, ''), coalesce(i.lost_first_name, '')
+            FROM items i
+            WHERE NOT EXISTS (SELECT 1 FROM item_search s WHERE s.rowid = i.id)
+        """)
+        _fts5_available = True
+        return True
+    except sqlite3.Error:
+        _fts5_available = False
+        return False
 
 
 def init_db():
@@ -175,6 +246,7 @@ def init_db():
     """)
 
     ensure_item_links_schema(conn)
+    ensure_item_search_schema(conn)
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS login_attempts (
@@ -543,26 +615,188 @@ def render_item_form(item=None, matches=None, errors=None):
     )
 
 
-def find_matches(conn, kind, title, category, location):
-    other = "found" if kind == "lost" else "lost"
-    q = (title or "").strip()
-    like = f"%{q[:20]}%" if q else "%"
+def tokenize_text(text: str):
+    txt = (text or "").lower()
+    parts = re.findall(r"[a-z0-9]+", txt)
+    return [p for p in parts if p and p not in STOPWORDS]
 
-    rows = conn.execute("""
-        SELECT id, kind, title, category, location, status, created_at
+
+def normalized_text(text: str):
+    return " ".join(tokenize_text(text))
+
+
+def parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def linked_other_ids(conn, item_id: int, kind: str):
+    ensure_item_links_schema(conn)
+    if not item_id:
+        return set()
+    if kind == "lost":
+        rows = conn.execute("SELECT found_item_id AS oid FROM item_links WHERE lost_item_id=?", (item_id,)).fetchall()
+    else:
+        rows = conn.execute("SELECT lost_item_id AS oid FROM item_links WHERE found_item_id=?", (item_id,)).fetchall()
+    return {int(r["oid"]) for r in rows}
+
+
+def fts_candidate_ids(conn, other_kind: str, query_text: str, limit: int = 120):
+    tokens = tokenize_text(query_text)[:6]
+    if not tokens:
+        return set()
+    if not ensure_item_search_schema(conn):
+        return set()
+    match_expr = " OR ".join([f"{t}*" for t in tokens])
+    try:
+        rows = conn.execute("""
+            SELECT item_id
+            FROM item_search
+            WHERE kind=? AND item_search MATCH ?
+            LIMIT ?
+        """, (other_kind, match_expr, limit)).fetchall()
+        return {int(r["item_id"]) for r in rows}
+    except sqlite3.Error:
+        return set()
+
+
+def score_match(src, cand, fts_hit=False):
+    score = 0
+    reasons = []
+
+    src_title_tokens = set(tokenize_text(src.get("title") or ""))
+    cand_title_tokens = set(tokenize_text(cand["title"] or ""))
+    if src_title_tokens and cand_title_tokens:
+        overlap = len(src_title_tokens & cand_title_tokens) / max(1, len(src_title_tokens))
+        if overlap > 0:
+            score += int(40 * overlap)
+            reasons.append("Title keywords")
+
+    src_title_norm = normalized_text(src.get("title") or "")
+    cand_title_norm = normalized_text(cand["title"] or "")
+    if src_title_norm and cand_title_norm:
+        sim = SequenceMatcher(None, src_title_norm, cand_title_norm).ratio()
+        if sim >= 0.45:
+            score += int(25 * sim)
+            reasons.append("Title similar")
+
+    if (src.get("category") or "").strip() and (cand["category"] or "").strip():
+        if src.get("category") == cand["category"]:
+            score += 35
+            reasons.append("Category")
+
+    src_loc_tokens = set(tokenize_text(src.get("location") or ""))
+    cand_loc_tokens = set(tokenize_text(cand["location"] or ""))
+    if src_loc_tokens and cand_loc_tokens and (src_loc_tokens & cand_loc_tokens):
+        score += 25
+        reasons.append("Location")
+
+    src_date = parse_iso_date(src.get("event_date"))
+    cand_date = parse_iso_date(cand["event_date"])
+    if src_date and cand_date:
+        dd = abs((src_date - cand_date).days)
+        if dd <= 3:
+            score += 20
+            reasons.append("Date +/-3d")
+        elif dd <= 14:
+            score += 10
+            reasons.append("Date +/-14d")
+
+    if fts_hit:
+        score += 8
+        reasons.append("Full-text")
+
+    # More actionable statuses are often more relevant for operators.
+    if cand["status"] in {"Found", "Found, not assigned", "In contact", "Ready to send"}:
+        score += 5
+
+    dedup_reasons = []
+    for r in reasons:
+        if r not in dedup_reasons:
+            dedup_reasons.append(r)
+    return score, dedup_reasons
+
+
+def find_matches(conn, kind, title, category, location, event_date=None, item_id=None):
+    other = "found" if kind == "lost" else "lost"
+    src = {
+        "kind": kind,
+        "title": (title or ""),
+        "category": (category or ""),
+        "location": (location or ""),
+        "event_date": (event_date or "")
+    }
+
+    q = (title or "").strip()
+    like_q = f"%{q}%"
+    like_loc = f"%{(location or '').strip()}%"
+    like_cat = f"%{(category or '').strip()}%"
+    has_q = 1 if q else 0
+    has_loc = 1 if (location or "").strip() else 0
+    has_cat = 1 if (category or "").strip() else 0
+
+    base_rows = conn.execute("""
+        SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
         FROM items
         WHERE kind = ?
           AND status NOT IN ('Sent', 'Lost forever')
           AND (
-              category = ?
-              OR title LIKE ?
-              OR location LIKE ?
+              (? = 1 AND category = ?)
+              OR (? = 1 AND title LIKE ?)
+              OR (? = 1 AND location LIKE ?)
+              OR (? = 1 AND description LIKE ?)
+              OR (? = 1 AND lost_last_name LIKE ?)
+              OR (? = 1 AND lost_first_name LIKE ?)
+              OR (? = 1 AND category LIKE ?)
           )
         ORDER BY created_at DESC
-        LIMIT 10
-    """, (other, category, like, f"%{(location or '').strip()}%")).fetchall()
+        LIMIT 160
+    """, (
+        other,
+        has_cat, category,
+        has_q, like_q,
+        has_loc, like_loc,
+        has_q, like_q,
+        has_q, like_q,
+        has_q, like_q,
+        has_cat, like_cat
+    )).fetchall()
 
-    return rows
+    by_id = {int(r["id"]): r for r in base_rows}
+    fts_ids = fts_candidate_ids(conn, other, q or location or category)
+    if fts_ids:
+        placeholders = ",".join(["?"] * len(fts_ids))
+        extra_rows = conn.execute(
+            f"""SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
+                FROM items
+                WHERE id IN ({placeholders}) AND status NOT IN ('Sent', 'Lost forever')""",
+            tuple(fts_ids)
+        ).fetchall()
+        for r in extra_rows:
+            by_id[int(r["id"])] = r
+
+    excluded_ids = linked_other_ids(conn, int(item_id), kind) if item_id else set()
+    if item_id:
+        excluded_ids.add(int(item_id))
+
+    scored = []
+    for cid, cand in by_id.items():
+        if cid in excluded_ids:
+            continue
+        score, reasons = score_match(src, cand, fts_hit=(cid in fts_ids))
+        if score < 25:
+            continue
+        d = dict(cand)
+        d["match_score"] = score
+        d["match_reasons"] = reasons
+        scored.append(d)
+
+    scored.sort(key=lambda r: (int(r["match_score"]), r["created_at"] or ""), reverse=True)
+    return scored[:10]
 
 
 def normalize_link_pair(item_a, item_b):
@@ -593,6 +827,33 @@ def get_linked_items(conn, item):
             WHERE l.found_item_id=?
             ORDER BY l.created_at DESC
         """, (item_id,)).fetchall()
+    return rows
+
+
+def search_link_candidates(conn, item, q: str):
+    q = (q or "").strip()
+    if not q:
+        return []
+
+    other_kind = "found" if item["kind"] == "lost" else "lost"
+    like = f"%{q}%"
+
+    rows = conn.execute("""
+        SELECT id, kind, title, category, location, status, created_at
+        FROM items
+        WHERE kind = ?
+          AND (
+              CAST(id AS TEXT) = ?
+              OR title LIKE ?
+              OR description LIKE ?
+              OR category LIKE ?
+              OR location LIKE ?
+              OR lost_last_name LIKE ?
+              OR lost_first_name LIKE ?
+          )
+        ORDER BY created_at DESC
+        LIMIT 40
+    """, (other_kind, q, like, like, like, like, like, like)).fetchall()
     return rows
 
 
@@ -781,6 +1042,7 @@ def create_item():
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
     contact = None  # frozen legacy field, not used anymore
+    notes = (request.form.get("lost_notes") or "").strip()
     status = (request.form.get("status") or "").strip()
     if not status:
         status = "Found, not assigned" if kind == "found" else "Lost"
@@ -862,7 +1124,7 @@ def create_item():
             (lost.get("lost_phone") if kind == "lost" else None),
             (lost.get("lost_leaving_date") if kind == "lost" else None),
             (lost.get("lost_contact_way") if kind == "lost" else None),
-            (lost.get("lost_notes") if kind == "lost" else None),
+            notes,
             (lost.get("postage_price") if kind == "lost" else None),
             (lost.get("postage_paid") if kind == "lost" else 0),
         ))
@@ -887,7 +1149,9 @@ def create_item():
             )
             saved += 1
 
-        matches = find_matches(conn, kind, title, category, location)
+        matches = find_matches(
+            conn, kind, title, category, location, event_date=event_date, item_id=item_id
+        )
         conn.commit()
     except sqlite3.Error:
         conn.rollback()
@@ -919,11 +1183,20 @@ def detail(item_id: int):
         (item_id,)
     ).fetchall()
 
-    matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
+    matches = find_matches(
+        conn, item["kind"], item["title"], item["category"], item["location"],
+        event_date=item["event_date"], item_id=item_id
+    )
+    link_q = (request.args.get("link_q") or "").strip()
+    link_candidates = search_link_candidates(conn, item, link_q) if link_q else []
     try:
         linked_items = get_linked_items(conn, item)
     except sqlite3.Error:
         linked_items = []
+
+    linked_ids = {r["id"] for r in linked_items}
+    if link_candidates:
+        link_candidates = [r for r in link_candidates if int(r["id"]) not in linked_ids]
     conn.close()
 
     return render_template(
@@ -932,6 +1205,8 @@ def detail(item_id: int):
         photos=photos,
         matches=matches,
         linked_items=linked_items,
+        link_q=link_q,
+        link_candidates=link_candidates,
         user=current_user()
     )
 
@@ -956,7 +1231,10 @@ def edit_item(item_id: int):
         conn.close()
         abort(404)
 
-    matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
+    matches = find_matches(
+        conn, item["kind"], item["title"], item["category"], item["location"],
+        event_date=item["event_date"], item_id=item_id
+    )
     conn.close()
 
     return render_item_form(item=item, matches=matches, errors={})
@@ -982,6 +1260,7 @@ def update_item(item_id: int):
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
     contact = None
+    notes = (request.form.get("lost_notes") or "").strip()
     status = (request.form.get("status") or existing["status"]).strip()
 
     lost = read_lost_fields_from_form() if kind == "lost" else {}
@@ -1049,7 +1328,7 @@ def update_item(item_id: int):
         (lost.get("lost_phone") if kind == "lost" else None),
         (lost.get("lost_leaving_date") if kind == "lost" else None),
         (lost.get("lost_contact_way") if kind == "lost" else None),
-        (lost.get("lost_notes") if kind == "lost" else None),
+        notes,
         (lost.get("postage_price") if kind == "lost" else None),
         (lost.get("postage_paid") if kind == "lost" else 0),
         item_id
