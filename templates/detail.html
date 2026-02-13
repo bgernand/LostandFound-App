@@ -232,30 +232,49 @@
 </div>
 
 {% if matches and matches|length %}
-  <div class="alert alert-warning mt-3">
-    <div class="fw-bold">Possible matches:</div>
-    <ul class="mb-0">
+  <div class="mt-3">
+    <div class="fw-bold mb-2">Possible matches</div>
+    <div class="list-group">
       {% for m in matches %}
-        <li>
-          <a href="{{ url_for('detail', item_id=m['id']) }}">
-            #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
-          </a>
-          {% if m.get('match_score') %}
-            <span class="badge text-bg-dark ms-1">Score {{ m['match_score'] }}</span>
-          {% endif %}
-          {% if m.get('match_reasons') %}
-            {% for reason in m['match_reasons'] %}
-              <span class="badge text-bg-secondary ms-1">{{ reason }}</span>
-            {% endfor %}
-          {% endif %}
-          <form class="d-inline ms-2" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="target_item_id" value="{{ m['id'] }}">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
-          </form>
-        </li>
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="fw-semibold">
+                <a href="{{ url_for('detail', item_id=m['id']) }}">
+                  #{{ m['id'] }} {{ "Lost Request" if m['kind']=="lost" else "Found Item" }}: {{ m['title'] }}
+                </a>
+              </div>
+              <div class="small text-muted">
+                {{ m['category'] }} · {{ m['location'] or "—" }}
+              </div>
+            </div>
+            <div class="text-end">
+              {% if m.get('match_score') is not none %}
+                {% set score_color = 'secondary' %}
+                {% if m['match_score'] >= 80 %}
+                  {% set score_color = 'success' %}
+                {% elif m['match_score'] >= 55 %}
+                  {% set score_color = 'warning' %}
+                {% elif m['match_score'] >= 35 %}
+                  {% set score_color = 'info' %}
+                {% endif %}
+                <span class="badge text-bg-{{ score_color }}">Score {{ m['match_score'] }}</span>
+              {% endif %}
+              <div class="mt-1">
+                {% for reason in (m.get('match_reasons') or []) %}
+                  <span class="badge text-bg-secondary">{{ reason }}</span>
+                {% endfor %}
+              </div>
+              <form class="mt-2" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="target_item_id" value="{{ m['id'] }}">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+              </form>
+            </div>
+          </div>
+        </div>
       {% endfor %}
-    </ul>
+    </div>
   </div>
 {% endif %}
 

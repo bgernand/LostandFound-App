@@ -84,12 +84,12 @@ STATUSES = [
 
 STATUS_COLORS = {
     "Lost": "danger",
-    "Maybe Found -> Check": "info",
+    "Maybe Found -> Check": "warning",
     "Found": "primary",
-    "In contact": "secondary",
-    "Ready to send": "primary",
+    "In contact": "info",
+    "Ready to send": "secondary",
     "Done": "success",
-    "Sent": "success",
+    "Sent": "light",
     "Lost forever": "dark",
 }
 

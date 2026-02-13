@@ -24,6 +24,15 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Changing the status of one linked item synchronizes that status to all linked items
 - Daily automatic maintenance sets `Lost` items to `Lost forever` when `event_date` is older than 90 days
 
+## Possible Matching
+- The system compares `Lost Request` and `Found Item` records and calculates a score per pair.
+- Scoring uses multiple signals: title keywords/similarity, category, location overlap, event date distance, and optional full-text hit.
+- Matches below the configured minimum score are filtered out.
+- The overview supports filters for type, source/candidate status, category, date range, score threshold, and source limit.
+- Already linked pairs can be included/excluded.
+- A link can be created directly from the match result row.
+- Score badge colors indicate confidence level (high score = stronger match).
+
 ## Tech Stack
 - Flask 3
 - SQLite

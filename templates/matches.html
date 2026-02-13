@@ -6,34 +6,6 @@
     <h5 class="card-title mb-1">Possible Matches Overview</h5>
     <div class="text-muted small mb-3">Find likely lost/found pairings with scoring and filters.</div>
 
-    <div class="row g-2 mb-3">
-      <div class="col-12 col-lg-6">
-        <form class="d-flex gap-2" method="post" action="{{ url_for('saved_search_open') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="next" value="{{ current_path }}">
-          <select class="form-select" name="saved_search_id">
-            <option value="">Saved searches...</option>
-            {% for s in saved_searches %}
-              <option value="{{ s['id'] }}">{{ s['name'] }}</option>
-            {% endfor %}
-          </select>
-          <button class="btn btn-outline-secondary" type="submit">Open</button>
-          <button class="btn btn-outline-danger" type="submit"
-                  formaction="{{ url_for('saved_search_delete_post') }}" formmethod="post">Delete</button>
-        </form>
-      </div>
-      <div class="col-12 col-lg-6">
-        <form class="d-flex gap-2" method="post" action="{{ url_for('saved_search_create') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="scope" value="matches">
-          <input type="hidden" name="next" value="{{ current_path }}">
-          <input type="hidden" name="query_string" value="{{ current_query }}">
-          <input class="form-control" name="name" maxlength="80" placeholder="Name for current search">
-          <button class="btn btn-outline-primary" type="submit">Save current search</button>
-        </form>
-      </div>
-    </div>
-
     <form class="row g-2" method="get" action="{{ url_for('matches_overview') }}">
       <div class="col-12 col-lg-4">
         <label class="form-label small text-muted mb-1">Search</label>
@@ -114,6 +86,39 @@
   </div>
 </div>
 
+<div class="card mb-3">
+  <div class="card-body">
+    <h6 class="card-title mb-2">Saved Searches</h6>
+    <div class="row g-2">
+      <div class="col-12 col-lg-6">
+        <form class="d-flex gap-2" method="post" action="{{ url_for('saved_search_open') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <select class="form-select" name="saved_search_id">
+            <option value="">Saved searches...</option>
+            {% for s in saved_searches %}
+              <option value="{{ s['id'] }}">{{ s['name'] }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-outline-secondary" type="submit">Open</button>
+          <button class="btn btn-outline-danger" type="submit"
+                  formaction="{{ url_for('saved_search_delete_post') }}" formmethod="post">Delete</button>
+        </form>
+      </div>
+      <div class="col-12 col-lg-6">
+        <form class="d-flex gap-2" method="post" action="{{ url_for('saved_search_create') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="scope" value="matches">
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <input type="hidden" name="query_string" value="{{ current_query }}">
+          <input class="form-control" name="name" maxlength="80" placeholder="Name for current search">
+          <button class="btn btn-outline-primary" type="submit">Save current search</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div class="small text-muted">Matches found: {{ pairs|length }}</div>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('index') }}">Open Items Overview</a>
@@ -140,7 +145,15 @@
           </div>
         </div>
         <div class="text-end">
-          <span class="badge text-bg-dark">Score {{ p['score'] }}</span>
+          {% set score_color = 'secondary' %}
+          {% if p['score'] >= 80 %}
+            {% set score_color = 'success' %}
+          {% elif p['score'] >= 55 %}
+            {% set score_color = 'warning' %}
+          {% elif p['score'] >= 35 %}
+            {% set score_color = 'info' %}
+          {% endif %}
+          <span class="badge text-bg-{{ score_color }}">Score {{ p['score'] }}</span>
           <div class="mt-1">
             {% for r in p['reasons'] %}
               <span class="badge text-bg-secondary">{{ r }}</span>
