@@ -127,35 +127,63 @@
   </div>
 </div>
 
-<div class="list-group">
-  {% for item in items %}
-    <a class="list-group-item list-group-item-action" href="{{ url_for('detail', item_id=item['id']) }}">
-      <div class="d-flex justify-content-between align-items-start gap-2">
-        <div class="me-2">
-          <div class="fw-bold">
-            {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
-            {{ item['title'] }}
-            {% set pc = photo_counts.get(item['id'], 0) %}
-            {% if pc %}
-              <span class="badge text-bg-info ms-2">📷 {{ pc }}</span>
+{% if open_reminders and open_reminders > 0 %}
+  <div class="alert alert-warning py-2">
+    {{ open_reminders }} follow-up reminder(s) are open.
+    <a href="{{ url_for('dashboard') }}" class="alert-link">Open dashboard</a>
+  </div>
+{% endif %}
+
+<form method="post" action="{{ url_for('bulk_status_update') }}">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+  <div class="list-group">
+    {% for item in items %}
+      <div class="list-group-item">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div class="d-flex gap-2 align-items-start me-2">
+            {% if can_write %}
+              <input class="form-check-input mt-1" type="checkbox" name="item_ids" value="{{ item['id'] }}">
             {% endif %}
-            {% if item['id'] in linked_item_ids %}
-              <span class="badge text-bg-success ms-2">Linked</span>
-            {% endif %}
+            <div>
+              <div class="fw-bold">
+                <a class="text-decoration-none" href="{{ url_for('detail', item_id=item['id']) }}">
+                  {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
+                  {{ item['title'] }}
+                </a>
+                {% set pc = photo_counts.get(item['id'], 0) %}
+                {% if pc %}
+                  <span class="badge text-bg-info ms-2">📷 {{ pc }}</span>
+                {% endif %}
+                {% if item['id'] in linked_item_ids %}
+                  <span class="badge text-bg-success ms-2">Linked</span>
+                {% endif %}
+              </div>
+              <div class="text-muted small">
+                {{ item['category'] }} · {{ item['location'] or "—" }} · {{ item['event_date'] or "—" }}
+              </div>
+            </div>
           </div>
-          <div class="text-muted small">
-            {{ item['category'] }} · {{ item['location'] or "—" }} · {{ item['event_date'] or "—" }}
-          </div>
+          <span class="badge text-bg-{{ STATUS_COLORS.get(item['status'], 'secondary') }} align-self-start">
+            {{ item['status'] }}
+          </span>
         </div>
-        <span class="badge text-bg-{{ STATUS_COLORS.get(item['status'], 'secondary') }} align-self-start">
-          {{ item['status'] }}
-        </span>
       </div>
-    </a>
-  {% else %}
-    <div class="text-muted">No items found.</div>
-  {% endfor %}
-</div>
+    {% else %}
+      <div class="text-muted">No items found.</div>
+    {% endfor %}
+  </div>
+  {% if can_write and items %}
+    <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+      <label class="small text-muted mb-0" for="bulkStatusSel">Bulk action:</label>
+      <select class="form-select form-select-sm" id="bulkStatusSel" name="bulk_status" style="max-width: 240px;">
+        {% for s in statuses %}
+          <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-sm btn-outline-primary" type="submit">Apply to selected</button>
+    </div>
+  {% endif %}
+</form>
 
 <form class="mt-3 d-flex align-items-center gap-2" method="get" action="{{ url_for('index') }}">
   <input type="hidden" name="q" value="{{ q }}">

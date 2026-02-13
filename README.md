@@ -16,6 +16,11 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Multi-select filters (status/category/type), linked/unlinked filter, date range + quick presets
 - Field-level validation errors with preserved form values
 - Clickable contact fields (`mailto:` / `tel:`) in detail and receipt views
+- Item timeline in detail view (audit-based event history)
+- Dashboard with KPIs, status distribution, top categories, and open follow-up reminders
+- Bulk status update for selected items in the main overview
+- Role model: `admin`, `staff`, `viewer` (viewer is read-only)
+- Improved search with token expansion, synonym support, and phonetic (`soundex`) matching
 
 ## Status Behavior
 - Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Sent`, `Done`, `Lost forever`
@@ -23,6 +28,11 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - When a link is created between items, all items in the linked graph are set to `Found`
 - Changing the status of one linked item synchronizes that status to all linked items
 - Daily automatic maintenance sets `Lost` items to `Lost forever` when `event_date` is older than 90 days
+
+## Roles and Permissions
+- `admin`: full access, including user/category admin and destructive actions
+- `staff`: operational write access (create/edit/link/update items, reminders, bulk actions)
+- `viewer`: read-only access to overviews/details/dashboard (no write actions)
 
 ## Possible Matching
 - The system compares `Lost Request` and `Found Item` records and calculates a score per pair.
@@ -32,6 +42,15 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Already linked pairs can be included/excluded.
 - A link can be created directly from the match result row.
 - Score badge colors indicate confidence level (high score = stronger match).
+
+## Follow-up Workflow
+- A follow-up reminder is generated automatically when an item stays in `In contact` for more than 7 days without updates.
+- Open reminders are shown on the dashboard and as a warning on the items overview.
+- Staff/admin can mark reminders as done.
+
+## Quality and CI
+- Basic automated tests are included in `tests/`.
+- GitHub Actions CI runs pytest on push and pull request (`.github/workflows/ci.yml`).
 
 ## Tech Stack
 - Flask 3

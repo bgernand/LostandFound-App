@@ -93,7 +93,8 @@ STATUS_COLORS = {
     "Lost forever": "dark",
 }
 
-ROLES = ["admin", "staff"]
+ROLES = ["admin", "staff", "viewer"]
+WRITE_ROLES = ("admin", "staff")
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
 SAVED_SEARCH_SCOPES = {"index", "matches"}
 SAVED_SEARCH_ALLOWED_KEYS = {
@@ -115,6 +116,13 @@ STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "for", "with", "in", "on",
     "is", "are", "am", "my", "your", "our", "der", "die", "das", "und",
     "ein", "eine", "mit", "im", "am", "zu", "von", "la", "le", "de"
+}
+SEARCH_SYNONYMS = {
+    "phone": ["telefon", "tel", "mobile", "handy"],
+    "mail": ["email", "e-mail"],
+    "key": ["keys", "schluessel", "schlüssel"],
+    "wallet": ["purse", "geldbeutel", "portemonnaie"],
+    "bag": ["backpack", "rucksack"],
 }
 
 
@@ -324,6 +332,23 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_saved_searches_user_scope
         ON saved_searches(user_id, scope, created_at)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            reminder_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            is_done INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            done_at TEXT,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_reminders_open_due
+        ON reminders(is_done, due_at)
+    """)
 
     # Public link features
     ensure_column(conn, "items", "public_token", "TEXT")
@@ -425,6 +450,47 @@ def auto_mark_lost_forever(conn):
     return cur.rowcount or 0
 
 
+def auto_create_followup_reminders(conn):
+    cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat(timespec="seconds")
+    rows = conn.execute(
+        """
+        SELECT i.id, i.title, coalesce(i.updated_at, i.created_at) AS last_touch
+        FROM items i
+        WHERE i.status='In contact'
+          AND coalesce(i.updated_at, i.created_at) IS NOT NULL
+          AND coalesce(i.updated_at, i.created_at) <= ?
+        """,
+        (cutoff,),
+    ).fetchall()
+    created = 0
+    for r in rows:
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM reminders
+            WHERE item_id=? AND reminder_type='followup' AND is_done=0
+            LIMIT 1
+            """,
+            (int(r["id"]),),
+        ).fetchone()
+        if existing:
+            continue
+        conn.execute(
+            """
+            INSERT INTO reminders (item_id, reminder_type, message, due_at, is_done, created_at)
+            VALUES (?, 'followup', ?, ?, 0, ?)
+            """,
+            (
+                int(r["id"]),
+                f"Follow up pending contact for item #{int(r['id'])}: {r['title'] or 'Untitled'}",
+                now_utc(),
+                now_utc(),
+            ),
+        )
+        created += 1
+    return created
+
+
 @app.before_request
 def _auto_status_maintenance():
     global _status_maintenance_day
@@ -435,6 +501,7 @@ def _auto_status_maintenance():
     conn = get_db()
     try:
         changed = auto_mark_lost_forever(conn)
+        reminders = auto_create_followup_reminders(conn)
         conn.commit()
     finally:
         conn.close()
@@ -442,11 +509,20 @@ def _auto_status_maintenance():
     _status_maintenance_day = today
     if changed > 0:
         app.logger.info("Auto status maintenance: %s items set to 'Lost forever'.", changed)
+    if reminders > 0:
+        app.logger.info("Auto reminders: %s follow-up reminders created.", reminders)
 
 
 @app.context_processor
 def inject_globals():
-    return dict(STATUS_COLORS=STATUS_COLORS, CONTACT_WAYS=CONTACT_WAYS, csrf_token=csrf_token)
+    u = current_user()
+    can_write = bool(u and u["role"] in WRITE_ROLES)
+    return dict(
+        STATUS_COLORS=STATUS_COLORS,
+        CONTACT_WAYS=CONTACT_WAYS,
+        csrf_token=csrf_token,
+        can_write=can_write,
+    )
 
 
 @app.before_request
@@ -747,6 +823,27 @@ def parse_iso_date(value):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except Exception:
         return None
+
+
+def expanded_search_terms(query: str, max_terms: int = 8):
+    base = []
+    seen = set()
+    for t in tokenize_text(query):
+        if t in seen:
+            continue
+        seen.add(t)
+        base.append(t)
+        if len(base) >= max_terms:
+            break
+    out = list(base)
+    for t in base:
+        for alt in SEARCH_SYNONYMS.get(t, []):
+            if alt not in seen:
+                out.append(alt)
+                seen.add(alt)
+            if len(out) >= max_terms:
+                return out
+    return out
 
 
 def linked_other_ids(conn, item_id: int, kind: str):
@@ -1055,9 +1152,17 @@ def build_filters(args):
     params = []
 
     if q:
-        sql += " AND (title LIKE ? OR description LIKE ? OR location LIKE ? OR contact LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?)"
-        like = f"%{q}%"
-        params += [like, like, like, like, like, like]
+        terms = expanded_search_terms(q)
+        q_clauses = []
+        for term in terms:
+            like = f"%{term}%"
+            q_clauses.append(
+                "(title LIKE ? OR description LIKE ? OR location LIKE ? OR contact LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?)"
+            )
+            params += [like, like, like, like, like, like]
+        q_clauses.append("(soundex(title)=soundex(?) OR soundex(lost_last_name)=soundex(?) OR soundex(lost_first_name)=soundex(?))")
+        params += [q, q, q]
+        sql += " AND (" + " OR ".join(q_clauses) + ")"
 
     if kinds:
         sql += " AND kind IN (" + ",".join(["?"] * len(kinds)) + ")"
@@ -1116,6 +1221,8 @@ def clean_saved_query_string(scope: str, raw_query: str):
         if key in {"date_from", "date_to"} and not parse_iso_date(val):
             continue
         if key == "include_linked" and val != "1":
+            continue
+        if key == "include_lost_forever" and val != "1":
             continue
         if key in {"min_score", "source_limit"}:
             try:
@@ -1274,6 +1381,79 @@ def account_password_post():
 # -------------------------
 # Internal app (login required)
 # -------------------------
+@app.get("/dashboard")
+@login_required
+def dashboard():
+    conn = get_db()
+    status_rows = conn.execute(
+        """
+        SELECT status, COUNT(*) AS c
+        FROM items
+        GROUP BY status
+        ORDER BY c DESC
+        """
+    ).fetchall()
+    top_categories = conn.execute(
+        """
+        SELECT category, COUNT(*) AS c
+        FROM items
+        GROUP BY category
+        ORDER BY c DESC, category ASC
+        LIMIT 8
+        """
+    ).fetchall()
+    kpi = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS total_items,
+            SUM(CASE WHEN status IN ('Done', 'Sent') THEN 1 ELSE 0 END) AS completed_items,
+            AVG(CASE WHEN status IN ('Done', 'Sent') AND updated_at IS NOT NULL
+                     THEN (julianday(updated_at) - julianday(created_at))
+                     ELSE NULL END) AS avg_days_to_complete
+        FROM items
+        """
+    ).fetchone()
+    reminders = conn.execute(
+        """
+        SELECT r.id, r.item_id, r.message, r.due_at, i.kind, i.title, i.status
+        FROM reminders r
+        JOIN items i ON i.id = r.item_id
+        WHERE r.is_done=0
+        ORDER BY r.due_at ASC
+        LIMIT 100
+        """
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "dashboard.html",
+        status_rows=status_rows,
+        top_categories=top_categories,
+        reminders=reminders,
+        kpi=kpi,
+        user=current_user(),
+    )
+
+
+@app.post("/reminders/<int:reminder_id>/done")
+@require_role(*WRITE_ROLES)
+def reminder_done(reminder_id: int):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, item_id FROM reminders WHERE id=? AND is_done=0",
+        (reminder_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        flash("Reminder not found.", "danger")
+        return redirect(url_for("dashboard"))
+    conn.execute("UPDATE reminders SET is_done=1, done_at=? WHERE id=?", (now_utc(), reminder_id))
+    conn.commit()
+    conn.close()
+    audit("reminder_done", "reminder", reminder_id, f"item_id={row['item_id']}")
+    flash("Reminder marked as done.", "success")
+    return redirect(url_for("dashboard"))
+
+
 @app.get("/")
 @login_required
 def index():
@@ -1293,6 +1473,7 @@ def index():
             SELECT lost_item_id AS id FROM item_links
         """).fetchall()
     }
+    open_reminders = conn.execute("SELECT COUNT(*) AS c FROM reminders WHERE is_done=0").fetchone()["c"]
     u = current_user()
     saved_searches = get_saved_searches(conn, int(u["id"]), "index") if u else []
     conn.close()
@@ -1315,6 +1496,7 @@ def index():
         statuses=STATUSES,
         photo_counts=photo_counts,
         linked_item_ids=linked_item_ids,
+        open_reminders=open_reminders,
         saved_searches=saved_searches,
         current_query=(request.query_string.decode("utf-8") if request.query_string else ""),
         current_path=current_path,
@@ -1363,15 +1545,18 @@ def matches_overview():
     source_params = []
 
     if q:
-        like = f"%{q}%"
-        source_sql += """
-            AND (
-                title LIKE ? OR description LIKE ? OR category LIKE ?
-                OR location LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?
-                OR CAST(id AS TEXT) = ?
+        terms = expanded_search_terms(q)
+        q_clauses = ["CAST(id AS TEXT) = ?"]
+        source_params.append(q)
+        for term in terms:
+            like = f"%{term}%"
+            q_clauses.append(
+                "(title LIKE ? OR description LIKE ? OR category LIKE ? OR location LIKE ? OR lost_last_name LIKE ? OR lost_first_name LIKE ?)"
             )
-        """
-        source_params += [like, like, like, like, like, like, q]
+            source_params += [like, like, like, like, like, like]
+        q_clauses.append("(soundex(title)=soundex(?) OR soundex(lost_last_name)=soundex(?) OR soundex(lost_first_name)=soundex(?))")
+        source_params += [q, q, q]
+        source_sql += " AND (" + " OR ".join(q_clauses) + ")"
 
     if kinds_selected:
         source_sql += " AND kind IN (" + ",".join(["?"] * len(kinds_selected)) + ")"
@@ -1595,13 +1780,13 @@ def saved_search_delete(search_id: int):
 
 
 @app.get("/items/new")
-@login_required
+@require_role(*WRITE_ROLES)
 def new_item():
     return render_item_form(item=None, matches=[], errors={})
 
 
 @app.post("/items")
-@login_required
+@require_role(*WRITE_ROLES)
 def create_item():
     u = current_user()
 
@@ -1767,6 +1952,20 @@ def detail(item_id: int):
         linked_items = get_linked_items(conn, item)
     except sqlite3.Error:
         linked_items = []
+    timeline = conn.execute(
+        """
+        SELECT a.id, a.action, a.entity_type, a.entity_id, a.details, a.created_at, u.username
+        FROM audit_log a
+        LEFT JOIN users u ON u.id = a.actor_user_id
+        WHERE (a.entity_type='item' AND a.entity_id=?)
+           OR (a.entity_type='item_link' AND (
+                a.details LIKE ? OR a.details LIKE ?
+           ))
+        ORDER BY a.created_at DESC
+        LIMIT 100
+        """,
+        (item_id, f"%found_item_id={item_id}%", f"%lost_item_id={item_id}%"),
+    ).fetchall()
 
     linked_ids = {r["id"] for r in linked_items}
     if link_candidates:
@@ -1779,6 +1978,7 @@ def detail(item_id: int):
         photos=photos,
         matches=matches,
         linked_items=linked_items,
+        timeline=timeline,
         link_q=link_q,
         link_candidates=link_candidates,
         user=current_user()
@@ -1797,7 +1997,7 @@ def uploaded_file(filename):
 
 
 @app.get("/items/<int:item_id>/edit")
-@login_required
+@require_role(*WRITE_ROLES)
 def edit_item(item_id: int):
     conn = get_db()
     item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
@@ -1815,7 +2015,7 @@ def edit_item(item_id: int):
 
 
 @app.post("/items/<int:item_id>/update")
-@login_required
+@require_role(*WRITE_ROLES)
 def update_item(item_id: int):
     u = current_user()
     conn = get_db()
@@ -1836,6 +2036,7 @@ def update_item(item_id: int):
     contact = None
     notes = (request.form.get("lost_notes") or "").strip()
     status = (request.form.get("status") or existing["status"]).strip()
+    old_status = existing["status"]
 
     lost = read_lost_fields_from_form() if kind == "lost" else {}
 
@@ -1929,15 +2130,64 @@ def update_item(item_id: int):
     conn.commit()
     conn.close()
 
-    audit("update", "item", item_id, f"user={u['username']} photos_added={saved} linked_status_sync={synced_count}")
+    audit(
+        "update",
+        "item",
+        item_id,
+        f"user={u['username']} status:{old_status}->{status} photos_added={saved} linked_status_sync={synced_count}",
+    )
     flash("Item updated.", "success")
     if synced_count > 1:
         flash(f"Status synchronized to {synced_count} linked items.", "info")
     return redirect(url_for("detail", item_id=item_id))
 
 
+@app.post("/items/bulk-status")
+@require_role(*WRITE_ROLES)
+def bulk_status_update():
+    raw_ids = request.form.getlist("item_ids")
+    new_status = (request.form.get("bulk_status") or "").strip()
+    if new_status not in STATUSES:
+        flash("Please select a valid status.", "danger")
+        return redirect(url_for("index"))
+
+    ids = []
+    seen = set()
+    for raw in raw_ids:
+        try:
+            iid = int((raw or "").strip())
+        except ValueError:
+            continue
+        if iid <= 0 or iid in seen:
+            continue
+        ids.append(iid)
+        seen.add(iid)
+    if not ids:
+        flash("No items selected.", "danger")
+        return redirect(url_for("index"))
+
+    conn = get_db()
+    placeholders = ",".join(["?"] * len(ids))
+    params = [new_status, now_utc()] + ids
+    conn.execute(
+        f"UPDATE items SET status=?, updated_at=? WHERE id IN ({placeholders})",
+        params,
+    )
+    synced_total = 0
+    for iid in ids:
+        synced_total += max(0, sync_linked_group_status(conn, iid, new_status) - 1)
+    conn.commit()
+    conn.close()
+
+    audit("bulk_status", "item", None, f"count={len(ids)} status={new_status} linked_sync={synced_total}")
+    flash(f"Updated {len(ids)} items to '{new_status}'.", "success")
+    if synced_total > 0:
+        flash(f"Additionally synchronized {synced_total} linked items.", "info")
+    return redirect(url_for("index"))
+
+
 @app.post("/items/<int:item_id>/links")
-@login_required
+@require_role(*WRITE_ROLES)
 def create_link(item_id: int):
     target_raw = (request.form.get("target_item_id") or "").strip()
     try:
@@ -1991,7 +2241,7 @@ def create_link(item_id: int):
 
 
 @app.post("/items/<int:item_id>/links/<int:target_id>/delete")
-@login_required
+@require_role(*WRITE_ROLES)
 def delete_link(item_id: int, target_id: int):
     if target_id == item_id:
         flash("Invalid link target.", "danger")

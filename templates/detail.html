@@ -92,11 +92,13 @@
                 {{ li['kind'] }} · {{ li['status'] }} · linked at {{ li['link_created_at'] }}
               </div>
             </div>
-            <form method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}"
-                  onsubmit="return confirm('Remove this link?');">
-              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
-            </form>
+            {% if can_write %}
+              <form method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}"
+                    onsubmit="return confirm('Remove this link?');">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
+              </form>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -104,16 +106,18 @@
       <div class="text-muted small mb-3">No links yet.</div>
     {% endif %}
 
-    <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-      <div class="col-12 col-md-6">
-        <label class="form-label">Link by item ID</label>
-        <input class="form-control" name="target_item_id" placeholder='Enter {{ "Found Item" if item["kind"]=="lost" else "Lost Request" }} ID'>
-      </div>
-      <div class="col-12 col-md-auto">
-        <button class="btn btn-outline-primary" type="submit">Create link</button>
-      </div>
-    </form>
+    {% if can_write %}
+      <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12 col-md-6">
+          <label class="form-label">Link by item ID</label>
+          <input class="form-control" name="target_item_id" placeholder='Enter {{ "Found Item" if item["kind"]=="lost" else "Lost Request" }} ID'>
+        </div>
+        <div class="col-12 col-md-auto">
+          <button class="btn btn-outline-primary" type="submit">Create link</button>
+        </div>
+      </form>
+    {% endif %}
 
     <form class="row g-2 align-items-end mb-2" method="get" action="{{ url_for('detail', item_id=item['id']) }}">
       <div class="col-12 col-md-6">
@@ -142,11 +146,13 @@
                   {{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}
                 </div>
               </div>
-              <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
-                <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
-              </form>
+              {% if can_write %}
+                <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+                </form>
+              {% endif %}
             </li>
           {% endfor %}
         </ul>
@@ -166,11 +172,13 @@
             </a>
             <div class="mt-2 d-flex justify-content-between align-items-center gap-2">
               <small class="text-muted">{{ p['uploaded_at'] }}</small>
-              <form method="post" action="{{ url_for('delete_photo', photo_id=p['id']) }}"
-                    onsubmit="return confirm('Delete this photo?');">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
-              </form>
+              {% if can_write %}
+                <form method="post" action="{{ url_for('delete_photo', photo_id=p['id']) }}"
+                      onsubmit="return confirm('Delete this photo?');">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                </form>
+              {% endif %}
             </div>
           </div>
         {% endfor %}
@@ -180,7 +188,9 @@
     <hr>
 
     <div class="d-flex flex-column flex-sm-row flex-wrap gap-2">
-      <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
+      {% if can_write %}
+        <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
+      {% endif %}
       <a class="btn btn-outline-primary" href="{{ url_for('receipt', item_id=item['id']) }}">Receipt</a>
 
       {% if (item['public_enabled'] == 1 or item['public_enabled'] == '1') %}
@@ -188,29 +198,33 @@
         <a class="btn btn-outline-info" href="{{ url_for('public_view', token=item['public_token']) }}" target="_blank" rel="noopener noreferrer">Public view</a>
       {% endif %}
 
-      <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
-            onsubmit="return confirm('Toggle public link?');">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-warning" type="submit">
-          {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
-            Lock public link
-          {% else %}
-            Enable public link
-          {% endif %}
-        </button>
-      </form>
+      {% if can_write %}
+        <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
+              onsubmit="return confirm('Toggle public link?');">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-outline-warning" type="submit">
+            {% if item['public_enabled'] == 1 or item['public_enabled'] == '1' %}
+              Lock public link
+            {% else %}
+              Enable public link
+            {% endif %}
+          </button>
+        </form>
+      {% endif %}
 
-      <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
-            onsubmit="return confirm('Toggle public photos visibility?');">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-secondary" type="submit">
-          {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
-            Privacy: public photos OFF
-          {% else %}
-            Privacy: public photos ON
-          {% endif %}
-        </button>
-      </form>
+      {% if can_write %}
+        <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
+              onsubmit="return confirm('Toggle public photos visibility?');">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-outline-secondary" type="submit">
+            {% if item['public_photos_enabled'] == 1 or item['public_photos_enabled'] == '1' %}
+              Privacy: public photos OFF
+            {% else %}
+              Privacy: public photos ON
+            {% endif %}
+          </button>
+        </form>
+      {% endif %}
 
       {% if user and user['role'] == 'admin' %}
         <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
@@ -230,6 +244,31 @@
     </div>
   </div>
 </div>
+
+{% if timeline and timeline|length %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="fw-bold mb-2">Timeline</div>
+      <div class="list-group list-group-flush">
+        {% for ev in timeline %}
+          <div class="list-group-item px-0">
+            <div class="d-flex justify-content-between gap-2">
+              <div>
+                <span class="badge text-bg-secondary">{{ ev['action'] }}</span>
+                {% if ev['details'] %}
+                  <span class="small ms-2">{{ ev['details'] }}</span>
+                {% endif %}
+                <div class="small text-muted mt-1">
+                  {{ ev['username'] or "system" }} · {{ ev['created_at'] }}
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}
 
 {% if matches and matches|length %}
   <div class="mt-3">

@@ -54,6 +54,14 @@ docker compose logs -f nginx
 docker compose logs -f certbot
 ```
 
+Functional checks after deploy:
+- Login works and `/dashboard` opens
+- Viewer user is read-only (no create/edit/link/delete controls)
+- Bulk status update works for staff/admin
+- Possible Matches page loads and score colors are visible
+- Saved searches can be saved/opened/deleted
+- Reminder workflow appears for stale `In contact` items
+
 If `docker compose` is unavailable on your server, use:
 ```bash
 docker-compose ps
@@ -81,3 +89,12 @@ Backup these folders regularly:
 - `data/`
 - `uploads/`
 - `certbot/conf/`
+
+## 9. CI / Tests
+- CI config is in `.github/workflows/ci.yml` and runs `pytest`.
+- Local test run:
+```bash
+python -m pip install -r requirements.txt
+python -m pip install pytest
+pytest -q
+```
