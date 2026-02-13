@@ -53,6 +53,7 @@ STATUSES = [
     "Found",
     "In contact",
     "Ready to send",
+    "Done",
     "Sent",
     "Lost forever"
 ]
@@ -65,6 +66,7 @@ STATUS_COLORS = {
     "Found": "primary",
     "In contact": "secondary",
     "Ready to send": "primary",
+    "Done": "success",
     "Sent": "success",
     "Lost forever": "dark",
 }
@@ -753,7 +755,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
         SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
         FROM items
         WHERE kind = ?
-          AND status NOT IN ('Sent', 'Lost forever')
+          AND status NOT IN ('Done', 'Sent', 'Lost forever')
           AND (
               (? = 1 AND category = ?)
               OR (? = 1 AND title LIKE ?)
@@ -783,7 +785,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
         extra_rows = conn.execute(
             f"""SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
                 FROM items
-                WHERE id IN ({placeholders}) AND status NOT IN ('Sent', 'Lost forever')""",
+                WHERE id IN ({placeholders}) AND status NOT IN ('Done', 'Sent', 'Lost forever')""",
             tuple(fts_ids)
         ).fetchall()
         for r in extra_rows:
@@ -890,6 +892,9 @@ def build_filters(args):
     kinds = get_multi_values(args, "kind", {"lost", "found"})
     statuses_selected = get_multi_values(args, "status", set(STATUSES))
     categories_selected = get_multi_values(args, "category", set(category_names(active_only=True)))
+    linked_state = (args.get("linked") or "").strip()
+    if linked_state not in {"linked", "unlinked"}:
+        linked_state = ""
 
     sql = "SELECT * FROM items WHERE 1=1"
     params = []
@@ -911,8 +916,13 @@ def build_filters(args):
         sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
         params += categories_selected
 
+    if linked_state == "linked":
+        sql += " AND EXISTS (SELECT 1 FROM item_links l WHERE l.found_item_id = items.id OR l.lost_item_id = items.id)"
+    elif linked_state == "unlinked":
+        sql += " AND NOT EXISTS (SELECT 1 FROM item_links l WHERE l.found_item_id = items.id OR l.lost_item_id = items.id)"
+
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, kinds, statuses_selected, categories_selected
+    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state
 
 
 # -------------------------
@@ -1040,13 +1050,21 @@ def account_password_post():
 @app.get("/")
 @login_required
 def index():
-    sql, params, q, kinds, statuses_selected, categories_selected = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state = build_filters(request.args)
 
     conn = get_db()
+    ensure_item_links_schema(conn)
     items = conn.execute(sql, params).fetchall()
     photo_counts = {
         r["item_id"]: r["c"]
         for r in conn.execute("SELECT item_id, COUNT(*) AS c FROM photos GROUP BY item_id").fetchall()
+    }
+    linked_item_ids = {
+        int(r["id"]) for r in conn.execute("""
+            SELECT found_item_id AS id FROM item_links
+            UNION
+            SELECT lost_item_id AS id FROM item_links
+        """).fetchall()
     }
     conn.close()
 
@@ -1057,9 +1075,11 @@ def index():
         kinds_selected=kinds,
         statuses_selected=statuses_selected,
         categories_selected=categories_selected,
+        linked_state=linked_state,
         categories=category_names(active_only=True),
         statuses=STATUSES,
         photo_counts=photo_counts,
+        linked_item_ids=linked_item_ids,
         user=current_user()
     )
 
@@ -1092,7 +1112,7 @@ def matches_overview():
     source_sql = """
         SELECT *
         FROM items
-        WHERE status NOT IN ('Sent', 'Lost forever')
+        WHERE status NOT IN ('Done', 'Sent', 'Lost forever')
     """
     source_params = []
 
@@ -1820,7 +1840,7 @@ def public_photo(token: str, photo_id: int):
 @app.get("/export.csv")
 @login_required
 def export_csv():
-    sql, params, q, kinds, statuses_selected, categories_selected = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected, linked_state = build_filters(request.args)
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -1838,7 +1858,7 @@ def export_csv():
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
     audit(
         "export", "items", None,
-        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)}"
+        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state}"
     )
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
 

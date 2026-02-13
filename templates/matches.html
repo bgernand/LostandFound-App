@@ -101,6 +101,11 @@
               <span class="badge text-bg-secondary">{{ r }}</span>
             {% endfor %}
           </div>
+          <form class="mt-2" method="post" action="{{ url_for('create_link', item_id=src['id']) }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="target_item_id" value="{{ cand['id'] }}">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+          </form>
         </div>
       </div>
     </div>

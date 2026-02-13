@@ -34,6 +34,14 @@
           {% endfor %}
         </select>
       </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Linked</label>
+        <select class="form-select" name="linked">
+          <option value="" {% if not linked_state %}selected{% endif %}>All</option>
+          <option value="linked" {% if linked_state=='linked' %}selected{% endif %}>Linked only</option>
+          <option value="unlinked" {% if linked_state=='unlinked' %}selected{% endif %}>Unlinked only</option>
+        </select>
+      </div>
       <div class="col-12 small text-muted">
         Multi-select: use Ctrl/Cmd + click.
       </div>
@@ -59,6 +67,7 @@
       {% for v in categories_selected %}
         <input type="hidden" name="category" value="{{ v }}">
       {% endfor %}
+      <input type="hidden" name="linked" value="{{ linked_state }}">
       <button class="btn btn-sm btn-outline-secondary" type="submit">Export CSV</button>
     </form>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('matches_overview') }}">Open Possible Matches</a>
@@ -76,6 +85,9 @@
             {% set pc = photo_counts.get(item['id'], 0) %}
             {% if pc %}
               <span class="badge text-bg-info ms-2">📷 {{ pc }}</span>
+            {% endif %}
+            {% if item['id'] in linked_item_ids %}
+              <span class="badge text-bg-success ms-2">Linked</span>
             {% endif %}
           </div>
           <div class="text-muted small">
