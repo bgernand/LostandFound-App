@@ -46,6 +46,7 @@ LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
 STATUSES = [
     "Lost",
     "Still lost",
+    "Found, not assigned",
     "Maybe Found -> Check",
     "Found",
     "In contact",
@@ -57,6 +58,7 @@ STATUSES = [
 STATUS_COLORS = {
     "Lost": "danger",
     "Still lost": "warning",
+    "Found, not assigned": "info",
     "Maybe Found -> Check": "info",
     "Found": "primary",
     "In contact": "secondary",
@@ -153,6 +155,22 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS item_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            found_item_id INTEGER NOT NULL,
+            lost_item_id INTEGER NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(found_item_id) REFERENCES items(id),
+            FOREIGN KEY(lost_item_id) REFERENCES items(id),
+            FOREIGN KEY(created_by) REFERENCES users(id),
+            UNIQUE(found_item_id, lost_item_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS login_attempts (
@@ -431,6 +449,7 @@ def read_lost_fields_from_form():
 
 
 def validate_lost_fields(lost: dict):
+    errors = {}
     required = [
         ("lost_what", "What is lost"),
         ("lost_last_name", "Last Name"),
@@ -443,28 +462,81 @@ def validate_lost_fields(lost: dict):
         ("lost_email", "E-Mail address"),
         ("lost_phone", "Phone number"),
     ]
-    missing = [label for key, label in required if not lost.get(key)]
-    if missing:
-        return False, "Missing required fields: " + ", ".join(missing)
+    for key, label in required:
+        if not lost.get(key):
+            errors[key] = f"{label} is required."
 
     if lost.get("lost_contact_way") and lost["lost_contact_way"] not in CONTACT_WAYS:
-        return False, "Invalid contact way."
+        errors["lost_contact_way"] = "Invalid contact way."
 
     if lost.get("lost_leaving_date"):
         try:
             datetime.strptime(lost["lost_leaving_date"], "%Y-%m-%d")
         except ValueError:
-            return False, "When are you leaving Taizé must be a valid date."
+            errors["lost_leaving_date"] = "When are you leaving Taizé must be a valid date."
 
     if lost.get("postage_price"):
         try:
             lost["postage_price"] = float(lost["postage_price"].replace(",", "."))
         except ValueError:
-            return False, "Price of postage must be a number."
+            errors["postage_price"] = "Price of postage must be a number."
     else:
         lost["postage_price"] = None
 
-    return True, ""
+    return len(errors) == 0, errors
+
+
+def build_item_form_draft(existing=None):
+    def ev(key, default=""):
+        if existing is None:
+            return default
+        v = existing[key] if key in existing.keys() else default
+        return default if v is None else v
+
+    kind = (request.form.get("kind") or ev("kind", "lost")).strip()
+    if kind not in ["lost", "found"]:
+        kind = ev("kind", "lost")
+
+    draft = {
+        "id": ev("id", None),
+        "kind": kind,
+        "title": (request.form.get("title") if request.form.get("title") is not None else ev("title", "")).strip(),
+        "description": (request.form.get("description") if request.form.get("description") is not None else ev("description", "")).strip(),
+        "category": (request.form.get("category") if request.form.get("category") is not None else ev("category", "")).strip(),
+        "location": (request.form.get("location") if request.form.get("location") is not None else ev("location", "")).strip(),
+        "event_date": (request.form.get("event_date") if request.form.get("event_date") is not None else ev("event_date", "")).strip(),
+        "status": (request.form.get("status") if request.form.get("status") is not None else ev("status", "Lost")).strip(),
+        "lost_what": (request.form.get("lost_what") if request.form.get("lost_what") is not None else ev("lost_what", "")).strip(),
+        "lost_last_name": (request.form.get("lost_last_name") if request.form.get("lost_last_name") is not None else ev("lost_last_name", "")).strip(),
+        "lost_first_name": (request.form.get("lost_first_name") if request.form.get("lost_first_name") is not None else ev("lost_first_name", "")).strip(),
+        "lost_group_leader": (request.form.get("lost_group_leader") if request.form.get("lost_group_leader") is not None else ev("lost_group_leader", "")).strip(),
+        "lost_street": (request.form.get("lost_street") if request.form.get("lost_street") is not None else ev("lost_street", "")).strip(),
+        "lost_number": (request.form.get("lost_number") if request.form.get("lost_number") is not None else ev("lost_number", "")).strip(),
+        "lost_additional": (request.form.get("lost_additional") if request.form.get("lost_additional") is not None else ev("lost_additional", "")).strip(),
+        "lost_postcode": (request.form.get("lost_postcode") if request.form.get("lost_postcode") is not None else ev("lost_postcode", "")).strip(),
+        "lost_town": (request.form.get("lost_town") if request.form.get("lost_town") is not None else ev("lost_town", "")).strip(),
+        "lost_country": (request.form.get("lost_country") if request.form.get("lost_country") is not None else ev("lost_country", "")).strip(),
+        "lost_email": (request.form.get("lost_email") if request.form.get("lost_email") is not None else ev("lost_email", "")).strip(),
+        "lost_phone": (request.form.get("lost_phone") if request.form.get("lost_phone") is not None else ev("lost_phone", "")).strip(),
+        "lost_leaving_date": (request.form.get("lost_leaving_date") if request.form.get("lost_leaving_date") is not None else ev("lost_leaving_date", "")).strip(),
+        "lost_contact_way": (request.form.get("lost_contact_way") if request.form.get("lost_contact_way") is not None else ev("lost_contact_way", "")).strip(),
+        "lost_notes": (request.form.get("lost_notes") if request.form.get("lost_notes") is not None else ev("lost_notes", "")).strip(),
+        "postage_price": (request.form.get("postage_price") if request.form.get("postage_price") is not None else ev("postage_price", "")),
+        "postage_paid": 1 if request.form.get("postage_paid") == "on" else 0,
+    }
+    return draft
+
+
+def render_item_form(item=None, matches=None, errors=None):
+    return render_template(
+        "form.html",
+        item=item,
+        categories=category_names(active_only=True),
+        statuses=STATUSES,
+        user=current_user(),
+        matches=(matches or []),
+        errors=(errors or {})
+    )
 
 
 def find_matches(conn, kind, title, category, location):
@@ -486,6 +558,36 @@ def find_matches(conn, kind, title, category, location):
         LIMIT 10
     """, (other, category, like, f"%{(location or '').strip()}%")).fetchall()
 
+    return rows
+
+
+def normalize_link_pair(item_a, item_b):
+    kinds = {item_a["kind"], item_b["kind"]}
+    if kinds != {"lost", "found"}:
+        return None
+    found_id = item_a["id"] if item_a["kind"] == "found" else item_b["id"]
+    lost_id = item_a["id"] if item_a["kind"] == "lost" else item_b["id"]
+    return int(found_id), int(lost_id)
+
+
+def get_linked_items(conn, item):
+    item_id = int(item["id"])
+    if item["kind"] == "lost":
+        rows = conn.execute("""
+            SELECT i.*, l.created_at AS link_created_at
+            FROM item_links l
+            JOIN items i ON i.id = l.found_item_id
+            WHERE l.lost_item_id=?
+            ORDER BY l.created_at DESC
+        """, (item_id,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT i.*, l.created_at AS link_created_at
+            FROM item_links l
+            JOIN items i ON i.id = l.lost_item_id
+            WHERE l.found_item_id=?
+            ORDER BY l.created_at DESC
+        """, (item_id,)).fetchall()
     return rows
 
 
@@ -655,14 +757,7 @@ def index():
 @app.get("/items/new")
 @login_required
 def new_item():
-    return render_template(
-        "form.html",
-        item=None,
-        categories=category_names(active_only=True),
-        statuses=STATUSES,
-        user=current_user(),
-        matches=[]
-    )
+    return render_item_form(item=None, matches=[], errors={})
 
 
 @app.post("/items")
@@ -681,42 +776,48 @@ def create_item():
     location = (request.form.get("location") or "").strip()
     event_date = (request.form.get("event_date") or "").strip()
     contact = None  # frozen legacy field, not used anymore
-    status = (request.form.get("status") or "Lost").strip()
+    status = (request.form.get("status") or "").strip()
+    if not status:
+        status = "Found, not assigned" if kind == "found" else "Lost"
 
     # Lost fields
     lost = read_lost_fields_from_form() if kind == "lost" else {}
 
     if kind == "lost":
-        ok, msg = validate_lost_fields(lost)
+        ok, lost_errors = validate_lost_fields(lost)
         if not ok:
-            flash(msg, "danger")
-            return redirect(url_for("new_item"))
+            flash("Please fix the highlighted fields.", "danger")
+            draft = build_item_form_draft()
+            return render_item_form(item=draft, matches=[], errors=lost_errors)
         # Make title automatically equal to what is lost
         title = lost.get("lost_what", "").strip()
 
+    errors = {}
     if not title:
-        flash("Title is required.", "danger")
-        return redirect(url_for("new_item"))
+        errors["title"] = "Title is required."
     
     if not description:
-        flash("Description is required.", "danger")
-        return redirect(url_for("new_item"))
+        errors["description"] = "Description is required."
 
     active_cats = set(category_names(active_only=True))
     if category not in active_cats:
         category = safe_default_category(active_cats)
 
     if status not in STATUSES:
-        status = "Lost"
+        status = "Found, not assigned" if kind == "found" else "Lost"
 
     if event_date:
         try:
             datetime.strptime(event_date, "%Y-%m-%d")
         except ValueError:
-            flash("Date must be in YYYY-MM-DD format.", "danger")
-            return redirect(url_for("new_item"))
+            errors["event_date"] = "Date must be in YYYY-MM-DD format."
     else:
         event_date = None
+
+    if errors:
+        flash("Please fix the highlighted fields.", "danger")
+        draft = build_item_form_draft()
+        return render_item_form(item=draft, matches=[], errors=errors)
 
     public_token = secrets.token_urlsafe(16)
 
@@ -807,9 +908,17 @@ def detail(item_id: int):
     ).fetchall()
 
     matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
+    linked_items = get_linked_items(conn, item)
     conn.close()
 
-    return render_template("detail.html", item=item, photos=photos, matches=matches, user=current_user())
+    return render_template(
+        "detail.html",
+        item=item,
+        photos=photos,
+        matches=matches,
+        linked_items=linked_items,
+        user=current_user()
+    )
 
 
 @app.get("/uploads/<path:filename>")
@@ -835,14 +944,7 @@ def edit_item(item_id: int):
     matches = find_matches(conn, item["kind"], item["title"], item["category"], item["location"])
     conn.close()
 
-    return render_template(
-        "form.html",
-        item=item,
-        categories=category_names(active_only=True),
-        statuses=STATUSES,
-        user=current_user(),
-        matches=matches
-    )
+    return render_item_form(item=item, matches=matches, errors={})
 
 
 @app.post("/items/<int:item_id>/update")
@@ -870,22 +972,21 @@ def update_item(item_id: int):
     lost = read_lost_fields_from_form() if kind == "lost" else {}
 
     if kind == "lost":
-        ok, msg = validate_lost_fields(lost)
+        ok, lost_errors = validate_lost_fields(lost)
         if not ok:
-            flash(msg, "danger")
+            flash("Please fix the highlighted fields.", "danger")
+            draft = build_item_form_draft(existing)
+            draft["id"] = item_id
             conn.close()
-            return redirect(url_for("edit_item", item_id=item_id))
+            return render_item_form(item=draft, matches=[], errors=lost_errors)
         title = lost.get("lost_what", "").strip()
 
+    errors = {}
     if not title:
-        flash("Title is required.", "danger")
-        conn.close()
-        return redirect(url_for("edit_item", item_id=item_id))
+        errors["title"] = "Title is required."
     
     if not description:
-        flash("Description is required.", "danger")
-        conn.close()
-        return redirect(url_for("edit_item", item_id=item_id))
+        errors["description"] = "Description is required."
 
     active_cats = set(category_names(active_only=True))
     if category not in active_cats:
@@ -898,11 +999,16 @@ def update_item(item_id: int):
         try:
             datetime.strptime(event_date, "%Y-%m-%d")
         except ValueError:
-            flash("Date must be in YYYY-MM-DD format.", "danger")
-            conn.close()
-            return redirect(url_for("edit_item", item_id=item_id))
+            errors["event_date"] = "Date must be in YYYY-MM-DD format."
     else:
         event_date = None
+
+    if errors:
+        flash("Please fix the highlighted fields.", "danger")
+        draft = build_item_form_draft(existing)
+        draft["id"] = item_id
+        conn.close()
+        return render_item_form(item=draft, matches=[], errors=errors)
 
     conn.execute("""
         UPDATE items
@@ -959,11 +1065,98 @@ def update_item(item_id: int):
     return redirect(url_for("detail", item_id=item_id))
 
 
+@app.post("/items/<int:item_id>/links")
+@login_required
+def create_link(item_id: int):
+    target_raw = (request.form.get("target_item_id") or "").strip()
+    try:
+        target_id = int(target_raw)
+    except ValueError:
+        flash("Target item id must be a number.", "danger")
+        return redirect(url_for("detail", item_id=item_id))
+
+    if target_id == item_id:
+        flash("Cannot link an item with itself.", "danger")
+        return redirect(url_for("detail", item_id=item_id))
+
+    u = current_user()
+    conn = get_db()
+    src = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (item_id,)).fetchone()
+    tgt = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (target_id,)).fetchone()
+    if not src or not tgt:
+        conn.close()
+        abort(404)
+
+    pair = normalize_link_pair(src, tgt)
+    if not pair:
+        conn.close()
+        flash("Linking is only allowed between one Found Item and one Lost Request.", "danger")
+        return redirect(url_for("detail", item_id=item_id))
+
+    found_id, lost_id = pair
+    existing = conn.execute(
+        "SELECT id FROM item_links WHERE found_item_id=? AND lost_item_id=?",
+        (found_id, lost_id)
+    ).fetchone()
+    if existing:
+        conn.close()
+        flash("Items are already linked.", "info")
+        return redirect(url_for("detail", item_id=item_id))
+
+    conn.execute(
+        "INSERT INTO item_links (found_item_id, lost_item_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+        (found_id, lost_id, u["id"] if u else None, now_utc())
+    )
+    conn.commit()
+    conn.close()
+
+    audit("link_create", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id}")
+    flash("Link created.", "success")
+    return redirect(url_for("detail", item_id=item_id))
+
+
+@app.post("/items/<int:item_id>/links/<int:target_id>/delete")
+@login_required
+def delete_link(item_id: int, target_id: int):
+    if target_id == item_id:
+        flash("Invalid link target.", "danger")
+        return redirect(url_for("detail", item_id=item_id))
+
+    conn = get_db()
+    src = conn.execute("SELECT id, kind FROM items WHERE id=?", (item_id,)).fetchone()
+    tgt = conn.execute("SELECT id, kind FROM items WHERE id=?", (target_id,)).fetchone()
+    if not src or not tgt:
+        conn.close()
+        abort(404)
+
+    pair = normalize_link_pair(src, tgt)
+    if not pair:
+        conn.close()
+        flash("Linking is only allowed between one Found Item and one Lost Request.", "danger")
+        return redirect(url_for("detail", item_id=item_id))
+
+    found_id, lost_id = pair
+    cur = conn.execute(
+        "DELETE FROM item_links WHERE found_item_id=? AND lost_item_id=?",
+        (found_id, lost_id)
+    )
+    conn.commit()
+    conn.close()
+
+    if cur.rowcount > 0:
+        audit("link_delete", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id}")
+        flash("Link removed.", "warning")
+    else:
+        flash("No link found for these items.", "info")
+    return redirect(url_for("detail", item_id=item_id))
+
+
 @app.post("/items/<int:item_id>/delete")
 @require_role("admin")
 def delete_item(item_id: int):
     conn = get_db()
     photos = conn.execute("SELECT filename FROM photos WHERE item_id=?", (item_id,)).fetchall()
+    conn.execute("DELETE FROM item_links WHERE found_item_id=? OR lost_item_id=?", (item_id, item_id))
     conn.execute("DELETE FROM items WHERE id=?", (item_id,))
     conn.commit()
     conn.close()

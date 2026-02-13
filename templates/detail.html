@@ -65,6 +65,43 @@
       </dl>
     {% endif %}
 
+    <hr>
+    <div class="fw-bold mb-2">Linked {{ "Found Items" if item['kind'] == 'lost' else "Lost Requests" }}</div>
+    {% if linked_items and linked_items|length %}
+      <ul class="list-group mb-3">
+        {% for li in linked_items %}
+          <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
+            <div>
+              <a href="{{ url_for('detail', item_id=li['id']) }}">
+                #{{ li['id'] }} - {{ li['title'] }}
+              </a>
+              <div class="small text-muted">
+                {{ li['kind'] }} · {{ li['status'] }} · linked at {{ li['link_created_at'] }}
+              </div>
+            </div>
+            <form method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}"
+                  onsubmit="return confirm('Remove this link?');">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-muted small mb-3">No links yet.</div>
+    {% endif %}
+
+    <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <div class="col-12 col-md-6">
+        <label class="form-label">Link by item ID</label>
+        <input class="form-control" name="target_item_id" placeholder='Enter {{ "Found Item" if item["kind"]=="lost" else "Lost Request" }} ID'>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button class="btn btn-outline-primary" type="submit">Create link</button>
+      </div>
+    </form>
+
     {% if photos and photos|length %}
       <hr>
       <div class="fw-bold mb-2">Photos</div>
@@ -150,6 +187,11 @@
           <a href="{{ url_for('detail', item_id=m['id']) }}">
             #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
           </a>
+          <form class="d-inline ms-2" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="target_item_id" value="{{ m['id'] }}">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+          </form>
         </li>
       {% endfor %}
     </ul>

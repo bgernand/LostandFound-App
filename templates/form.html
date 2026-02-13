@@ -1,9 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
+{% set errors = errors if errors is defined else {} %}
 
 <div class="card">
   <div class="card-body">
     <h5 class="card-title">{{ "Edit item" if item else "New item" }}</h5>
+    {% if errors and errors|length %}
+      <div class="alert alert-danger mt-3" role="alert">
+        <div class="fw-semibold mb-1">Please fix the following fields:</div>
+        <ul class="mb-0">
+          {% for field, msg in errors.items() %}
+            <li>
+              <a href="#" class="error-link" data-field="{{ field }}">{{ msg }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
 
     <form method="post"
           enctype="multipart/form-data"
@@ -23,13 +36,14 @@
         <!-- Title is kept for 'found'. For 'lost' it will be auto-filled from "What is lost" -->
         <div class="col-12 col-md-8" id="titleBlock">
           <label class="form-label">Title *</label>
-          <input class="form-control" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
+          <input class="form-control {% if errors.get('title') %}is-invalid{% endif %}" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
+          {% if errors.get('title') %}<div class="invalid-feedback">{{ errors.get('title') }}</div>{% endif %}
           <div class="form-text">For “Lost”, this is auto-filled from “What is lost”.</div>
         </div>
 
         <div class="col-12 col-md-4">
           <label class="form-label">Status</label>
-          <select class="form-select" name="status">
+          <select class="form-select" name="status" id="statusSel">
             {% for s in statuses %}
               <option value="{{s}}" {% if item and item['status']==s %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
@@ -52,13 +66,15 @@
 
         <div class="col-12 col-md-4">
           <label class="form-label">Date</label>
-          <input class="form-control" type="date" name="event_date"
+          <input class="form-control {% if errors.get('event_date') %}is-invalid{% endif %}" type="date" name="event_date"
                  value="{{ item['event_date'] if item and item['event_date'] else '' }}">
+          {% if errors.get('event_date') %}<div class="invalid-feedback">{{ errors.get('event_date') }}</div>{% endif %}
         </div>
 
         <div class="col-12" id="descBlock">
           <label class="form-label">Description <span class="text-danger">*</span></label>
-          <textarea class="form-control" rows="3" name="description" id="descInput">{{ item['description'] if item else '' }}</textarea>
+          <textarea class="form-control {% if errors.get('description') %}is-invalid{% endif %}" rows="3" name="description" id="descInput">{{ item['description'] if item else '' }}</textarea>
+          {% if errors.get('description') %}<div class="invalid-feedback">{{ errors.get('description') }}</div>{% endif %}
         </div>
 
         <!-- LOST DETAILS -->
@@ -69,8 +85,9 @@
           <div class="row g-3">
             <div class="col-12 col-md-6">
               <label class="form-label">What is lost *</label>
-              <input class="form-control" name="lost_what" id="lostWhat"
+              <input class="form-control {% if errors.get('lost_what') %}is-invalid{% endif %}" name="lost_what" id="lostWhat"
                      value="{{ item['lost_what'] if item else '' }}">
+              {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ errors.get('lost_what') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
@@ -81,26 +98,30 @@
 
             <div class="col-12 col-md-6">
               <label class="form-label">Last Name *</label>
-              <input class="form-control" name="lost_last_name"
+              <input class="form-control {% if errors.get('lost_last_name') %}is-invalid{% endif %}" name="lost_last_name"
                      value="{{ item['lost_last_name'] if item else '' }}">
+              {% if errors.get('lost_last_name') %}<div class="invalid-feedback">{{ errors.get('lost_last_name') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">First Name *</label>
-              <input class="form-control" name="lost_first_name"
+              <input class="form-control {% if errors.get('lost_first_name') %}is-invalid{% endif %}" name="lost_first_name"
                      value="{{ item['lost_first_name'] if item else '' }}">
+              {% if errors.get('lost_first_name') %}<div class="invalid-feedback">{{ errors.get('lost_first_name') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Street *</label>
-              <input class="form-control" name="lost_street"
+              <input class="form-control {% if errors.get('lost_street') %}is-invalid{% endif %}" name="lost_street"
                      value="{{ item['lost_street'] if item else '' }}">
+              {% if errors.get('lost_street') %}<div class="invalid-feedback">{{ errors.get('lost_street') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-3">
               <label class="form-label">Number *</label>
-              <input class="form-control" name="lost_number"
+              <input class="form-control {% if errors.get('lost_number') %}is-invalid{% endif %}" name="lost_number"
                      value="{{ item['lost_number'] if item else '' }}">
+              {% if errors.get('lost_number') %}<div class="invalid-feedback">{{ errors.get('lost_number') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-3">
@@ -111,48 +132,55 @@
 
             <div class="col-12 col-md-4">
               <label class="form-label">Postcode *</label>
-              <input class="form-control" name="lost_postcode"
+              <input class="form-control {% if errors.get('lost_postcode') %}is-invalid{% endif %}" name="lost_postcode"
                      value="{{ item['lost_postcode'] if item else '' }}">
+              {% if errors.get('lost_postcode') %}<div class="invalid-feedback">{{ errors.get('lost_postcode') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Town *</label>
-              <input class="form-control" name="lost_town"
+              <input class="form-control {% if errors.get('lost_town') %}is-invalid{% endif %}" name="lost_town"
                      value="{{ item['lost_town'] if item else '' }}">
+              {% if errors.get('lost_town') %}<div class="invalid-feedback">{{ errors.get('lost_town') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Country *</label>
-              <input class="form-control" name="lost_country"
+              <input class="form-control {% if errors.get('lost_country') %}is-invalid{% endif %}" name="lost_country"
                      value="{{ item['lost_country'] if item else '' }}">
+              {% if errors.get('lost_country') %}<div class="invalid-feedback">{{ errors.get('lost_country') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">E-Mail address *</label>
-              <input class="form-control" type="email" name="lost_email"
+              <input class="form-control {% if errors.get('lost_email') %}is-invalid{% endif %}" type="email" name="lost_email"
                      value="{{ item['lost_email'] if item else '' }}">
+              {% if errors.get('lost_email') %}<div class="invalid-feedback">{{ errors.get('lost_email') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Phone number (with countrycode: +….) *</label>
-              <input class="form-control" name="lost_phone"
+              <input class="form-control {% if errors.get('lost_phone') %}is-invalid{% endif %}" name="lost_phone"
                      value="{{ item['lost_phone'] if item else '' }}">
+              {% if errors.get('lost_phone') %}<div class="invalid-feedback">{{ errors.get('lost_phone') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">When are you leaving Taizé</label>
-              <input class="form-control" type="date" name="lost_leaving_date"
+              <input class="form-control {% if errors.get('lost_leaving_date') %}is-invalid{% endif %}" type="date" name="lost_leaving_date"
                      value="{{ item['lost_leaving_date'] if item and item['lost_leaving_date'] else '' }}">
+              {% if errors.get('lost_leaving_date') %}<div class="invalid-feedback">{{ errors.get('lost_leaving_date') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Way of contact</label>
-              <select class="form-select" name="lost_contact_way">
+              <select class="form-select {% if errors.get('lost_contact_way') %}is-invalid{% endif %}" name="lost_contact_way">
                 <option value="">—</option>
                 {% for w in CONTACT_WAYS %}
                   <option value="{{ w }}" {% if item and item['lost_contact_way']==w %}selected{% endif %}>{{ w }}</option>
                 {% endfor %}
               </select>
+              {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
             </div>
 
             <div class="col-12">
@@ -162,8 +190,9 @@
 
             <div class="col-12 col-md-4">
               <label class="form-label">Price of postage</label>
-              <input class="form-control" name="postage_price" inputmode="decimal"
+              <input class="form-control {% if errors.get('postage_price') %}is-invalid{% endif %}" name="postage_price" inputmode="decimal"
                      value="{{ item['postage_price'] if item and item['postage_price'] is not none else '' }}">
+              {% if errors.get('postage_price') %}<div class="invalid-feedback">{{ errors.get('postage_price') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-4 d-flex align-items-end">
@@ -212,6 +241,8 @@
   const titleBlock = document.getElementById('titleBlock');
   const titleInput = document.getElementById('titleInput');
   const lostWhat = document.getElementById('lostWhat');
+  const statusSel = document.getElementById('statusSel');
+  const isEdit = {{ "true" if item else "false" }};
 
   // Fields required ONLY for Lost Request
   const lostRequiredNames = [
@@ -251,11 +282,32 @@
     if (isLost && titleInput && lostWhat) {
       titleInput.value = lostWhat.value || "";
     }
+
+    // New item default status for Found Item
+    if (!isEdit && statusSel) {
+      if (!isLost) {
+        statusSel.value = "Found, not assigned";
+      } else if (statusSel.value === "Found, not assigned") {
+        statusSel.value = "Lost";
+      }
+    }
   }
 
   if (kindSel) kindSel.addEventListener('change', sync);
   if (lostWhat) lostWhat.addEventListener('input', sync);
   sync();
+
+  document.querySelectorAll('.error-link').forEach(link => {
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const field = link.getAttribute('data-field');
+      if (!field) return;
+      const target = document.querySelector(`[name="${field}"]`);
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.focus({ preventScroll: true });
+    });
+  });
 </script>
 
 {% endblock %}
