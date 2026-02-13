@@ -165,12 +165,6 @@
             </div>
 
             <div class="col-12 col-md-6">
-              <label class="form-label">Name of Groupleader</label>
-              <input class="form-control" name="lost_group_leader"
-                     value="{{ item['lost_group_leader'] if item else '' }}">
-            </div>
-
-            <div class="col-12 col-md-6">
               <label class="form-label">When are you leaving Taizé</label>
               <input class="form-control {% if errors.get('lost_leaving_date') %}is-invalid{% endif %}" type="date" name="lost_leaving_date"
                      value="{{ item['lost_leaving_date'] if item and item['lost_leaving_date'] else '' }}">
@@ -186,6 +180,12 @@
                 {% endfor %}
               </select>
               {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Name of Groupleader</label>
+              <input class="form-control" name="lost_group_leader"
+                     value="{{ item['lost_group_leader'] if item else '' }}">
             </div>
 
             <div class="col-12"><hr class="my-1"></div>
