@@ -1437,9 +1437,6 @@ def saved_search_create():
         flash("Invalid search scope.", "danger")
         return redirect(next_url)
     query_string = clean_saved_query_string(scope, raw_query)
-    if not query_string:
-        flash("There are no valid filters to save.", "danger")
-        return redirect(next_url)
     if not name:
         stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         prefix = "Items" if scope == "index" else "Matches"
