@@ -30,20 +30,21 @@
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('index') }}">Home</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('dashboard') }}">Dashboard</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('account_password') }}">Change password</a>
 
-          {% if user['role'] == 'admin' %}
-            <div class="dropdown">
-              <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                Admin
-              </button>
-              <ul class="dropdown-menu dropdown-menu-end">
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              Settings
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="{{ url_for('account_password') }}">Change password</a></li>
+              {% if user['role'] == 'admin' %}
+                <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('audit_view') }}">Audit</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('admin_categories') }}">Categories</a></li>
-              </ul>
-            </div>
-          {% endif %}
+              {% endif %}
+            </ul>
+          </div>
 
           <form method="post" action="{{ url_for('logout') }}">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
