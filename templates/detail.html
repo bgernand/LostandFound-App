@@ -45,8 +45,22 @@
         <dt class="col-sm-3">Postcode / Town</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "" }} {{ item['lost_town'] or "" }}</dd>
         <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
 
-        <dt class="col-sm-3">E-Mail</dt><dd class="col-sm-9">{{ item['lost_email'] or "—" }}</dd>
-        <dt class="col-sm-3">Phone</dt><dd class="col-sm-9">{{ item['lost_phone'] or "—" }}</dd>
+        <dt class="col-sm-3">E-Mail</dt>
+        <dd class="col-sm-9">
+          {% if item['lost_email'] %}
+            <a href="mailto:{{ item['lost_email'] }}">{{ item['lost_email'] }}</a>
+          {% else %}
+            —
+          {% endif %}
+        </dd>
+        <dt class="col-sm-3">Phone</dt>
+        <dd class="col-sm-9">
+          {% if item['lost_phone'] %}
+            <a href="tel:{{ item['lost_phone']|replace(' ', '') }}">{{ item['lost_phone'] }}</a>
+          {% else %}
+            —
+          {% endif %}
+        </dd>
 
         <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
         <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>

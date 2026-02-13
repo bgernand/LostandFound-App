@@ -41,8 +41,22 @@
             <div>{{ item['lost_postcode'] }} {{ item['lost_town'] }}</div>
             <div>{{ item['lost_country'] }}</div>
             <hr class="my-2">
-            <div class="small text-muted">E-Mail: {{ item['lost_email'] }}</div>
-            <div class="small text-muted">Phone: {{ item['lost_phone'] }}</div>
+            <div class="small text-muted">
+              E-Mail:
+              {% if item['lost_email'] %}
+                <a href="mailto:{{ item['lost_email'] }}">{{ item['lost_email'] }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </div>
+            <div class="small text-muted">
+              Phone:
+              {% if item['lost_phone'] %}
+                <a href="tel:{{ item['lost_phone']|replace(' ', '') }}">{{ item['lost_phone'] }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </div>
           </div>
         </div>
         <div class="col-12 col-md-4 text-center">
