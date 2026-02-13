@@ -96,12 +96,6 @@
 
           <div class="row g-3">
             <div class="col-12 col-md-6">
-              <label class="form-label">Name of Groupleader</label>
-              <input class="form-control" name="lost_group_leader"
-                     value="{{ item['lost_group_leader'] if item else '' }}">
-            </div>
-
-            <div class="col-12 col-md-6">
               <label class="form-label">Last Name *</label>
               <input class="form-control {% if errors.get('lost_last_name') %}is-invalid{% endif %}" name="lost_last_name"
                      value="{{ item['lost_last_name'] if item else '' }}">
@@ -169,6 +163,14 @@
                      value="{{ item['lost_phone'] if item else '' }}">
               {% if errors.get('lost_phone') %}<div class="invalid-feedback">{{ errors.get('lost_phone') }}</div>{% endif %}
             </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">Name of Groupleader</label>
+              <input class="form-control" name="lost_group_leader"
+                     value="{{ item['lost_group_leader'] if item else '' }}">
+            </div>
+
+            <div class="col-12"><hr class="my-1"></div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">When are you leaving Taizé</label>
