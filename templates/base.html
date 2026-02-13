@@ -33,9 +33,16 @@
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('account_password') }}">Change password</a>
 
           {% if user['role'] == 'admin' %}
-            <a class="btn btn-sm btn-outline-light" href="{{ url_for('users') }}">Users</a>
-            <a class="btn btn-sm btn-outline-light" href="{{ url_for('audit_view') }}">Audit</a>
-            <a class="btn btn-sm btn-outline-light" href="{{ url_for('admin_categories') }}">Categories</a>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                Admin
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('audit_view') }}">Audit</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('admin_categories') }}">Categories</a></li>
+              </ul>
+            </div>
           {% endif %}
 
           <form method="post" action="{{ url_for('logout') }}">

@@ -1277,7 +1277,10 @@ def privacy_policy():
 # -------------------------
 @app.get("/login")
 def login():
-    return render_template("login.html", next=safe_next_url(request.args.get("next")))
+    next_url = safe_next_url(request.args.get("next"))
+    if next_url == url_for("index"):
+        next_url = url_for("dashboard")
+    return render_template("login.html", next=next_url)
 
 
 @app.post("/login")
@@ -1286,6 +1289,8 @@ def login_post():
     username_key = username.lower()
     password = request.form.get("password") or ""
     nxt = safe_next_url(request.form.get("next"))
+    if nxt == url_for("index"):
+        nxt = url_for("dashboard")
     now_ts = int(time.time())
     ip_addr = client_ip()
 
@@ -2600,6 +2605,41 @@ def users_reset_password(user_id: int):
 
     audit("password_reset", "user", user_id, f"username={u['username']}")
     flash(f"Password reset for '{u['username']}'.", "warning")
+    return redirect(url_for("users"))
+
+
+@app.post("/admin/users/<int:user_id>/role")
+@require_role("admin")
+def users_change_role(user_id: int):
+    new_role = (request.form.get("role") or "").strip()
+    if new_role not in ROLES:
+        flash("Invalid role selected.", "danger")
+        return redirect(url_for("users"))
+
+    conn = get_db()
+    u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        abort(404)
+
+    old_role = u["role"]
+    if old_role == new_role:
+        conn.close()
+        flash("Role unchanged.", "info")
+        return redirect(url_for("users"))
+
+    admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
+    if old_role == "admin" and new_role != "admin" and admins <= 1:
+        conn.close()
+        flash("You cannot change the role of the last admin user.", "danger")
+        return redirect(url_for("users"))
+
+    conn.execute("UPDATE users SET role=? WHERE id=?", (new_role, user_id))
+    conn.commit()
+    conn.close()
+
+    audit("role_change", "user", user_id, f"username={u['username']} role:{old_role}->{new_role}")
+    flash(f"Role updated for '{u['username']}' ({old_role} -> {new_role}).", "success")
     return redirect(url_for("users"))
 
 

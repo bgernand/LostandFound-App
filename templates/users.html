@@ -71,6 +71,18 @@
                 <td class="text-nowrap small text-muted">{{ u['created_at'] }}</td>
 
                 <td class="text-end text-nowrap">
+                  <form method="post"
+                        action="{{ url_for('users_change_role', user_id=u['id']) }}"
+                        class="d-inline me-1">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <select class="form-select form-select-sm d-inline-block" style="width: 120px;" name="role">
+                      {% for r in roles %}
+                        <option value="{{ r }}" {% if u['role'] == r %}selected{% endif %}>{{ r }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Set role</button>
+                  </form>
+
                   {% if user and u['id'] != user['id'] %}
                     <form method="post"
                           action="{{ url_for('users_reset_password', user_id=u['id']) }}"
