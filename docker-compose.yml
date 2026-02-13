@@ -30,10 +30,6 @@ services:
     container_name: lostfound_nginx
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
     depends_on:
       - app
     ports:
