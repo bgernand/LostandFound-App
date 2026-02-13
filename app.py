@@ -867,11 +867,29 @@ def search_link_candidates(conn, item, q: str):
     return rows
 
 
+def get_multi_values(args, key: str, allowed: set[str] | None = None, max_items: int = 50):
+    vals = []
+    seen = set()
+    for raw in args.getlist(key):
+        v = (raw or "").strip()
+        if not v:
+            continue
+        if allowed is not None and v not in allowed:
+            continue
+        if v in seen:
+            continue
+        seen.add(v)
+        vals.append(v)
+        if len(vals) >= max_items:
+            break
+    return vals
+
+
 def build_filters(args):
     q = (args.get("q") or "").strip()
-    kind = (args.get("kind") or "").strip()
-    status = (args.get("status") or "").strip()
-    category = (args.get("category") or "").strip()
+    kinds = get_multi_values(args, "kind", {"lost", "found"})
+    statuses_selected = get_multi_values(args, "status", set(STATUSES))
+    categories_selected = get_multi_values(args, "category", set(category_names(active_only=True)))
 
     sql = "SELECT * FROM items WHERE 1=1"
     params = []
@@ -881,21 +899,20 @@ def build_filters(args):
         like = f"%{q}%"
         params += [like, like, like, like, like, like]
 
-    if kind in {"lost", "found"}:
-        sql += " AND kind = ?"
-        params.append(kind)
+    if kinds:
+        sql += " AND kind IN (" + ",".join(["?"] * len(kinds)) + ")"
+        params += kinds
 
-    if status and status in STATUSES:
-        sql += " AND status = ?"
-        params.append(status)
+    if statuses_selected:
+        sql += " AND status IN (" + ",".join(["?"] * len(statuses_selected)) + ")"
+        params += statuses_selected
 
-    active_cats = set(category_names(active_only=True))
-    if category and category in active_cats:
-        sql += " AND category = ?"
-        params.append(category)
+    if categories_selected:
+        sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
+        params += categories_selected
 
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, kind, status, category
+    return sql, params, q, kinds, statuses_selected, categories_selected
 
 
 # -------------------------
@@ -1023,7 +1040,7 @@ def account_password_post():
 @app.get("/")
 @login_required
 def index():
-    sql, params, q, kind, status, category = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected = build_filters(request.args)
 
     conn = get_db()
     items = conn.execute(sql, params).fetchall()
@@ -1036,7 +1053,10 @@ def index():
     return render_template(
         "index.html",
         items=items,
-        q=q, kind=kind, status=status, category=category,
+        q=q,
+        kinds_selected=kinds,
+        statuses_selected=statuses_selected,
+        categories_selected=categories_selected,
         categories=category_names(active_only=True),
         statuses=STATUSES,
         photo_counts=photo_counts,
@@ -1061,10 +1081,10 @@ def safe_int_arg(args, name, default, min_value=None, max_value=None):
 @login_required
 def matches_overview():
     q = (request.args.get("q") or "").strip()
-    kind = (request.args.get("kind") or "").strip()
-    source_status = (request.args.get("source_status") or "").strip()
-    candidate_status = (request.args.get("candidate_status") or "").strip()
-    category = (request.args.get("category") or "").strip()
+    kinds_selected = get_multi_values(request.args, "kind", {"lost", "found"})
+    source_statuses_selected = get_multi_values(request.args, "source_status", set(STATUSES))
+    candidate_statuses_selected = get_multi_values(request.args, "candidate_status", set(STATUSES))
+    categories_selected = get_multi_values(request.args, "category", set(category_names(active_only=True)))
     include_linked = 1 if (request.args.get("include_linked") == "1") else 0
     min_score = safe_int_arg(request.args, "min_score", 35, 0, 200)
     source_limit = safe_int_arg(request.args, "source_limit", 60, 5, 200)
@@ -1087,18 +1107,17 @@ def matches_overview():
         """
         source_params += [like, like, like, like, like, like, q]
 
-    if kind in {"lost", "found"}:
-        source_sql += " AND kind = ?"
-        source_params.append(kind)
+    if kinds_selected:
+        source_sql += " AND kind IN (" + ",".join(["?"] * len(kinds_selected)) + ")"
+        source_params += kinds_selected
 
-    if source_status and source_status in STATUSES:
-        source_sql += " AND status = ?"
-        source_params.append(source_status)
+    if source_statuses_selected:
+        source_sql += " AND status IN (" + ",".join(["?"] * len(source_statuses_selected)) + ")"
+        source_params += source_statuses_selected
 
-    active_cats = set(category_names(active_only=True))
-    if category and category in active_cats:
-        source_sql += " AND category = ?"
-        source_params.append(category)
+    if categories_selected:
+        source_sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
+        source_params += categories_selected
 
     source_sql += " ORDER BY created_at DESC LIMIT ?"
     source_params.append(source_limit)
@@ -1116,7 +1135,7 @@ def matches_overview():
             event_date=src["event_date"], item_id=src_item_id
         )
         for cand in found:
-            if candidate_status and candidate_status in STATUSES and cand["status"] != candidate_status:
+            if candidate_statuses_selected and cand["status"] not in candidate_statuses_selected:
                 continue
             if int(cand.get("match_score") or 0) < min_score:
                 continue
@@ -1143,10 +1162,10 @@ def matches_overview():
         "matches.html",
         pairs=pairs,
         q=q,
-        kind=kind,
-        source_status=source_status,
-        candidate_status=candidate_status,
-        category=category,
+        kinds_selected=kinds_selected,
+        source_statuses_selected=source_statuses_selected,
+        candidate_statuses_selected=candidate_statuses_selected,
+        categories_selected=categories_selected,
         include_linked=include_linked,
         min_score=min_score,
         source_limit=source_limit,
@@ -1801,7 +1820,7 @@ def public_photo(token: str, photo_id: int):
 @app.get("/export.csv")
 @login_required
 def export_csv():
-    sql, params, q, kind, status, category = build_filters(request.args)
+    sql, params, q, kinds, statuses_selected, categories_selected = build_filters(request.args)
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -1817,7 +1836,10 @@ def export_csv():
         ])
 
     mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
-    audit("export", "items", None, f"q={q} kind={kind} status={status} category={category}")
+    audit(
+        "export", "items", None,
+        f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)}"
+    )
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
 
 

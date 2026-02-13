@@ -3,40 +3,41 @@
 
 <div class="card mb-3">
   <div class="card-body">
-    <h5 class="card-title mb-3">Possible Matches Overview</h5>
+    <h5 class="card-title mb-1">Possible Matches Overview</h5>
+    <div class="text-muted small mb-3">Find likely lost/found pairings with scoring and filters.</div>
 
     <form class="row g-2" method="get" action="{{ url_for('matches_overview') }}">
       <div class="col-12 col-lg-4">
         <input class="form-control" name="q" value="{{ q }}" placeholder="Search source items (id, title, names, location)">
       </div>
       <div class="col-12 col-md-6 col-lg-2">
-        <select class="form-select" name="kind">
-          <option value="">Type (all)</option>
-          <option value="lost" {% if kind=="lost" %}selected{% endif %}>Lost Request</option>
-          <option value="found" {% if kind=="found" %}selected{% endif %}>Found Item</option>
+        <label class="form-label small text-muted mb-1">Type</label>
+        <select class="form-select" name="kind" multiple size="2">
+          <option value="lost" {% if 'lost' in kinds_selected %}selected{% endif %}>Lost Request</option>
+          <option value="found" {% if 'found' in kinds_selected %}selected{% endif %}>Found Item</option>
         </select>
       </div>
       <div class="col-12 col-md-6 col-lg-2">
-        <select class="form-select" name="source_status">
-          <option value="">Source status (all)</option>
+        <label class="form-label small text-muted mb-1">Source status</label>
+        <select class="form-select" name="source_status" multiple size="4">
           {% for s in statuses %}
-            <option value="{{ s }}" {% if source_status==s %}selected{% endif %}>{{ s }}</option>
+            <option value="{{ s }}" {% if s in source_statuses_selected %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-12 col-md-6 col-lg-2">
-        <select class="form-select" name="candidate_status">
-          <option value="">Candidate status (all)</option>
+        <label class="form-label small text-muted mb-1">Candidate status</label>
+        <select class="form-select" name="candidate_status" multiple size="4">
           {% for s in statuses %}
-            <option value="{{ s }}" {% if candidate_status==s %}selected{% endif %}>{{ s }}</option>
+            <option value="{{ s }}" {% if s in candidate_statuses_selected %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-12 col-md-6 col-lg-2">
-        <select class="form-select" name="category">
-          <option value="">Category (all)</option>
+        <label class="form-label small text-muted mb-1">Category</label>
+        <select class="form-select" name="category" multiple size="4">
           {% for c in categories %}
-            <option value="{{ c }}" {% if category==c %}selected{% endif %}>{{ c }}</option>
+            <option value="{{ c }}" {% if c in categories_selected %}selected{% endif %}>{{ c }}</option>
           {% endfor %}
         </select>
       </div>
@@ -56,9 +57,12 @@
           <label class="form-check-label" for="includeLinked">Include already linked pairs</label>
         </div>
       </div>
+      <div class="col-12 small text-muted">
+        Multi-select: use Ctrl/Cmd + click.
+      </div>
       <div class="col-12 col-lg-3 d-grid d-lg-flex gap-2 align-items-end">
         <button class="btn btn-primary" type="submit">Apply filters</button>
-        <a class="btn btn-outline-secondary" href="{{ url_for('matches_overview') }}">Reset</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('matches_overview') }}">Clear all filters</a>
       </div>
     </form>
   </div>
@@ -66,7 +70,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div class="small text-muted">Matches found: {{ pairs|length }}</div>
-  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('index') }}">Back to items</a>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('index') }}">Open Items Overview</a>
 </div>
 
 <div class="list-group">
