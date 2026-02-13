@@ -23,7 +23,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Improved search with token expansion, synonym support, and phonetic (`soundex`) matching
 
 ## Status Behavior
-- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Sent`, `Done`, `Lost forever`
+- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Handed over / Sent`, `Lost forever`
 - New items are always created with default status `Lost` (independent of type)
 - When a link is created between items, all items in the linked graph are set to `Found`
 - Changing the status of one linked item synchronizes that status to all linked items

@@ -77,8 +77,7 @@ STATUSES = [
     "Found",
     "In contact",
     "Ready to send",
-    "Sent",
-    "Done",
+    "Handed over / Sent",
     "Lost forever"
 ]
 
@@ -88,8 +87,7 @@ STATUS_COLORS = {
     "Found": "primary",
     "In contact": "info",
     "Ready to send": "secondary",
-    "Done": "success",
-    "Sent": "light",
+    "Handed over / Sent": "success",
     "Lost forever": "dark",
 }
 
@@ -377,6 +375,7 @@ def init_db():
     # Legacy status cleanup
     conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
     conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
+    conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
 
     # Seed default admin if none exist
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
@@ -955,7 +954,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
         SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
         FROM items
         WHERE kind = ?
-          AND status NOT IN ('Done', 'Sent', 'Lost forever')
+          AND status NOT IN ('Handed over / Sent', 'Lost forever')
           AND (
               (? = 1 AND category = ?)
               OR (? = 1 AND title LIKE ?)
@@ -985,7 +984,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
         extra_rows = conn.execute(
             f"""SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
                 FROM items
-                WHERE id IN ({placeholders}) AND status NOT IN ('Done', 'Sent', 'Lost forever')""",
+                WHERE id IN ({placeholders}) AND status NOT IN ('Handed over / Sent', 'Lost forever')""",
             tuple(fts_ids)
         ).fetchall()
         for r in extra_rows:
@@ -1411,8 +1410,8 @@ def dashboard():
         """
         SELECT
             COUNT(*) AS total_items,
-            SUM(CASE WHEN status IN ('Done', 'Sent') THEN 1 ELSE 0 END) AS completed_items,
-            AVG(CASE WHEN status IN ('Done', 'Sent') AND updated_at IS NOT NULL
+            SUM(CASE WHEN status IN ('Handed over / Sent') THEN 1 ELSE 0 END) AS completed_items,
+            AVG(CASE WHEN status IN ('Handed over / Sent') AND updated_at IS NOT NULL
                      THEN (julianday(updated_at) - julianday(created_at))
                      ELSE NULL END) AS avg_days_to_complete
         FROM items
@@ -1545,7 +1544,7 @@ def matches_overview():
     source_sql = """
         SELECT *
         FROM items
-        WHERE status NOT IN ('Done', 'Sent', 'Lost forever')
+        WHERE status NOT IN ('Handed over / Sent', 'Lost forever')
     """
     source_params = []
 
