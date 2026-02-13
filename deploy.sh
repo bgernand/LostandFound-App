@@ -58,6 +58,11 @@ echo "==> LostandFound deployment starting..."
 
 mkdir -p data uploads certbot/www certbot/conf nginx/templates
 
+# Ensure mounted runtime directories are writable by the non-root app user (uid/gid 10001).
+APP_UID="${APP_UID:-10001}"
+APP_GID="${APP_GID:-10001}"
+chown -R "${APP_UID}:${APP_GID}" data uploads
+
 if [[ ! -f ".env" ]]; then
   if [[ -f ".env.example" ]]; then
     cp .env.example .env

@@ -64,6 +64,12 @@ docker-compose ps
 ./deploy.sh
 ```
 
+If you updated from an older root-based setup and see `sqlite3.OperationalError: attempt to write a readonly database`, fix ownership once:
+```bash
+chown -R 10001:10001 data uploads
+docker compose up -d --build app
+```
+
 ## 7. Persistent Data
 - `./data` -> SQLite DB (`/app/data`)
 - `./uploads` -> uploaded photos (`/app/uploads`)

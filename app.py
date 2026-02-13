@@ -883,6 +883,49 @@ def get_linked_items(conn, item):
     return rows
 
 
+def linked_component_ids(conn, item_id: int):
+    ensure_item_links_schema(conn)
+    start = int(item_id)
+    visited = set()
+    stack = [start]
+    while stack:
+        curr = int(stack.pop())
+        if curr in visited:
+            continue
+        visited.add(curr)
+        rows = conn.execute(
+            """
+            SELECT found_item_id, lost_item_id
+            FROM item_links
+            WHERE found_item_id=? OR lost_item_id=?
+            """,
+            (curr, curr),
+        ).fetchall()
+        for r in rows:
+            a = int(r["found_item_id"])
+            b = int(r["lost_item_id"])
+            if a not in visited:
+                stack.append(a)
+            if b not in visited:
+                stack.append(b)
+    return visited
+
+
+def sync_linked_group_status(conn, item_id: int, new_status: str):
+    if new_status not in STATUSES:
+        return 0
+    group_ids = linked_component_ids(conn, item_id)
+    if len(group_ids) <= 1:
+        return 0
+    placeholders = ",".join(["?"] * len(group_ids))
+    params = [new_status, now_utc()] + [int(i) for i in sorted(group_ids)]
+    conn.execute(
+        f"UPDATE items SET status=?, updated_at=? WHERE id IN ({placeholders})",
+        params,
+    )
+    return len(group_ids)
+
+
 def search_link_candidates(conn, item, q: str):
     q = (q or "").strip()
     if not q:
@@ -1601,11 +1644,14 @@ def update_item(item_id: int):
         )
         saved += 1
 
+    synced_count = sync_linked_group_status(conn, item_id, status)
     conn.commit()
     conn.close()
 
-    audit("update", "item", item_id, f"user={u['username']} photos_added={saved}")
+    audit("update", "item", item_id, f"user={u['username']} photos_added={saved} linked_status_sync={synced_count}")
     flash("Item updated.", "success")
+    if synced_count > 1:
+        flash(f"Status synchronized to {synced_count} linked items.", "info")
     return redirect(url_for("detail", item_id=item_id))
 
 
@@ -1652,11 +1698,14 @@ def create_link(item_id: int):
         "INSERT INTO item_links (found_item_id, lost_item_id, created_by, created_at) VALUES (?, ?, ?, ?)",
         (found_id, lost_id, u["id"] if u else None, now_utc())
     )
+    synced_count = sync_linked_group_status(conn, item_id, "Found")
     conn.commit()
     conn.close()
 
-    audit("link_create", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id}")
+    audit("link_create", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id} status_sync={synced_count}")
     flash("Link created.", "success")
+    if synced_count > 1:
+        flash(f"Linked items were automatically set to status 'Found' ({synced_count} items).", "info")
     return redirect(url_for("detail", item_id=item_id))
 
 
