@@ -7,7 +7,8 @@
 
     <form method="post"
           enctype="multipart/form-data"
-          action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}">
+          action="{{ url_for('update_item', item_id=item['id']) if item else url_for('create_item') }}"
+          novalidate>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <div class="row g-3">
 
@@ -22,7 +23,7 @@
         <!-- Title is kept for 'found'. For 'lost' it will be auto-filled from "What is lost" -->
         <div class="col-12 col-md-8" id="titleBlock">
           <label class="form-label">Title *</label>
-          <input class="form-control" name="title" id="titleInput" required value="{{ item['title'] if item else '' }}">
+          <input class="form-control" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
           <div class="form-text">For “Lost”, this is auto-filled from “What is lost”.</div>
         </div>
 
@@ -57,7 +58,7 @@
 
         <div class="col-12" id="descBlock">
           <label class="form-label">Description <span class="text-danger">*</span></label>
-          <textarea class="form-control" rows="3" name="description" id="descInput" required>{{ item['description'] if item else '' }}</textarea>
+          <textarea class="form-control" rows="3" name="description" id="descInput">{{ item['description'] if item else '' }}</textarea>
         </div>
 
         <!-- LOST DETAILS -->
