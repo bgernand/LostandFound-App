@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import ipaddress
 import os
@@ -210,7 +210,7 @@ def create_app(config: dict | None = None):
 
     @app.before_request
     def _auto_status_maintenance():
-        today = datetime.utcnow().date().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
         if state["status_maintenance_day"] == today:
             return
 
@@ -408,5 +408,6 @@ app = create_app()
 
 if __name__ == "__main__":
     app.run(debug=(os.environ.get("FLASK_DEBUG") == "1"))
+
 
 

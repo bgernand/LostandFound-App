@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import flash, redirect, render_template, request, url_for
 
@@ -322,7 +322,7 @@ def register_overview_routes(app, deps: dict):
             multi_keys=SAVED_SEARCH_MULTI_KEYS,
         )
         if not name:
-            stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             prefix = "Items" if scope == "index" else "Matches"
             name = f"{prefix} search {stamp}"
         if len(name) > 80:
@@ -434,3 +434,4 @@ def register_overview_routes(app, deps: dict):
         else:
             flash("Saved search not found.", "danger")
         return redirect(next_url)
+

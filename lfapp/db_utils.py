@@ -1,7 +1,7 @@
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from werkzeug.security import generate_password_hash
 
@@ -16,7 +16,7 @@ def get_db(db_path: str):
 
 
 def now_utc():
-    return datetime.utcnow().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def ensure_column(conn, table, col_name, col_def_sql):
@@ -387,7 +387,7 @@ def init_db(db_path: str):
 
 
 def auto_mark_lost_forever(conn):
-    cutoff = (datetime.utcnow().date() - timedelta(days=90)).isoformat()
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=90)).isoformat()
     cur = conn.execute(
         """
         UPDATE items
@@ -402,7 +402,7 @@ def auto_mark_lost_forever(conn):
 
 
 def auto_create_followup_reminders(conn):
-    cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat(timespec="seconds")
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
     rows = conn.execute(
         """
         SELECT i.id, i.title, coalesce(i.updated_at, i.created_at) AS last_touch
@@ -440,4 +440,5 @@ def auto_create_followup_reminders(conn):
         )
         created += 1
     return created
+
 

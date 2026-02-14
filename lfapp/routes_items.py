@@ -1,7 +1,7 @@
 import csv
 import io
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
 import qrcode
@@ -153,7 +153,7 @@ def register_item_routes(app, deps: dict):
                     continue
                 safe = secure_filename(f.filename)
                 ext = safe.rsplit(".", 1)[1].lower()
-                filename = f"item_{item_id}_{int(datetime.utcnow().timestamp())}_{saved}.{ext}"
+                filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
                 f.save(UPLOAD_DIR / filename)
                 conn.execute(
                     "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
@@ -350,7 +350,7 @@ def register_item_routes(app, deps: dict):
                 continue
             safe = secure_filename(f.filename)
             ext = safe.rsplit(".", 1)[1].lower()
-            filename = f"item_{item_id}_{int(datetime.utcnow().timestamp())}_{saved}.{ext}"
+            filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
             f.save(UPLOAD_DIR / filename)
             conn.execute(
                 "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
@@ -630,8 +630,8 @@ def register_item_routes(app, deps: dict):
         photos = conn.execute("SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC", (item_id,)).fetchall()
         conn.close()
 
-        receipt_no = f"LF-{item_id}-{datetime.utcnow().strftime('%Y%m%d')}"
-        issued_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        receipt_no = f"LF-{item_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         audit("receipt_view", "item", item_id, f"receipt_no={receipt_no}")
         return render_template(
             "receipt.html",
@@ -652,8 +652,8 @@ def register_item_routes(app, deps: dict):
         if not item:
             abort(404)
 
-        receipt_no = f"LF-{item_id}-{datetime.utcnow().strftime('%Y%m%d')}"
-        issued_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        receipt_no = f"LF-{item_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         def pdf_safe(value):
             text = (value or "").strip()
@@ -802,3 +802,4 @@ def register_item_routes(app, deps: dict):
             f"q={q} kind={','.join(kinds)} status={','.join(statuses_selected)} category={','.join(categories_selected)} linked={linked_state} include_lost_forever={include_lost_forever} date_from={date_from} date_to={date_to}",
         )
         return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="lostfound_export.csv")
+
