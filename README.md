@@ -76,7 +76,10 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 .
 ├─ app.py                    # compatibility entry-point (imports from lfapp/main.py)
 ├─ lfapp/
-│  └─ main.py                # main Flask application
+│  ├─ __init__.py
+│  ├─ main.py                # main Flask application (routes/orchestration)
+│  ├─ totp_utils.py          # TOTP helper logic
+│  └─ match_utils.py         # matching/search helper logic
 ├─ deploy.sh
 ├─ docker-compose.yml
 ├─ dockerfile
@@ -96,6 +99,9 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - The application was split from a single large root `app.py` into a package-based structure start:
   - runtime code now lives in `lfapp/main.py`
   - root `app.py` stays as a compatibility shim for Gunicorn/tests (`app:app`)
+- Additional helper modules extracted:
+  - `lfapp/totp_utils.py`
+  - `lfapp/match_utils.py`
 - This keeps deployment stable while allowing further modularization into dedicated files.
 
 ## Quick Start (Debian/Linux)
