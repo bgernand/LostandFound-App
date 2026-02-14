@@ -1,2 +1,4 @@
-from lfapp.main import *  # noqa: F401,F403
+from lfapp.main import create_app
+
+app = create_app()
 

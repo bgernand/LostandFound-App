@@ -4,7 +4,8 @@ This guide deploys the app with Docker Compose, Nginx, and Certbot.
 
 Code layout note:
 - Runtime app code is in `lfapp/main.py`.
-- Root `app.py` is a compatibility entry-point so existing `gunicorn app:app` setup keeps working.
+- Root `app.py` is a compatibility entry-point that calls `create_app()`, so existing `gunicorn app:app` setup keeps working.
+- `create_app(config=None)` supports optional config overrides (mainly useful for tests).
 - Extracted helper modules include:
   - `lfapp/db_utils.py`
   - `lfapp/totp_utils.py`
@@ -13,6 +14,7 @@ Code layout note:
   - `lfapp/security_utils.py`
   - `lfapp/filter_utils.py`
   - `lfapp/category_utils.py`
+  - `lfapp/auth_core.py`
   - `lfapp/routes_auth.py`
   - `lfapp/routes_admin.py`
   - `lfapp/routes_overview.py`
@@ -72,12 +74,14 @@ docker compose logs -f certbot
 ```
 
 Functional checks after deploy:
-- Login works and `/dashboard` opens
+- Login works and /dashboard opens
 - Viewer user is read-only (no create/edit/link/delete controls)
 - Bulk status update works for staff/admin
 - Possible Matches page loads and score colors are visible
 - Saved searches can be saved/opened/deleted
-- Reminder workflow appears for stale `In contact` items
+- Reminder workflow appears for stale In contact items
+- Receipt PDF download works on item detail
+- Public token link /p/<token> is accessible only when public sharing is enabled
 
 If `docker compose` is unavailable on your server, use:
 ```bash
@@ -108,10 +112,27 @@ Backup these folders regularly:
 - `certbot/conf/`
 
 ## 9. CI / Tests
-- CI config is in `.github/workflows/ci.yml` and runs `pytest`.
+- CI config is in `.github/workflows/ci.yml` and runs a factory smoke check plus `pytest`.
 - Local test run:
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install pytest
 pytest -q
 ```
+
+
+
+
+
+
+## 10. Manual Sanity Check (Post-Refactor)
+Run this quick checklist after updates that touch routing or app initialization:
+- Open `/login` and verify redirect to `/dashboard` after login.
+- Create one `Lost Request` and one `Found Item`, then open both detail pages.
+- Create and delete a link between them, verify status sync and timeline entries.
+- Download `Receipt` PDF and verify filename uses receipt number.
+- Open Possible Matches, apply filters, save/open/delete one saved search.
+- Export CSV from filtered home view and verify file content.
+
+
+

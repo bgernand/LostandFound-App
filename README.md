@@ -61,7 +61,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 
 ## Quality and CI
 - Basic automated tests are included in `tests/`.
-- GitHub Actions CI runs pytest on push and pull request (`.github/workflows/ci.yml`).
+- GitHub Actions CI runs a create_app factory smoke check and pytest on push and pull request (`.github/workflows/ci.yml`).
 
 ## Tech Stack
 - Flask 3
@@ -74,10 +74,10 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ## Project Structure
 ```text
 .
-├─ app.py                    # compatibility entry-point (imports from lfapp/main.py)
+├─ app.py                    # compatibility entry-point (app factory: create_app -> app)
 ├─ lfapp/
 │  ├─ __init__.py
-│  ├─ main.py                # main Flask application (routes/orchestration)
+│  ├─ main.py                # app factory + dependency wiring
 │  ├─ db_utils.py            # db/schema/maintenance helpers
 │  ├─ totp_utils.py          # TOTP helper logic
 │  ├─ match_utils.py         # matching/search helper logic
@@ -85,6 +85,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 │  ├─ security_utils.py      # login/security helper logic
 │  ├─ filter_utils.py        # filter/saved-search helper logic
 │  ├─ category_utils.py      # category repository helpers
+│  ├─ auth_core.py           # current_user/login_required/require_role/audit helpers
 │  ├─ routes_auth.py         # auth/account route registration
 │  ├─ routes_admin.py        # admin route registration (users/audit/categories)
 │  ├─ routes_overview.py     # dashboard/index/matches/saved-search routes
@@ -108,7 +109,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ## Codebase Refactor Status
 - The application was split from a single large root `app.py` into a package-based structure start:
   - runtime code now lives in `lfapp/main.py`
-  - root `app.py` stays as a compatibility shim for Gunicorn/tests (`app:app`)
+  - root `app.py` stays as a compatibility shim calling `create_app()` for Gunicorn/tests (`app:app`)
+  - `lfapp.main.create_app(config=None)` supports optional config overrides (useful for tests)
 - Additional helper modules extracted:
   - `lfapp/db_utils.py`
   - `lfapp/totp_utils.py`
@@ -117,6 +119,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
   - `lfapp/security_utils.py`
   - `lfapp/filter_utils.py`
   - `lfapp/category_utils.py`
+  - `lfapp/auth_core.py`
   - `lfapp/routes_auth.py`
   - `lfapp/routes_admin.py`
   - `lfapp/routes_overview.py`
@@ -152,7 +155,7 @@ chmod +x deploy.sh
 - `INITIAL_ADMIN_USERNAME` (default: `admin`)
 - `INITIAL_ADMIN_PASSWORD` (required on first startup)
 - `BASE_URL` (required, e.g. `https://lostfound.example`)
-- `DOMAIN` (required, e.g. `lostfound.example`)
+- `DOMAIN` (required for deployment/nginx/certbot, e.g. `lostfound.example`)
 - `LOGIN_WINDOW_SECONDS` (optional, default `900`)
 - `LOGIN_MAX_ATTEMPTS` (optional, default `5`)
 - `MIN_PASSWORD_LENGTH` (optional, default `10`)
@@ -182,4 +185,10 @@ chmod +x deploy.sh
 
 ## Disclaimer
 This project is provided without any warranty. No liability is assumed for any direct or indirect damages, data loss, outages, or any other consequences resulting from the use, operation, or distribution of this software. Use of this software is entirely at your own risk.
+
+
+
+
+
+
 

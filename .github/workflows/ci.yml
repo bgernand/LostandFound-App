@@ -29,6 +29,11 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      - name: Factory smoke check
+        run: |
+          . .venv/bin/activate
+          SECRET_KEY=test-ci-secret BASE_URL=https://ci.example python3 -c "from lfapp.main import create_app; app=create_app({'SECRET_KEY':'test-ci-secret','BASE_URL':'https://ci.example'}); print(app.name)"
+
       - name: Run tests
         run: |
           . .venv/bin/activate
