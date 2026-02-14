@@ -77,141 +77,6 @@
       </dl>
     {% endif %}
 
-    <hr>
-    {% set linked_found = linked_items|selectattr('kind', 'equalto', 'found')|list %}
-    {% set linked_lost = linked_items|selectattr('kind', 'equalto', 'lost')|list %}
-
-    <div class="row g-3 mb-2">
-      <div class="col-12 col-xl-6">
-        <div class="fw-bold mb-2">Linked Found Items</div>
-        {% if linked_found and linked_found|length %}
-          <div class="list-group mb-2">
-            {% for li in linked_found %}
-              <div class="list-group-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                  <div>
-                    <div class="fw-semibold">
-                      <a href="{{ url_for('detail', item_id=li['id']) }}">
-                        📦 Found Item: {{ li['title'] }}
-                        <span class="text-muted fw-normal">(Item ID: {{ li['id'] }})</span>
-                      </a>
-                    </div>
-                    <div class="small text-muted">
-                      {{ li['category'] }} · {{ li['location'] or "—" }} · linked at {{ li['link_created_at'] }}
-                    </div>
-                  </div>
-                  <div class="text-end">
-                    <span class="badge text-bg-{{ STATUS_COLORS.get(li['status'], 'secondary') }}">{{ li['status'] }}</span>
-                    {% if can_write %}
-                      <form class="mt-2" method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}"
-                            onsubmit="return confirm('Remove this link?');">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
-                      </form>
-                    {% endif %}
-                  </div>
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="text-muted small mb-2">No linked found items.</div>
-        {% endif %}
-      </div>
-
-      <div class="col-12 col-xl-6">
-        <div class="fw-bold mb-2">Linked Lost Requests</div>
-        {% if linked_lost and linked_lost|length %}
-          <div class="list-group mb-2">
-            {% for li in linked_lost %}
-              <div class="list-group-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                  <div>
-                    <div class="fw-semibold">
-                      <a href="{{ url_for('detail', item_id=li['id']) }}">
-                        🔎 Lost Request: {{ li['title'] }}
-                        <span class="text-muted fw-normal">(Item ID: {{ li['id'] }})</span>
-                      </a>
-                    </div>
-                    <div class="small text-muted">
-                      {{ li['category'] }} · {{ li['location'] or "—" }} · linked at {{ li['link_created_at'] }}
-                    </div>
-                  </div>
-                  <div class="text-end">
-                    <span class="badge text-bg-{{ STATUS_COLORS.get(li['status'], 'secondary') }}">{{ li['status'] }}</span>
-                    {% if can_write %}
-                      <form class="mt-2" method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}"
-                            onsubmit="return confirm('Remove this link?');">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
-                      </form>
-                    {% endif %}
-                  </div>
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="text-muted small mb-2">No linked lost requests.</div>
-        {% endif %}
-      </div>
-    </div>
-
-    {% if can_write %}
-      <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <div class="col-12 col-md-6">
-          <label class="form-label">Link by item ID</label>
-          <input class="form-control" name="target_item_id" placeholder='Enter {{ "Found Item" if item["kind"]=="lost" else "Lost Request" }} ID'>
-        </div>
-        <div class="col-12 col-md-auto">
-          <button class="btn btn-outline-primary" type="submit">Create link</button>
-        </div>
-      </form>
-    {% endif %}
-
-    <form class="row g-2 align-items-end mb-2" method="get" action="{{ url_for('detail', item_id=item['id']) }}">
-      <div class="col-12 col-md-6">
-        <label class="form-label">Search and link</label>
-        <input class="form-control" name="link_q" value="{{ link_q or '' }}"
-               placeholder='Search {{ "Found Items" if item["kind"]=="lost" else "Lost Requests" }} by ID, title, description, category, location'>
-      </div>
-      <div class="col-12 col-md-auto">
-        <button class="btn btn-outline-secondary" type="submit">Search</button>
-      </div>
-    </form>
-
-    {% if link_q %}
-      <div class="small text-muted mb-2">
-        Search results for "{{ link_q }}"
-      </div>
-      {% if link_candidates and link_candidates|length %}
-        <ul class="list-group mb-3">
-          {% for c in link_candidates %}
-            <li class="list-group-item d-flex justify-content-between align-items-center gap-2">
-              <div>
-                <a href="{{ url_for('detail', item_id=c['id']) }}">
-                  {{ c['title'] }}
-                </a>
-                <div class="small text-muted">
-                  {{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}
-                </div>
-              </div>
-              {% if can_write %}
-                <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
-                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                  <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
-                  <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
-                </form>
-              {% endif %}
-            </li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <div class="text-muted small mb-3">No matching items found.</div>
-      {% endif %}
-    {% endif %}
-
     {% if photos and photos|length %}
       <hr>
       <div class="fw-bold mb-2">Photos</div>
@@ -297,6 +162,94 @@
   </div>
 </div>
 
+<div class="card mt-3">
+  <div class="card-body">
+    {% set linked_found = linked_items|selectattr('kind', 'equalto', 'found')|list %}
+    {% set linked_lost = linked_items|selectattr('kind', 'equalto', 'lost')|list %}
+    {% set linked_counterparts = linked_found if item['kind'] == 'lost' else linked_lost %}
+
+    <div class="fw-bold mb-2">{{ "Linked Found Items" if item['kind'] == 'lost' else "Linked Lost Requests" }}</div>
+
+    {% if linked_counterparts and linked_counterparts|length %}
+      <div class="list-group mb-3">
+        {% for li in linked_counterparts %}
+          <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <div class="fw-semibold">
+                  <a href="{{ url_for('detail', item_id=li['id']) }}">
+                    {% if li['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ li['title'] }}
+                    <span class="text-muted fw-normal">(Item ID: {{ li['id'] }})</span>
+                  </a>
+                </div>
+                <div class="small text-muted">{{ li['category'] }} · {{ li['location'] or "—" }} · linked at {{ li['link_created_at'] }}</div>
+              </div>
+              <div class="text-end">
+                <span class="badge text-bg-{{ STATUS_COLORS.get(li['status'], 'secondary') }}">{{ li['status'] }}</span>
+                {% if can_write %}
+                  <form class="mt-2" method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}" onsubmit="return confirm('Remove this link?');">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-muted small mb-3">{{ "No linked found items." if item['kind'] == 'lost' else "No linked lost requests." }}</div>
+    {% endif %}
+
+    {% if can_write %}
+      <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12 col-md-6">
+          <label class="form-label">Link by item ID</label>
+          <input class="form-control" name="target_item_id" placeholder='Enter {{ "Found Item" if item["kind"]=="lost" else "Lost Request" }} ID'>
+        </div>
+        <div class="col-12 col-md-auto">
+          <button class="btn btn-outline-primary" type="submit">Create link</button>
+        </div>
+      </form>
+    {% endif %}
+
+    <form class="row g-2 align-items-end mb-2" method="get" action="{{ url_for('detail', item_id=item['id']) }}">
+      <div class="col-12 col-md-6">
+        <label class="form-label">Search {{ "Found Items" if item["kind"]=="lost" else "Lost Requests" }} and link</label>
+        <input class="form-control" name="link_q" value="{{ link_q or '' }}" placeholder='Search {{ "Found Items" if item["kind"]=="lost" else "Lost Requests" }} by ID, title, description, category, location'>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button class="btn btn-outline-secondary" type="submit">Search</button>
+      </div>
+    </form>
+
+    {% if link_q %}
+      <div class="small text-muted mb-2">Search results in {{ "Found Items" if item["kind"]=="lost" else "Lost Requests" }} for "{{ link_q }}"</div>
+      {% if link_candidates and link_candidates|length %}
+        <div class="list-group mb-1">
+          {% for c in link_candidates %}
+            <div class="list-group-item d-flex justify-content-between align-items-center gap-2">
+              <div>
+                <a href="{{ url_for('detail', item_id=c['id']) }}">{% if c['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ c['title'] }} <span class="text-muted fw-normal">(Item ID: {{ c['id'] }})</span></a>
+                <div class="small text-muted">{{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}</div>
+              </div>
+              {% if can_write %}
+                <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Link</button>
+                </form>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted small mb-1">No matching items found.</div>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
 {% if matches and matches|length %}
   <div class="mt-3">
     <div class="fw-bold mb-2">Possible matches</div>
@@ -391,5 +344,10 @@
 {% endif %}
 
 {% endblock %}
+
+
+
+
+
 
 
