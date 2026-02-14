@@ -6,9 +6,18 @@ Code layout note:
 - Runtime app code is in `lfapp/main.py`.
 - Root `app.py` is a compatibility entry-point so existing `gunicorn app:app` setup keeps working.
 - Extracted helper modules include:
+  - `lfapp/db_utils.py`
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
+  - `lfapp/link_match_utils.py`
   - `lfapp/security_utils.py`
+  - `lfapp/filter_utils.py`
+  - `lfapp/category_utils.py`
+  - `lfapp/routes_auth.py`
+  - `lfapp/routes_admin.py`
+  - `lfapp/routes_overview.py`
+  - `lfapp/routes_items.py`
+  - `lfapp/item_form_utils.py`
 
 ## 1. Prerequisites
 - Debian/Linux server

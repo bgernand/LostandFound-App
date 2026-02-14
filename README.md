@@ -78,9 +78,18 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ├─ lfapp/
 │  ├─ __init__.py
 │  ├─ main.py                # main Flask application (routes/orchestration)
+│  ├─ db_utils.py            # db/schema/maintenance helpers
 │  ├─ totp_utils.py          # TOTP helper logic
 │  ├─ match_utils.py         # matching/search helper logic
-│  └─ security_utils.py      # login/security helper logic
+│  ├─ link_match_utils.py    # item link + matching db helpers
+│  ├─ security_utils.py      # login/security helper logic
+│  ├─ filter_utils.py        # filter/saved-search helper logic
+│  ├─ category_utils.py      # category repository helpers
+│  ├─ routes_auth.py         # auth/account route registration
+│  ├─ routes_admin.py        # admin route registration (users/audit/categories)
+│  ├─ routes_overview.py     # dashboard/index/matches/saved-search routes
+│  ├─ routes_items.py        # item/detail/public/export route registration
+│  └─ item_form_utils.py     # item form parsing/validation helpers
 ├─ deploy.sh
 ├─ docker-compose.yml
 ├─ dockerfile
@@ -101,9 +110,18 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
   - runtime code now lives in `lfapp/main.py`
   - root `app.py` stays as a compatibility shim for Gunicorn/tests (`app:app`)
 - Additional helper modules extracted:
+  - `lfapp/db_utils.py`
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
+  - `lfapp/link_match_utils.py`
   - `lfapp/security_utils.py`
+  - `lfapp/filter_utils.py`
+  - `lfapp/category_utils.py`
+  - `lfapp/routes_auth.py`
+  - `lfapp/routes_admin.py`
+  - `lfapp/routes_overview.py`
+  - `lfapp/routes_items.py`
+  - `lfapp/item_form_utils.py`
 - This keeps deployment stable while allowing further modularization into dedicated files.
 
 ## Quick Start (Debian/Linux)
