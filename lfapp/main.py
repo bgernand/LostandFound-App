@@ -128,11 +128,22 @@ def create_app(config: dict | None = None):
         raise RuntimeError("SECRET_KEY environment variable is required.")
     app.secret_key = secret_key
 
-    session_cookie_secure_raw = app.config.get("SESSION_COOKIE_SECURE", os.environ.get("SESSION_COOKIE_SECURE", "1"))
+    session_cookie_secure_raw = app.config.get("SESSION_COOKIE_SECURE")
+    if session_cookie_secure_raw is None:
+        session_cookie_secure_raw = os.environ.get("SESSION_COOKIE_SECURE", "1")
     app.config["SESSION_COOKIE_SECURE"] = str(session_cookie_secure_raw).lower() in {"1", "true", "yes", "on"}
+
     app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = app.config.get("SESSION_COOKIE_SAMESITE", os.environ.get("SESSION_COOKIE_SAMESITE", "Lax"))
-    app.config["MAX_CONTENT_LENGTH"] = int(app.config.get("MAX_CONTENT_LENGTH", os.environ.get("MAX_CONTENT_LENGTH", str(20 * 1024 * 1024))))
+
+    session_cookie_samesite_raw = app.config.get("SESSION_COOKIE_SAMESITE")
+    if session_cookie_samesite_raw is None:
+        session_cookie_samesite_raw = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    app.config["SESSION_COOKIE_SAMESITE"] = session_cookie_samesite_raw
+
+    max_content_length_raw = app.config.get("MAX_CONTENT_LENGTH")
+    if max_content_length_raw is None:
+        max_content_length_raw = os.environ.get("MAX_CONTENT_LENGTH", str(20 * 1024 * 1024))
+    app.config["MAX_CONTENT_LENGTH"] = int(max_content_length_raw)
 
     data_dir = Path(app.config.get("DATA_DIR", os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)))
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -397,4 +408,5 @@ app = create_app()
 
 if __name__ == "__main__":
     app.run(debug=(os.environ.get("FLASK_DEBUG") == "1"))
+
 
