@@ -8,6 +8,7 @@ Code layout note:
 - Extracted helper modules include:
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
+  - `lfapp/security_utils.py`
 
 ## 1. Prerequisites
 - Debian/Linux server

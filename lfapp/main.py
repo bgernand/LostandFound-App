@@ -17,7 +17,7 @@ import ipaddress
 from io import BytesIO
 import qrcode
 import secrets
-from urllib.parse import urlsplit, parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -35,6 +35,12 @@ from lfapp.match_utils import (
     parse_iso_date,
     score_match,
     tokenize_text,
+)
+from lfapp.security_utils import (
+    client_ip,
+    is_login_blocked,
+    record_login_attempt,
+    safe_next_url,
 )
 
 
@@ -715,61 +721,6 @@ def csrf_token():
     return token
 
 
-def safe_next_url(target: str | None) -> str:
-    if not target:
-        return url_for("index")
-    target = target.strip()
-    parts = urlsplit(target)
-    if parts.scheme or parts.netloc:
-        return url_for("index")
-    if not target.startswith("/") or target.startswith("//"):
-        return url_for("index")
-    return target
-
-
-def client_ip() -> str:
-    remote_raw = (request.remote_addr or "").strip()
-    try:
-        remote_ip = ipaddress.ip_address(remote_raw) if remote_raw else None
-    except ValueError:
-        remote_ip = None
-
-    trusted_proxy = bool(
-        remote_ip and any(remote_ip in net for net in TRUSTED_PROXY_NETWORKS)
-    )
-    if trusted_proxy:
-        xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        for candidate in (xff, (request.headers.get("X-Real-IP") or "").strip()):
-            try:
-                return str(ipaddress.ip_address(candidate))
-            except ValueError:
-                continue
-
-    return str(remote_ip) if remote_ip else (remote_raw or "unknown")
-
-
-def is_login_blocked(conn, username: str, ip_addr: str, now_ts: int) -> bool:
-    cutoff = now_ts - LOGIN_WINDOW_SECONDS
-    row = conn.execute("""
-        SELECT COUNT(*) AS c
-        FROM login_attempts
-        WHERE username=? AND ip_address=? AND was_success=0 AND attempted_at>=?
-    """, (username, ip_addr, cutoff)).fetchone()
-    return int(row["c"]) >= LOGIN_MAX_ATTEMPTS
-
-
-def record_login_attempt(conn, username: str, ip_addr: str, was_success: bool, now_ts: int):
-    conn.execute("""
-        INSERT INTO login_attempts (username, ip_address, was_success, attempted_at)
-        VALUES (?, ?, ?, ?)
-    """, (username, ip_addr, 1 if was_success else 0, now_ts))
-    # Keep table size bounded.
-    conn.execute(
-        "DELETE FROM login_attempts WHERE attempted_at < ?",
-        (now_ts - max(LOGIN_WINDOW_SECONDS * 4, 86400),)
-    )
-
-
 # -------------------------
 # Helpers
 # -------------------------
@@ -1271,7 +1222,7 @@ def privacy_policy():
 # -------------------------
 @app.get("/login")
 def login():
-    next_url = safe_next_url(request.args.get("next"))
+    next_url = safe_next_url(request.args.get("next"), fallback=url_for("index"))
     if next_url == url_for("index"):
         next_url = url_for("dashboard")
     return render_template("login.html", next=next_url)
@@ -1282,14 +1233,14 @@ def login_post():
     username = (request.form.get("username") or "").strip()
     username_key = username.lower()
     password = request.form.get("password") or ""
-    nxt = safe_next_url(request.form.get("next"))
+    nxt = safe_next_url(request.form.get("next"), fallback=url_for("index"))
     if nxt == url_for("index"):
         nxt = url_for("dashboard")
     now_ts = int(time.time())
-    ip_addr = client_ip()
+    ip_addr = client_ip(request, TRUSTED_PROXY_NETWORKS)
 
     conn = get_db()
-    if is_login_blocked(conn, username_key, ip_addr, now_ts):
+    if is_login_blocked(conn, username_key, ip_addr, now_ts, LOGIN_WINDOW_SECONDS, LOGIN_MAX_ATTEMPTS):
         conn.close()
         flash("Too many failed logins. Please wait 15 minutes and try again.", "danger")
         return redirect(url_for("login", next=nxt))
@@ -1305,13 +1256,13 @@ def login_post():
         return redirect(url_for("login", next=nxt))
 
     if not u or not check_password_hash(u["password_hash"], password):
-        record_login_attempt(conn, username_key, ip_addr, False, now_ts)
+        record_login_attempt(conn, username_key, ip_addr, False, now_ts, LOGIN_WINDOW_SECONDS)
         conn.commit()
         conn.close()
         flash("Login failed.", "danger")
         return redirect(url_for("login", next=nxt))
 
-    record_login_attempt(conn, username_key, ip_addr, True, now_ts)
+    record_login_attempt(conn, username_key, ip_addr, True, now_ts, LOGIN_WINDOW_SECONDS)
     conn.execute(
         "DELETE FROM login_attempts WHERE username=? AND ip_address=? AND was_success=0",
         (username_key, ip_addr)
@@ -1838,7 +1789,7 @@ def saved_search_create():
         or request.form.get("search_name")
         or ""
     ).strip()
-    next_url = safe_next_url(request.form.get("next"))
+    next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
     raw_query = (request.form.get("query_string") or "").strip()
 
     if scope not in SAVED_SEARCH_SCOPES:
@@ -1887,7 +1838,7 @@ def saved_search_create():
 def saved_search_open():
     u = current_user()
     raw_id = (request.form.get("saved_search_id") or "").strip()
-    next_url = safe_next_url(request.form.get("next"))
+    next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
     try:
         search_id = int(raw_id)
     except ValueError:
@@ -1920,7 +1871,7 @@ def saved_search_open():
 def saved_search_delete_post():
     u = current_user()
     raw_id = (request.form.get("saved_search_id") or "").strip()
-    next_url = safe_next_url(request.form.get("next"))
+    next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
     try:
         search_id = int(raw_id)
     except ValueError:
@@ -1946,7 +1897,7 @@ def saved_search_delete_post():
 @login_required
 def saved_search_delete(search_id: int):
     u = current_user()
-    next_url = safe_next_url(request.form.get("next"))
+    next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
 
     conn = get_db()
     cur = conn.execute(

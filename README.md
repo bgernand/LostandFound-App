@@ -79,7 +79,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 │  ├─ __init__.py
 │  ├─ main.py                # main Flask application (routes/orchestration)
 │  ├─ totp_utils.py          # TOTP helper logic
-│  └─ match_utils.py         # matching/search helper logic
+│  ├─ match_utils.py         # matching/search helper logic
+│  └─ security_utils.py      # login/security helper logic
 ├─ deploy.sh
 ├─ docker-compose.yml
 ├─ dockerfile
@@ -102,6 +103,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Additional helper modules extracted:
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
+  - `lfapp/security_utils.py`
 - This keeps deployment stable while allowing further modularization into dedicated files.
 
 ## Quick Start (Debian/Linux)
