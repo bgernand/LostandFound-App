@@ -2,6 +2,10 @@
 
 This guide deploys the app with Docker Compose, Nginx, and Certbot.
 
+Code layout note:
+- Runtime app code is in `lfapp/main.py`.
+- Root `app.py` is a compatibility entry-point so existing `gunicorn app:app` setup keeps working.
+
 ## 1. Prerequisites
 - Debian/Linux server
 - Docker + Docker Compose plugin (`docker compose`) or `docker-compose`

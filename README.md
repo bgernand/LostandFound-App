@@ -74,7 +74,9 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ## Project Structure
 ```text
 .
-├─ app.py
+├─ app.py                    # compatibility entry-point (imports from lfapp/main.py)
+├─ lfapp/
+│  └─ main.py                # main Flask application
 ├─ deploy.sh
 ├─ docker-compose.yml
 ├─ dockerfile
@@ -89,6 +91,12 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ├─ data/
 └─ uploads/
 ```
+
+## Codebase Refactor Status
+- The application was split from a single large root `app.py` into a package-based structure start:
+  - runtime code now lives in `lfapp/main.py`
+  - root `app.py` stays as a compatibility shim for Gunicorn/tests (`app:app`)
+- This keeps deployment stable while allowing further modularization into dedicated files.
 
 ## Quick Start (Debian/Linux)
 Tested on Debian 13.
