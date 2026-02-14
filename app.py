@@ -13,11 +13,16 @@ import io
 import os
 import time
 import re
+import base64
+import binascii
+import hashlib
+import hmac
+import struct
 import ipaddress
 from io import BytesIO
 import qrcode
 import secrets
-from urllib.parse import urlsplit, parse_qsl, urlencode
+from urllib.parse import urlsplit, parse_qsl, urlencode, quote
 from difflib import SequenceMatcher
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
@@ -52,6 +57,10 @@ if not BASE_URL:
 LOGIN_WINDOW_SECONDS = int(os.environ.get("LOGIN_WINDOW_SECONDS", "900"))  # 15 minutes
 LOGIN_MAX_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
 MIN_PASSWORD_LENGTH = int(os.environ.get("MIN_PASSWORD_LENGTH", "10"))
+TOTP_ISSUER = (os.environ.get("TOTP_ISSUER") or "Lost & Found").strip() or "Lost & Found"
+TOTP_DIGITS = 6
+TOTP_PERIOD = 30
+TOTP_WINDOW_STEPS = 1
 
 
 def _parse_proxy_networks(raw: str):
@@ -144,6 +153,117 @@ def ensure_column(conn, table, col_name, col_def_sql):
     cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if col_name not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def_sql}")
+
+
+def get_setting(conn, key: str, default: str | None = None) -> str | None:
+    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+    if not row:
+        return default
+    return row["value"]
+
+
+def set_setting(conn, key: str, value: str):
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        (key, value, now_utc()),
+    )
+
+
+def is_truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_totp_mandatory(conn=None) -> bool:
+    own_conn = False
+    if conn is None:
+        conn = get_db()
+        own_conn = True
+    try:
+        return is_truthy(get_setting(conn, "totp_mandatory", "0"))
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def generate_totp_secret() -> str:
+    # RFC 3548 Base32 without "=" padding.
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def normalize_totp_code(raw: str) -> str:
+    return re.sub(r"\D", "", raw or "")
+
+
+def _totp_secret_to_bytes(secret: str) -> bytes | None:
+    token = re.sub(r"\s+", "", (secret or "").upper())
+    if not token or re.search(r"[^A-Z2-7]", token):
+        return None
+    padded = token + ("=" * ((8 - (len(token) % 8)) % 8))
+    try:
+        return base64.b32decode(padded, casefold=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _totp_code_for_counter(secret_bytes: bytes, counter: int) -> str:
+    msg = struct.pack(">Q", counter)
+    digest = hmac.new(secret_bytes, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = int.from_bytes(digest[offset:offset + 4], "big") & 0x7FFFFFFF
+    code = binary % (10 ** TOTP_DIGITS)
+    return str(code).zfill(TOTP_DIGITS)
+
+
+def verify_totp(secret: str, code_raw: str, window_steps: int = TOTP_WINDOW_STEPS, last_step: int | None = None):
+    code = normalize_totp_code(code_raw)
+    if len(code) != TOTP_DIGITS:
+        return None
+    key = _totp_secret_to_bytes(secret)
+    if not key:
+        return None
+
+    base_counter = int(time.time() // TOTP_PERIOD)
+    for delta in range(-window_steps, window_steps + 1):
+        counter = base_counter + delta
+        if counter < 0:
+            continue
+        expected = _totp_code_for_counter(key, counter)
+        if secrets.compare_digest(expected, code):
+            if last_step is not None and counter <= int(last_step):
+                return None
+            return counter
+    return None
+
+
+def user_totp_enabled(user_row) -> bool:
+    if not user_row:
+        return False
+    return bool((user_row["totp_enabled"] == 1 or user_row["totp_enabled"] == "1") and (user_row["totp_secret"] or "").strip())
+
+
+def build_totp_uri(username: str, secret: str) -> str:
+    label = quote(f"{TOTP_ISSUER}:{username}")
+    params = urlencode(
+        {
+            "secret": secret,
+            "issuer": TOTP_ISSUER,
+            "algorithm": "SHA1",
+            "digits": str(TOTP_DIGITS),
+            "period": str(TOTP_PERIOD),
+        }
+    )
+    return f"otpauth://totp/{label}?{params}"
+
+
+def totp_qr_data_uri(uri: str) -> str:
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def ensure_item_links_schema(conn):
@@ -239,6 +359,9 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+    ensure_column(conn, "users", "totp_secret", "TEXT")
+    ensure_column(conn, "users", "totp_enabled", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "users", "totp_last_step", "INTEGER")
     # Ensure usernames are unique case-insensitively (e.g. Admin == admin).
     try:
         conn.execute("""
@@ -350,6 +473,17 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_reminders_open_due
         ON reminders(is_done, due_at)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('totp_mandatory', '0', ?)",
+        (now_utc(),),
+    )
 
     # Public link features
     ensure_column(conn, "items", "public_token", "TEXT")
@@ -556,6 +690,34 @@ def login_required(fn):
             return redirect(url_for("login", next=request.path))
         return fn(*args, **kwargs)
     return wrapper
+
+
+@app.before_request
+def enforce_totp_mandatory():
+    uid = session.get("user_id")
+    if not uid:
+        return
+    endpoint = request.endpoint or ""
+    allowed = {
+        "logout",
+        "account_password",
+        "account_password_post",
+        "account_totp",
+        "account_totp_enable",
+        "account_totp_disable",
+        "static",
+    }
+    if endpoint in allowed:
+        return
+    u = current_user()
+    if not u:
+        return
+    if user_totp_enabled(u):
+        return
+    if not is_totp_mandatory():
+        return
+    flash("Two-factor authentication is required. Please set up 2FA (TOTP) to continue.", "warning")
+    return redirect(url_for("account_totp"))
 
 
 def require_role(*roles):
@@ -1339,9 +1501,67 @@ def login_post():
     conn.close()
 
     session.clear()
-    session["user_id"] = u["id"]
     session["_csrf_token"] = secrets.token_urlsafe(32)
+    if user_totp_enabled(u):
+        session["pre_2fa_user_id"] = int(u["id"])
+        session["pre_2fa_next"] = nxt
+        return redirect(url_for("login_totp"))
+
+    session["user_id"] = int(u["id"])
     audit("login", "user", u["id"], f"username={u['username']}")
+    return redirect(nxt)
+
+
+@app.get("/login/2fa")
+def login_totp():
+    pending_uid = session.get("pre_2fa_user_id")
+    if not pending_uid:
+        return redirect(url_for("login"))
+    conn = get_db()
+    u = conn.execute("SELECT id, username, totp_enabled, totp_secret FROM users WHERE id=?", (pending_uid,)).fetchone()
+    conn.close()
+    if not u or not user_totp_enabled(u):
+        session.pop("pre_2fa_user_id", None)
+        session.pop("pre_2fa_next", None)
+        flash("Two-factor login is not available for this account.", "danger")
+        return redirect(url_for("login"))
+    return render_template("login_totp.html", pending_user=u, next=session.get("pre_2fa_next") or url_for("dashboard"))
+
+
+@app.post("/login/2fa")
+def login_totp_post():
+    pending_uid = session.get("pre_2fa_user_id")
+    if not pending_uid:
+        return redirect(url_for("login"))
+
+    code = request.form.get("totp_code") or ""
+    conn = get_db()
+    u = conn.execute(
+        "SELECT id, username, totp_enabled, totp_secret, totp_last_step FROM users WHERE id=?",
+        (pending_uid,),
+    ).fetchone()
+    if not u or not user_totp_enabled(u):
+        conn.close()
+        session.pop("pre_2fa_user_id", None)
+        session.pop("pre_2fa_next", None)
+        flash("Two-factor login is not available for this account.", "danger")
+        return redirect(url_for("login"))
+
+    matched_step = verify_totp(u["totp_secret"], code, last_step=u["totp_last_step"])
+    if matched_step is None:
+        conn.close()
+        flash("Invalid one-time code.", "danger")
+        return redirect(url_for("login_totp"))
+
+    conn.execute("UPDATE users SET totp_last_step=? WHERE id=?", (int(matched_step), int(u["id"])))
+    conn.commit()
+    conn.close()
+
+    nxt = session.get("pre_2fa_next") or url_for("dashboard")
+    session.clear()
+    session["user_id"] = int(u["id"])
+    session["_csrf_token"] = secrets.token_urlsafe(32)
+    audit("login", "user", u["id"], f"username={u['username']} 2fa=totp")
     return redirect(nxt)
 
 
@@ -1394,6 +1614,133 @@ def account_password_post():
     audit("password_change", "user", u["id"], f"username={u['username']}")
     flash("Password updated.", "success")
     return redirect(url_for("index"))
+
+
+# -------------------------
+# Account: 2FA (TOTP)
+# -------------------------
+@app.get("/account/totp")
+@login_required
+def account_totp():
+    u = current_user()
+    conn = get_db()
+    db_user = conn.execute(
+        "SELECT id, username, totp_enabled, totp_secret FROM users WHERE id=?",
+        (u["id"],),
+    ).fetchone()
+    mandatory = is_totp_mandatory(conn)
+    conn.close()
+    if not db_user:
+        abort(404)
+
+    setup_secret = None
+    setup_uri = None
+    setup_qr_data = None
+    if not user_totp_enabled(db_user):
+        setup_secret = session.get("_totp_setup_secret")
+        if not _totp_secret_to_bytes(setup_secret or ""):
+            setup_secret = generate_totp_secret()
+            session["_totp_setup_secret"] = setup_secret
+        setup_uri = build_totp_uri(db_user["username"], setup_secret)
+        setup_qr_data = totp_qr_data_uri(setup_uri)
+
+    return render_template(
+        "account_totp.html",
+        user=u,
+        mandatory=mandatory,
+        totp_enabled=user_totp_enabled(db_user),
+        setup_secret=setup_secret,
+        setup_uri=setup_uri,
+        setup_qr_data=setup_qr_data,
+    )
+
+
+@app.post("/account/totp/enable")
+@login_required
+def account_totp_enable():
+    u = current_user()
+    current_pw = request.form.get("current_password") or ""
+    totp_code = request.form.get("totp_code") or ""
+    setup_secret = session.get("_totp_setup_secret") or ""
+    if not _totp_secret_to_bytes(setup_secret):
+        flash("2FA setup session expired. Please open setup again.", "danger")
+        return redirect(url_for("account_totp"))
+
+    conn = get_db()
+    db_user = conn.execute(
+        "SELECT id, username, password_hash, totp_last_step FROM users WHERE id=?",
+        (u["id"],),
+    ).fetchone()
+    if not db_user or not check_password_hash(db_user["password_hash"], current_pw):
+        conn.close()
+        flash("Current password is incorrect.", "danger")
+        return redirect(url_for("account_totp"))
+
+    matched_step = verify_totp(setup_secret, totp_code)
+    if matched_step is None:
+        conn.close()
+        flash("Invalid one-time code.", "danger")
+        return redirect(url_for("account_totp"))
+
+    conn.execute(
+        "UPDATE users SET totp_secret=?, totp_enabled=1, totp_last_step=? WHERE id=?",
+        (setup_secret, int(matched_step), int(u["id"])),
+    )
+    conn.commit()
+    conn.close()
+    session.pop("_totp_setup_secret", None)
+
+    audit("totp_enable", "user", u["id"], f"username={u['username']}")
+    flash("Two-factor authentication enabled.", "success")
+    return redirect(url_for("account_totp"))
+
+
+@app.post("/account/totp/disable")
+@login_required
+def account_totp_disable():
+    u = current_user()
+    current_pw = request.form.get("current_password") or ""
+    totp_code = request.form.get("totp_code") or ""
+
+    conn = get_db()
+    mandatory = is_totp_mandatory(conn)
+    db_user = conn.execute(
+        "SELECT id, username, password_hash, totp_enabled, totp_secret, totp_last_step FROM users WHERE id=?",
+        (u["id"],),
+    ).fetchone()
+    if not db_user:
+        conn.close()
+        abort(404)
+    if mandatory:
+        conn.close()
+        flash("2FA is mandatory and cannot be disabled.", "danger")
+        return redirect(url_for("account_totp"))
+    if not user_totp_enabled(db_user):
+        conn.close()
+        flash("2FA is already disabled.", "info")
+        return redirect(url_for("account_totp"))
+    if not check_password_hash(db_user["password_hash"], current_pw):
+        conn.close()
+        flash("Current password is incorrect.", "danger")
+        return redirect(url_for("account_totp"))
+
+    matched_step = verify_totp(db_user["totp_secret"], totp_code, last_step=db_user["totp_last_step"])
+    if matched_step is None:
+        conn.close()
+        flash("Invalid one-time code.", "danger")
+        return redirect(url_for("account_totp"))
+
+    conn.execute(
+        "UPDATE users SET totp_secret=NULL, totp_enabled=0, totp_last_step=NULL WHERE id=?",
+        (int(u["id"]),),
+    )
+    conn.commit()
+    conn.close()
+    session.pop("_totp_setup_secret", None)
+
+    audit("totp_disable", "user", u["id"], f"username={u['username']}")
+    flash("Two-factor authentication disabled.", "warning")
+    return redirect(url_for("account_totp"))
 
 
 # -------------------------
@@ -2644,9 +2991,12 @@ def export_csv():
 @require_role("admin")
 def users():
     conn = get_db()
-    users = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY created_at DESC").fetchall()
+    users = conn.execute(
+        "SELECT id, username, role, created_at, totp_enabled, totp_secret FROM users ORDER BY created_at DESC"
+    ).fetchall()
+    totp_mandatory = is_totp_mandatory(conn)
     conn.close()
-    return render_template("users.html", users=users, roles=ROLES, user=current_user())
+    return render_template("users.html", users=users, roles=ROLES, user=current_user(), totp_mandatory=totp_mandatory)
 
 
 @app.post("/admin/users")
@@ -2690,6 +3040,19 @@ def users_create():
     return redirect(url_for("users"))
 
 
+@app.post("/admin/settings/totp-mandatory")
+@require_role("admin")
+def admin_set_totp_mandatory():
+    enabled = (request.form.get("totp_mandatory") or "") == "1"
+    conn = get_db()
+    set_setting(conn, "totp_mandatory", "1" if enabled else "0")
+    conn.commit()
+    conn.close()
+    audit("totp_mandatory", "settings", None, f"value={'1' if enabled else '0'}")
+    flash(f"TOTP mandatory is now {'enabled' if enabled else 'disabled'}.", "success")
+    return redirect(url_for("users"))
+
+
 @app.post("/admin/users/<int:user_id>/reset-password")
 @require_role("admin")
 def users_reset_password(user_id: int):
@@ -2719,6 +3082,30 @@ def users_reset_password(user_id: int):
 
     audit("password_reset", "user", user_id, f"username={u['username']}")
     flash(f"Password reset for '{u['username']}'.", "warning")
+    return redirect(url_for("users"))
+
+
+@app.post("/admin/users/<int:user_id>/reset-totp")
+@require_role("admin")
+def users_reset_totp(user_id: int):
+    me = current_user()
+    if me and int(me["id"]) == int(user_id):
+        flash("Use your own 2FA settings to manage your account.", "danger")
+        return redirect(url_for("users"))
+
+    conn = get_db()
+    u = conn.execute("SELECT id, username FROM users WHERE id=?", (user_id,)).fetchone()
+    if not u:
+        conn.close()
+        abort(404)
+    conn.execute(
+        "UPDATE users SET totp_secret=NULL, totp_enabled=0, totp_last_step=NULL WHERE id=?",
+        (int(user_id),),
+    )
+    conn.commit()
+    conn.close()
+    audit("totp_reset", "user", user_id, f"username={u['username']}")
+    flash(f"2FA reset for '{u['username']}'.", "warning")
     return redirect(url_for("users"))
 
 

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Two-factor authentication (TOTP)</h5>
+        {% if mandatory %}
+          <div class="alert alert-warning py-2">
+            2FA is mandatory for all users.
+          </div>
+        {% endif %}
+
+        {% if totp_enabled %}
+          <div class="alert alert-success py-2">2FA is enabled for your account.</div>
+          <form method="post" action="{{ url_for('account_totp_disable') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-2">
+              <label class="form-label">Current password</label>
+              <input class="form-control" type="password" name="current_password" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Authenticator code</label>
+              <input class="form-control" name="totp_code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required>
+            </div>
+            <button class="btn btn-outline-danger" type="submit" {% if mandatory %}disabled{% endif %}>Disable 2FA</button>
+          </form>
+        {% else %}
+          <div class="alert alert-info py-2">Scan the QR code with your authenticator app and confirm with a valid code.</div>
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              {% if setup_qr_data %}
+                <img src="{{ setup_qr_data }}" alt="TOTP QR" class="img-fluid border rounded p-2 bg-white">
+              {% endif %}
+            </div>
+            <div class="col-12 col-md-8">
+              <div class="small text-muted mb-1">Secret (manual setup)</div>
+              <div class="border rounded p-2 mb-2"><code>{{ setup_secret }}</code></div>
+              <div class="small text-muted mb-1">URI</div>
+              <div class="border rounded p-2"><code style="word-break: break-all;">{{ setup_uri }}</code></div>
+            </div>
+          </div>
+          <hr>
+          <form method="post" action="{{ url_for('account_totp_enable') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-2">
+              <label class="form-label">Current password</label>
+              <input class="form-control" type="password" name="current_password" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Authenticator code</label>
+              <input class="form-control" name="totp_code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Enable 2FA</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -41,6 +41,15 @@
     <div class="card h-100">
       <div class="card-body">
         <h5 class="card-title">Users</h5>
+        <form class="d-flex align-items-center gap-2 mb-3" method="post" action="{{ url_for('admin_set_totp_mandatory') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="totpMandatory" name="totp_mandatory" value="1"
+                   {% if totp_mandatory %}checked{% endif %}>
+            <label class="form-check-label" for="totpMandatory">2FA (TOTP) mandatory for all users</label>
+          </div>
+          <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+        </form>
 
         <div class="table-responsive">
           <table class="table table-sm align-middle">
@@ -49,6 +58,7 @@
                 <th>ID</th>
                 <th>Username</th>
                 <th>Role</th>
+                <th>2FA</th>
                 <th>Created</th>
                 <th class="text-end">Actions</th>
               </tr>
@@ -67,6 +77,13 @@
                   <span class="badge {% if u['role']=='admin' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">
                     {{ u['role'] }}
                   </span>
+                </td>
+                <td class="text-nowrap">
+                  {% if (u['totp_enabled'] == 1 or u['totp_enabled'] == '1') and u['totp_secret'] %}
+                    <span class="badge text-bg-success">Enabled</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">Off</span>
+                  {% endif %}
                 </td>
                 <td class="text-nowrap small text-muted">{{ u['created_at'] }}</td>
 
@@ -94,6 +111,13 @@
                              placeholder="New password (min 10)" required>
                       <button class="btn btn-sm btn-outline-warning" type="submit">Reset password</button>
                     </form>
+                    <form method="post"
+                          action="{{ url_for('users_reset_totp', user_id=u['id']) }}"
+                          onsubmit="return confirm('Reset 2FA for {{ u['username'] }}?');"
+                          class="d-inline ms-1">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Reset 2FA</button>
+                    </form>
 
                     <form method="post"
                           action="{{ url_for('users_delete', user_id=u['id']) }}"
@@ -109,7 +133,7 @@
               </tr>
               {% else %}
               <tr>
-                <td colspan="5" class="text-muted text-center py-4">
+                <td colspan="6" class="text-muted text-center py-4">
                   No users found.
                 </td>
               </tr>

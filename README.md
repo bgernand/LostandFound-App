@@ -21,6 +21,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Bulk status update for selected items in the main overview
 - Role model: `admin`, `staff`, `viewer` (viewer is read-only)
 - Improved search with token expansion, synonym support, and phonetic (`soundex`) matching
+- Optional per-user 2FA with TOTP (authenticator app)
+- Admin controls for TOTP mandatory mode and per-user 2FA reset
 
 ## Status Behavior
 - Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Handed over / Sent`, `Lost forever`
@@ -33,6 +35,15 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - `admin`: full access, including user/category admin and destructive actions
 - `staff`: operational write access (create/edit/link/update items, reminders, bulk actions)
 - `viewer`: read-only access to overviews/details/dashboard (no write actions)
+
+## Two-Factor Authentication (TOTP)
+- Each user can enable/disable 2FA in `Settings -> Two-factor authentication`.
+- Login flow with enabled 2FA:
+  1. Username + password
+  2. TOTP code challenge (`/login/2fa`)
+- Admin can enable **mandatory TOTP for all users** in `Settings -> Users`.
+- If mandatory TOTP is enabled, users without configured 2FA are redirected to setup before using the app.
+- Admin can reset 2FA for other users (clears TOTP secret and disables 2FA for that account).
 
 ## Possible Matching
 - The system compares `Lost Request` and `Found Item` records and calculates a score per pair.
@@ -111,15 +122,20 @@ chmod +x deploy.sh
 - `LOGIN_WINDOW_SECONDS` (optional, default `900`)
 - `LOGIN_MAX_ATTEMPTS` (optional, default `5`)
 - `MIN_PASSWORD_LENGTH` (optional, default `10`)
+- `TOTP_ISSUER` (optional, default `Lost & Found`)
 - `TRUSTED_PROXY_CIDRS` (optional, default `127.0.0.1/32,::1/128,172.16.0.0/12`)
 - `SESSION_COOKIE_SECURE` (optional, default `1`)
 - `SESSION_COOKIE_SAMESITE` (optional, default `Lax`)
 - `MAX_CONTENT_LENGTH` (optional, default `20971520`)
+- `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
+- `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
+- `FLASK_DEBUG` (optional, default `0`; local development only)
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
 - Open redirect on login is blocked.
 - Brute-force protection for login attempts is enabled.
+- Optional TOTP-based 2FA is supported, including global mandatory mode.
 - No default fallback `SECRET_KEY` is used.
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
 - Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.

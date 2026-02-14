@@ -37,6 +37,7 @@
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
               <li><a class="dropdown-item" href="{{ url_for('account_password') }}">Change password</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('account_totp') }}">Two-factor authentication</a></li>
               {% if user['role'] == 'admin' %}
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>
