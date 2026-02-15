@@ -13,20 +13,33 @@ LE_PRIVKEY="${LE_DIR}/privkey.pem"
 
 mkdir -p "${DUMMY_DIR}"
 
-# Create dummy cert only (never touch /etc/letsencrypt)
-if [ ! -f "${DUMMY_FULLCHAIN}" ] || [ ! -f "${DUMMY_PRIVKEY}" ]; then
-  echo "[nginx] Creating temporary self-signed cert in ${DUMMY_DIR}..."
-  openssl req -x509 -nodes -newkey rsa:2048 \
-    -days 7 \
-    -keyout "${DUMMY_PRIVKEY}" \
-    -out "${DUMMY_FULLCHAIN}" \
-    -subj "/CN=${DOMAIN}" >/dev/null 2>&1
-fi
+ensure_cert_target() {
+  # Prefer Let's Encrypt when available.
+  if [ -f "${LE_FULLCHAIN}" ] && [ -f "${LE_PRIVKEY}" ]; then
+    ln -sf "${LE_FULLCHAIN}" "${DUMMY_FULLCHAIN}"
+    ln -sf "${LE_PRIVKEY}" "${DUMMY_PRIVKEY}"
+    echo "[nginx] Using Let's Encrypt certificate for ${DOMAIN}."
+    return
+  fi
+
+  # Fallback to temporary dummy cert (never touch /etc/letsencrypt).
+  if [ ! -f "${DUMMY_FULLCHAIN}" ] || [ ! -f "${DUMMY_PRIVKEY}" ]; then
+    echo "[nginx] Creating temporary self-signed cert in ${DUMMY_DIR}..."
+    openssl req -x509 -nodes -newkey rsa:2048 \
+      -days 7 \
+      -keyout "${DUMMY_PRIVKEY}" \
+      -out "${DUMMY_FULLCHAIN}" \
+      -subj "/CN=${DOMAIN}" >/dev/null 2>&1
+  fi
+}
+
+ensure_cert_target
 
 # Reload loop so renewed certs get picked up
 (
   while true; do
     sleep 6h
+    ensure_cert_target
     echo "[nginx] periodic reload"
     nginx -s reload || true
   done
