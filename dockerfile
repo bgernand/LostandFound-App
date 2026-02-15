@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY app.py /app/app.py
 COPY lfapp /app/lfapp
 COPY templates /app/templates
+COPY static /app/static
 
 # runtime dirs (also mounted by volumes)
 RUN mkdir -p /app/data /app/uploads
