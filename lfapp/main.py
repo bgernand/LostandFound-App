@@ -119,7 +119,7 @@ def _parse_proxy_networks(raw: str):
 
 
 def create_app(config: dict | None = None):
-    app = Flask(__name__, template_folder="../templates")
+    app = Flask(__name__, template_folder="../templates", static_folder="../static")
     if config:
         app.config.update(config)
 
