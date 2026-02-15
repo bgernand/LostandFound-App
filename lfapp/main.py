@@ -3,6 +3,7 @@ from pathlib import Path
 import ipaddress
 import os
 import secrets
+import time
 
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 
@@ -139,6 +140,7 @@ def create_app(config: dict | None = None):
     if session_cookie_samesite_raw is None:
         session_cookie_samesite_raw = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
     app.config["SESSION_COOKIE_SAMESITE"] = session_cookie_samesite_raw
+    session_max_age_seconds = int(app.config.get("SESSION_MAX_AGE_SECONDS", os.environ.get("SESSION_MAX_AGE_SECONDS", "28800")))
 
     max_content_length_raw = app.config.get("MAX_CONTENT_LENGTH")
     if max_content_length_raw is None:
@@ -207,6 +209,23 @@ def create_app(config: dict | None = None):
         if not state["db_inited"]:
             db_init_db(db_path)
             state["db_inited"] = True
+
+    @app.before_request
+    def _enforce_session_max_age():
+        uid = session.get("user_id")
+        if not uid:
+            return
+        started_raw = session.get("auth_started_at")
+        now_ts = int(time.time())
+        try:
+            started_ts = int(started_raw)
+        except (TypeError, ValueError):
+            session["auth_started_at"] = now_ts
+            return
+        if now_ts - started_ts > session_max_age_seconds:
+            session.clear()
+            flash("Session expired. Please log in again.", "warning")
+            return redirect(url_for("login", next=request.path))
 
     @app.before_request
     def _auto_status_maintenance():

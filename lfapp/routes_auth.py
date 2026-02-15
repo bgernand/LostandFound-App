@@ -82,6 +82,7 @@ def register_auth_routes(app, deps: dict):
             return redirect(url_for("login_totp"))
 
         session["user_id"] = int(u["id"])
+        session["auth_started_at"] = int(__import__("time").time())
         audit("login", "user", u["id"], f"username={u['username']}")
         return redirect(nxt)
 
@@ -132,6 +133,7 @@ def register_auth_routes(app, deps: dict):
         nxt = session.get("pre_2fa_next") or url_for("dashboard")
         session.clear()
         session["user_id"] = int(u["id"])
+        session["auth_started_at"] = int(__import__("time").time())
         session["_csrf_token"] = secrets.token_urlsafe(32)
         audit("login", "user", u["id"], f"username={u['username']} 2fa=totp")
         return redirect(nxt)
@@ -301,4 +303,3 @@ def register_auth_routes(app, deps: dict):
         audit("totp_disable", "user", u["id"], f"username={u['username']}")
         flash("Two-factor authentication disabled.", "warning")
         return redirect(url_for("account_totp"))
-

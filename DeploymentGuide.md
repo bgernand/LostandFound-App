@@ -45,6 +45,7 @@ Recommended security settings:
 - `TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,172.16.0.0/12` (adapt to your proxy network)
 - `SESSION_COOKIE_SECURE=1`
 - `SESSION_COOKIE_SAMESITE=Lax`
+- `SESSION_MAX_AGE_SECONDS=28800` (8h absolute login session max age)
 - `MAX_CONTENT_LENGTH=20971520` (20 MB)
 
 ## 3. One-Click Deploy

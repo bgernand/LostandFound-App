@@ -163,6 +163,7 @@ chmod +x deploy.sh
 - `TRUSTED_PROXY_CIDRS` (optional, default `127.0.0.1/32,::1/128,172.16.0.0/12`)
 - `SESSION_COOKIE_SECURE` (optional, default `1`)
 - `SESSION_COOKIE_SAMESITE` (optional, default `Lax`)
+- `SESSION_MAX_AGE_SECONDS` (optional, default `28800` = 8h absolute login session max age)
 - `MAX_CONTENT_LENGTH` (optional, default `20971520`)
 - `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
 - `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
@@ -175,6 +176,7 @@ chmod +x deploy.sh
 - Optional TOTP-based 2FA is supported, including global mandatory mode.
 - No default fallback `SECRET_KEY` is used.
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
+- Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
 - Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
