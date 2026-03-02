@@ -3,10 +3,28 @@
 {% set errors = errors if errors is defined else {} %}
 {% set form_kind = (item['kind'] if item and item['kind'] else (forced_kind or 'lost')) %}
 {% set form_kind_label = 'Lost Request' if form_kind == 'lost' else 'Found Item' %}
+{% set hide_status_field = hide_status_field if hide_status_field is defined else false %}
+{% set hide_postage_fields = hide_postage_fields if hide_postage_fields is defined else false %}
+{% set public_submit_mode = public_submit_mode if public_submit_mode is defined else false %}
+{% set review_mode = review_mode if review_mode is defined else false %}
+{% set show_review_next = show_review_next if show_review_next is defined else false %}
+{% set submit_label = submit_label if submit_label is defined else "Save" %}
+{% set cancel_url = cancel_url if cancel_url is defined else url_for('index') %}
 
 <div class="card">
   <div class="card-body">
-    <h5 class="card-title">{{ "Edit " ~ form_kind_label if item else "New " ~ form_kind_label }}</h5>
+    <h5 class="card-title">
+      {% if public_submit_mode %}
+        Public Lost Report
+      {% else %}
+        {{ "Edit " ~ form_kind_label if item else "New " ~ form_kind_label }}
+      {% endif %}
+    </h5>
+    {% if public_submit_mode %}
+      <div class="text-muted small mt-1">Your submission will be reviewed by staff before processing.</div>
+    {% elif review_mode %}
+      <div class="text-muted small mt-1">Review mode{% if review_queue_count is defined %} · Pending: {{ review_queue_count }}{% endif %}</div>
+    {% endif %}
     {% if errors and errors|length %}
       <div class="alert alert-danger mt-3" role="alert">
         <div class="fw-semibold mb-1">Please fix the following fields:</div>
@@ -26,12 +44,15 @@
           novalidate>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="kind" id="kindSel" value="{{ form_kind }}">
+      <input type="hidden" name="review_mode" value="{{ '1' if review_mode else '0' }}">
       <div class="row g-3">
 
-        <div class="col-12 col-md-4">
-          <label class="form-label">Type</label>
-          <input class="form-control" value="{{ form_kind_label }}" readonly>
-        </div>
+        {% if item and item['id'] %}
+          <div class="col-12 col-md-4">
+            <label class="form-label">Type</label>
+            <input class="form-control" value="{{ form_kind_label }}" readonly>
+          </div>
+        {% endif %}
 
         <!-- Found-only primary title -->
         <div class="col-12 col-md-8" id="titleBlock">
@@ -48,14 +69,18 @@
           {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ errors.get('lost_what') }}</div>{% endif %}
         </div>
 
-        <div class="col-12 col-md-4">
-          <label class="form-label">Status</label>
-          <select class="form-select" name="status" id="statusSel">
-            {% for s in statuses %}
-              <option value="{{s}}" {% if item and item['status']==s %}selected{% endif %}>{{ s }}</option>
-            {% endfor %}
-          </select>
-        </div>
+        {% if hide_status_field %}
+          <input type="hidden" name="status" value="Lost">
+        {% else %}
+          <div class="col-12 col-md-4">
+            <label class="form-label">Status</label>
+            <select class="form-select" name="status" id="statusSel">
+              {% for s in statuses %}
+                <option value="{{s}}" {% if item and item['status']==s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        {% endif %}
 
         <div class="col-12 col-md-4">
           <label class="form-label">Category</label>
@@ -196,22 +221,24 @@
                      value="{{ item['lost_group_leader'] if item else '' }}">
             </div>
 
-            <div class="col-12"><hr class="my-1"></div>
+            {% if not hide_postage_fields %}
+              <div class="col-12"><hr class="my-1"></div>
 
-            <div class="col-12 col-md-4">
-              <label class="form-label">Price of postage</label>
-              <input class="form-control {% if errors.get('postage_price') %}is-invalid{% endif %}" name="postage_price" inputmode="decimal"
-                     value="{{ item['postage_price'] if item and item['postage_price'] is not none else '' }}">
-              {% if errors.get('postage_price') %}<div class="invalid-feedback">{{ errors.get('postage_price') }}</div>{% endif %}
-            </div>
-
-            <div class="col-12 col-md-4 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="postage_paid" id="postagePaid"
-                       {% if item and (item['postage_paid']==1 or item['postage_paid']=='1') %}checked{% endif %}>
-                <label class="form-check-label" for="postagePaid">Paid</label>
+              <div class="col-12 col-md-4">
+                <label class="form-label">Price of postage</label>
+                <input class="form-control {% if errors.get('postage_price') %}is-invalid{% endif %}" name="postage_price" inputmode="decimal"
+                       value="{{ item['postage_price'] if item and item['postage_price'] is not none else '' }}">
+                {% if errors.get('postage_price') %}<div class="invalid-feedback">{{ errors.get('postage_price') }}</div>{% endif %}
               </div>
-            </div>
+
+              <div class="col-12 col-md-4 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="postage_paid" id="postagePaid"
+                         {% if item and (item['postage_paid']==1 or item['postage_paid']=='1') %}checked{% endif %}>
+                  <label class="form-check-label" for="postagePaid">Paid</label>
+                </div>
+              </div>
+            {% endif %}
           </div>
         </div>
 
@@ -222,11 +249,14 @@
         </div>
 
         <div class="col-12 d-grid d-sm-flex gap-2">
-          <button class="btn btn-primary" type="submit">Save</button>
-          {% if not (item and item['id']) %}
+          <button class="btn btn-primary" type="submit">{{ submit_label }}</button>
+          {% if show_review_next %}
+            <button class="btn btn-outline-success" type="submit" name="reviewed_and_next" value="1">Reviewed & Next</button>
+          {% endif %}
+          {% if not public_submit_mode and not review_mode and not (item and item['id']) %}
             <button class="btn btn-outline-primary" type="submit" name="save_and_new" value="1">Save & New</button>
           {% endif %}
-          <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Cancel</a>
+          <a class="btn btn-outline-secondary" href="{{ cancel_url }}">Cancel</a>
         </div>
       </div>
     </form>

@@ -47,6 +47,8 @@ Recommended security settings:
 - `SESSION_COOKIE_SAMESITE=Lax`
 - `SESSION_MAX_AGE_SECONDS=28800` (8h absolute login session max age)
 - `MAX_CONTENT_LENGTH=20971520` (20 MB)
+- `AUDIT_RETENTION_DAYS=180` (daily cleanup by age; set `0` to disable)
+- `AUDIT_MAX_ROWS=200000` (daily cap by row count; set `0` to disable)
 
 After first login as admin, configure SMTP and description-quality settings in:
 - `Settings -> System Settings`
@@ -79,8 +81,10 @@ docker compose logs -f certbot
 
 Functional checks after deploy:
 - Login works and /dashboard opens
+- Public lost submission page `/report/lost` is reachable without login
 - Viewer user is read-only (no create/edit/link/delete controls)
 - Bulk status update works for staff/admin
+- Lost review queue `/reviews/lost` opens for roles with `items.review`
 - Possible Matches page loads and score colors are visible
 - Saved searches can be saved/opened/deleted
 - Reminder workflow appears for stale In contact items

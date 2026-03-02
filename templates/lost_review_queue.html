@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+      <h5 class="card-title mb-0">Lost Review Queue</h5>
+      {% if next_id %}
+        <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=next_id, review=1) }}">Start review</a>
+      {% endif %}
+    </div>
+    <div class="text-muted small mb-3">Publicly submitted lost requests pending review.</div>
+
+    {% if queue and queue|length %}
+      <div class="list-group">
+        {% for item in queue %}
+          <a class="list-group-item list-group-item-action" href="{{ url_for('edit_item', item_id=item['id'], review=1) }}">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <div class="fw-semibold">
+                  {{ item['title'] or "Untitled" }}
+                  <span class="text-muted fw-normal">(Item ID: {{ item['public_id'] or "—" }})</span>
+                </div>
+                <div class="small text-muted">
+                  {{ item['category'] or "—" }} · {{ item['location'] or "—" }} · {{ item['event_date'] or "—" }}
+                </div>
+              </div>
+              <div class="small text-muted text-nowrap">{{ item['created_at'] }}</div>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-success mb-0">No pending lost submissions.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+

@@ -20,6 +20,7 @@ RBAC_PERMISSION_KEYS = [
     "items.edit",
     "items.edit_found",
     "items.view_pii",
+    "items.review",
     "items.bulk_status",
     "items.link",
     "items.photo_delete",
@@ -38,6 +39,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.edit",
         "items.edit_found",
         "items.view_pii",
+        "items.review",
         "items.bulk_status",
         "items.link",
         "items.photo_delete",
@@ -400,11 +402,22 @@ def init_db(db_path: str):
             entity_type TEXT NOT NULL,
             entity_id INTEGER,
             details TEXT,
+            old_values TEXT,
+            new_values TEXT,
+            meta_json TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY(actor_user_id) REFERENCES users(id)
         )
         """
     )
+    ensure_column(conn, "audit_log", "old_values", "TEXT")
+    ensure_column(conn, "audit_log", "new_values", "TEXT")
+    ensure_column(conn, "audit_log", "meta_json", "TEXT")
+    ensure_column(conn, "audit_log", "ip_address", "TEXT")
+    ensure_column(conn, "audit_log", "user_agent", "TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)")
 
     conn.execute(
         """
@@ -551,6 +564,18 @@ def init_db(db_path: str):
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_timeout', '15', ?)",
         (now_utc(),),
     )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_enabled', '0', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_subject', 'Lost Request received (Item ID {{ item_id }})', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_body', 'Hello {{ first_name }} {{ last_name }},\n\nwe received your lost request.\n\nImportant information:\n- Item ID: {{ item_id }}\n- Title: {{ title }}\n- Status: {{ status }}\n- Submitted at: {{ submitted_at }}\n- Category: {{ category }}\n- Location: {{ location }}\n- Date of loss: {{ event_date }}\n\nOur team will review your request as soon as possible.\n\nBest regards\nLost & Found Team', ?)",
+        (now_utc(),),
+    )
 
     ensure_column(conn, "items", "public_token", "TEXT")
     ensure_column(conn, "items", "public_id", "TEXT")
@@ -575,6 +600,7 @@ def init_db(db_path: str):
     ensure_column(conn, "items", "lost_notes", "TEXT")
     ensure_column(conn, "items", "postage_price", "REAL")
     ensure_column(conn, "items", "postage_paid", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "items", "review_pending", "INTEGER NOT NULL DEFAULT 0")
 
     conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
     conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
@@ -647,6 +673,37 @@ def init_db(db_path: str):
 
     conn.commit()
     conn.close()
+
+
+def prune_audit_log(conn, retention_days: int | None = None, max_rows: int | None = None):
+    deleted_by_age = 0
+    deleted_by_count = 0
+
+    if retention_days is not None and int(retention_days) > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=int(retention_days))).strftime("%Y-%m-%dT%H:%M:%S")
+        cur = conn.execute("DELETE FROM audit_log WHERE created_at < ?", (cutoff,))
+        deleted_by_age = int(cur.rowcount or 0)
+
+    if max_rows is not None and int(max_rows) > 0:
+        total = conn.execute("SELECT COUNT(*) AS c FROM audit_log").fetchone()
+        total_count = int(total["c"] if total else 0)
+        over = total_count - int(max_rows)
+        if over > 0:
+            cur = conn.execute(
+                """
+                DELETE FROM audit_log
+                WHERE id IN (
+                    SELECT id
+                    FROM audit_log
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT ?
+                )
+                """,
+                (over,),
+            )
+            deleted_by_count = int(cur.rowcount or 0)
+
+    return deleted_by_age, deleted_by_count
 
 
 def auto_mark_lost_forever(conn):

@@ -14,6 +14,7 @@
             <th>Action</th>
             <th>Entity</th>
             <th>Details</th>
+            <th>Change</th>
           </tr>
         </thead>
         <tbody>
@@ -23,7 +24,32 @@
             <td class="text-nowrap">{{ l['username'] or '—' }}</td>
             <td class="text-nowrap">{{ l['action'] }}</td>
             <td class="text-nowrap">{{ l['entity_type'] }}{% if l['entity_id'] %} #{{ l['entity_id'] }}{% endif %}</td>
-            <td class="small" style="max-width: 520px; white-space: normal;">{{ l['details'] or '—' }}</td>
+            <td class="small" style="max-width: 360px; white-space: normal;">
+              {{ l['details'] or '—' }}
+              {% if l['ip_address'] %}<div class="text-muted">IP: {{ l['ip_address'] }}</div>{% endif %}
+              {% if l['user_agent'] %}<div class="text-muted text-truncate" style="max-width: 320px;">UA: {{ l['user_agent'] }}</div>{% endif %}
+            </td>
+            <td class="small" style="max-width: 640px; white-space: normal;">
+              {% if l['old_values'] or l['new_values'] or l['meta_json'] %}
+                <details>
+                  <summary>Show</summary>
+                  {% if l['old_values'] %}
+                    <div class="mt-2"><strong>Before</strong></div>
+                    <pre class="small bg-light border rounded p-2 mb-2">{{ l['old_values'] }}</pre>
+                  {% endif %}
+                  {% if l['new_values'] %}
+                    <div><strong>After</strong></div>
+                    <pre class="small bg-light border rounded p-2 mb-2">{{ l['new_values'] }}</pre>
+                  {% endif %}
+                  {% if l['meta_json'] %}
+                    <div><strong>Meta</strong></div>
+                    <pre class="small bg-light border rounded p-2 mb-0">{{ l['meta_json'] }}</pre>
+                  {% endif %}
+                </details>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

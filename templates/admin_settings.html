@@ -113,6 +113,54 @@
   <div class="col-12">
     <div class="card">
       <div class="card-body">
+        <h5 class="card-title">Public Lost Confirmation Mail</h5>
+        <form method="post" action="{{ url_for('admin_set_smtp_public_lost_confirmation') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="smtpPublicLostConfirmEnabled" name="smtp_public_lost_confirm_enabled" value="1"
+                   {% if public_lost_confirm_settings['enabled'] %}checked{% endif %}>
+            <label class="form-check-label small" for="smtpPublicLostConfirmEnabled">
+              Send confirmation mail after public lost submission
+            </label>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label small">Subject template</label>
+            <input class="form-control form-control-sm" name="smtp_public_lost_confirm_subject"
+                   value="{{ public_lost_confirm_settings['subject'] }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Body template</label>
+            <textarea class="form-control form-control-sm" rows="10" name="smtp_public_lost_confirm_body">{{ public_lost_confirm_settings['body'] }}</textarea>
+          </div>
+
+          <div class="small text-muted mb-2">
+            Allowed variables:
+            {% for v in public_lost_confirm_allowed_vars %}
+              <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </div>
+
+          <div class="d-grid d-md-flex justify-content-md-end gap-2">
+            <button class="btn btn-sm btn-outline-secondary" type="submit" name="form_action" value="preview">Preview</button>
+            <button class="btn btn-sm btn-outline-primary" type="submit" name="form_action" value="save">Save confirmation mail settings</button>
+          </div>
+        </form>
+
+        {% if public_lost_confirm_preview_subject or public_lost_confirm_preview_body %}
+          <hr>
+          <div class="fw-semibold mb-1">Preview</div>
+          <div class="small mb-1"><strong>Subject:</strong> {{ public_lost_confirm_preview_subject }}</div>
+          <div class="small"><strong>Body:</strong></div>
+          <pre class="small bg-light border rounded p-2 mb-0">{{ public_lost_confirm_preview_body }}</pre>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
         <h5 class="card-title">Legal Pages</h5>
         <form method="post" action="{{ url_for('admin_set_legal_privacy_settings') }}">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">

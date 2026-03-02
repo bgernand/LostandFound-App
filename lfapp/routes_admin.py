@@ -12,6 +12,9 @@ def register_admin_routes(app, deps: dict):
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
     get_smtp_settings = deps["get_smtp_settings"]
+    get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
+    validate_mail_template_variables = deps["validate_mail_template_variables"]
+    render_mail_template = deps["render_mail_template"]
     get_description_quality_settings = deps["get_description_quality_settings"]
     audit = deps["audit"]
     now_utc = deps["now_utc"]
@@ -20,7 +23,15 @@ def register_admin_routes(app, deps: dict):
     rbac_permission_keys = deps["rbac_permission_keys"]
     DEFAULT_LEGAL_NOTICE_TEXT = deps["DEFAULT_LEGAL_NOTICE_TEXT"]
     DEFAULT_PRIVACY_POLICY_TEXT = deps["DEFAULT_PRIVACY_POLICY_TEXT"]
+    DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = deps["DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT"]
+    DEFAULT_PUBLIC_LOST_CONFIRM_BODY = deps["DEFAULT_PUBLIC_LOST_CONFIRM_BODY"]
+    PUBLIC_LOST_CONFIRM_ALLOWED_VARS = deps["PUBLIC_LOST_CONFIRM_ALLOWED_VARS"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
+
+    def row_to_dict(row):
+        if not row:
+            return None
+        return {k: row[k] for k in row.keys()}
 
     permission_labels = {
         "admin.access": "Admin access",
@@ -33,6 +44,7 @@ def register_admin_routes(app, deps: dict):
         "items.edit": "Edit items",
         "items.edit_found": "Edit Found only",
         "items.view_pii": "View personal data",
+        "items.review": "Review public Lost",
         "items.bulk_status": "Bulk status",
         "items.link": "Manage links",
         "items.photo_delete": "Delete photos",
@@ -105,6 +117,7 @@ def register_admin_routes(app, deps: dict):
         conn = get_db()
         description_quality_settings = get_description_quality_settings(conn)
         smtp_settings = get_smtp_settings(conn)
+        public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
         legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
         privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
         conn.close()
@@ -113,6 +126,10 @@ def register_admin_routes(app, deps: dict):
             user=current_user(),
             description_quality_settings=description_quality_settings,
             smtp_settings=smtp_settings,
+            public_lost_confirm_settings=public_lost_confirm_settings,
+            public_lost_confirm_preview_subject=None,
+            public_lost_confirm_preview_body=None,
+            public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
             legal_notice_text=legal_notice_text,
             privacy_policy_text=privacy_policy_text,
         )
@@ -148,7 +165,17 @@ def register_admin_routes(app, deps: dict):
                 (username, generate_password_hash(password), role, now_utc()),
             )
             conn.commit()
-            audit("create", "user", None, f"username={username} role={role}")
+            created = conn.execute(
+                "SELECT id, username, role, created_at, is_active, is_root_admin FROM users WHERE username = ? COLLATE NOCASE",
+                (username,),
+            ).fetchone()
+            audit(
+                "create",
+                "user",
+                int(created["id"]) if created else None,
+                f"username={username} role={role}",
+                new_values=row_to_dict(created),
+            )
             flash("User created.", "success")
         except sqlite3.IntegrityError:
             flash("Username already exists.", "danger")
@@ -162,10 +189,18 @@ def register_admin_routes(app, deps: dict):
     def admin_set_totp_mandatory():
         enabled = (request.form.get("totp_mandatory") or "") == "1"
         conn = get_db()
+        old_val = get_setting(conn, "totp_mandatory", "0")
         set_setting(conn, "totp_mandatory", "1" if enabled else "0")
         conn.commit()
         conn.close()
-        audit("totp_mandatory", "settings", None, f"value={'1' if enabled else '0'}")
+        audit(
+            "totp_mandatory",
+            "settings",
+            None,
+            f"value={'1' if enabled else '0'}",
+            old_values={"totp_mandatory": old_val},
+            new_values={"totp_mandatory": "1" if enabled else "0"},
+        )
         flash(f"TOTP mandatory is now {'enabled' if enabled else 'disabled'}.", "success")
         return redirect(url_for("users"))
 
@@ -197,6 +232,13 @@ def register_admin_routes(app, deps: dict):
             return redirect(url_for("admin_settings"))
 
         conn = get_db()
+        old_state = {
+            "description_min_chars": get_setting(conn, "description_min_chars", ""),
+            "description_min_words": get_setting(conn, "description_min_words", ""),
+            "description_score_threshold": get_setting(conn, "description_score_threshold", ""),
+            "description_quality_strict": get_setting(conn, "description_quality_strict", ""),
+            "description_blacklist_extra": get_setting(conn, "description_blacklist_extra", ""),
+        }
         set_setting(conn, "description_min_chars", str(min_chars))
         set_setting(conn, "description_min_words", str(min_words))
         set_setting(conn, "description_score_threshold", str(score_threshold))
@@ -213,6 +255,14 @@ def register_admin_routes(app, deps: dict):
                 f"min_chars={min_chars} min_words={min_words} "
                 f"score_threshold={score_threshold} strict={1 if strict_mode else 0}"
             ),
+            old_values=old_state,
+            new_values={
+                "description_min_chars": str(min_chars),
+                "description_min_words": str(min_words),
+                "description_score_threshold": str(score_threshold),
+                "description_quality_strict": "1" if strict_mode else "0",
+                "description_blacklist_extra": blacklist_extra,
+            },
         )
         flash("Description quality settings updated.", "success")
         return redirect(url_for("admin_settings"))
@@ -254,6 +304,16 @@ def register_admin_routes(app, deps: dict):
             return redirect(url_for("admin_settings"))
 
         conn = get_db()
+        old_state = {
+            "smtp_enabled": get_setting(conn, "smtp_enabled", ""),
+            "smtp_host": get_setting(conn, "smtp_host", ""),
+            "smtp_port": get_setting(conn, "smtp_port", ""),
+            "smtp_username": get_setting(conn, "smtp_username", ""),
+            "smtp_from": get_setting(conn, "smtp_from", ""),
+            "smtp_use_tls": get_setting(conn, "smtp_use_tls", ""),
+            "smtp_use_ssl": get_setting(conn, "smtp_use_ssl", ""),
+            "smtp_timeout": get_setting(conn, "smtp_timeout", ""),
+        }
         set_setting(conn, "smtp_enabled", "1" if enabled else "0")
         set_setting(conn, "smtp_host", host)
         set_setting(conn, "smtp_port", str(port))
@@ -279,8 +339,135 @@ def register_admin_routes(app, deps: dict):
                 f"username_set={1 if username else 0} from_set={1 if from_addr else 0} "
                 f"use_tls={1 if use_tls else 0} use_ssl={1 if use_ssl else 0} timeout={timeout}"
             ),
+            old_values=old_state,
+            new_values={
+                "smtp_enabled": "1" if enabled else "0",
+                "smtp_host": host,
+                "smtp_port": str(port),
+                "smtp_username": username,
+                "smtp_from": from_addr,
+                "smtp_use_tls": "1" if use_tls else "0",
+                "smtp_use_ssl": "1" if use_ssl else "0",
+                "smtp_timeout": str(timeout),
+            },
         )
         flash("SMTP settings updated.", "success")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/smtp-public-lost-confirmation")
+    @require_permission("admin.settings")
+    def admin_set_smtp_public_lost_confirmation():
+        enabled = (request.form.get("smtp_public_lost_confirm_enabled") or "") == "1"
+        subject = (request.form.get("smtp_public_lost_confirm_subject") or "").strip()
+        body = (request.form.get("smtp_public_lost_confirm_body") or "").strip()
+        action = (request.form.get("form_action") or "save").strip().lower()
+
+        if not subject:
+            subject = DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT
+        if not body:
+            body = DEFAULT_PUBLIC_LOST_CONFIRM_BODY
+
+        ok_subject, unknown_subject = validate_mail_template_variables(subject, set(PUBLIC_LOST_CONFIRM_ALLOWED_VARS))
+        ok_body, unknown_body = validate_mail_template_variables(body, set(PUBLIC_LOST_CONFIRM_ALLOWED_VARS))
+        unknown_all = sorted(set(unknown_subject) | set(unknown_body))
+        if unknown_all:
+            flash("Unknown mail template variable(s): " + ", ".join(unknown_all), "danger")
+            conn = get_db()
+            description_quality_settings = get_description_quality_settings(conn)
+            smtp_settings = get_smtp_settings(conn)
+            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
+            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
+            conn.close()
+            return render_template(
+                "admin_settings.html",
+                user=current_user(),
+                description_quality_settings=description_quality_settings,
+                smtp_settings=smtp_settings,
+                public_lost_confirm_settings={
+                    "enabled": enabled,
+                    "subject": subject,
+                    "body": body,
+                    "allowed_vars": PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+                },
+                public_lost_confirm_preview_subject=None,
+                public_lost_confirm_preview_body=None,
+                public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+                legal_notice_text=legal_notice_text,
+                privacy_policy_text=privacy_policy_text,
+            )
+
+        if enabled and (not subject or not body):
+            flash("Subject and body are required when confirmation mail is enabled.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        sample_ctx = {
+            "item_id": "202610A",
+            "title": "Black leather wallet",
+            "status": "Lost",
+            "submitted_at": "2026-03-02T18:45:00",
+            "category": "General",
+            "location": "Hall A",
+            "event_date": "2026-03-02",
+            "first_name": "John",
+            "last_name": "Doe",
+            "email": "john@example.test",
+            "phone": "+49123456789",
+            "base_url": "https://example.test",
+        }
+        preview_subject = render_mail_template(subject, sample_ctx)
+        preview_body = render_mail_template(body, sample_ctx)
+
+        if action == "preview":
+            conn = get_db()
+            description_quality_settings = get_description_quality_settings(conn)
+            smtp_settings = get_smtp_settings(conn)
+            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
+            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
+            conn.close()
+            flash("Preview generated with sample values.", "info")
+            return render_template(
+                "admin_settings.html",
+                user=current_user(),
+                description_quality_settings=description_quality_settings,
+                smtp_settings=smtp_settings,
+                public_lost_confirm_settings={
+                    "enabled": enabled,
+                    "subject": subject,
+                    "body": body,
+                    "allowed_vars": PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+                },
+                public_lost_confirm_preview_subject=preview_subject,
+                public_lost_confirm_preview_body=preview_body,
+                public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+                legal_notice_text=legal_notice_text,
+                privacy_policy_text=privacy_policy_text,
+            )
+
+        conn = get_db()
+        old_state = {
+            "smtp_public_lost_confirm_enabled": get_setting(conn, "smtp_public_lost_confirm_enabled", "0"),
+            "smtp_public_lost_confirm_subject": get_setting(conn, "smtp_public_lost_confirm_subject", ""),
+            "smtp_public_lost_confirm_body": get_setting(conn, "smtp_public_lost_confirm_body", ""),
+        }
+        set_setting(conn, "smtp_public_lost_confirm_enabled", "1" if enabled else "0")
+        set_setting(conn, "smtp_public_lost_confirm_subject", subject)
+        set_setting(conn, "smtp_public_lost_confirm_body", body)
+        conn.commit()
+        conn.close()
+        audit(
+            "smtp_public_lost_confirmation",
+            "settings",
+            None,
+            f"enabled={1 if enabled else 0}",
+            old_values=old_state,
+            new_values={
+                "smtp_public_lost_confirm_enabled": "1" if enabled else "0",
+                "smtp_public_lost_confirm_subject": subject,
+                "smtp_public_lost_confirm_body": body,
+            },
+            meta={"preview_subject": preview_subject},
+        )
+        flash("Public lost confirmation mail settings updated.", "success")
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/legal-privacy")
@@ -294,11 +481,22 @@ def register_admin_routes(app, deps: dict):
             privacy_policy_text = DEFAULT_PRIVACY_POLICY_TEXT
 
         conn = get_db()
+        old_state = {
+            "legal_notice_text": get_setting(conn, "legal_notice_text", ""),
+            "privacy_policy_text": get_setting(conn, "privacy_policy_text", ""),
+        }
         set_setting(conn, "legal_notice_text", legal_notice_text)
         set_setting(conn, "privacy_policy_text", privacy_policy_text)
         conn.commit()
         conn.close()
-        audit("legal_privacy_settings", "settings", None, "legal/privacy text updated")
+        audit(
+            "legal_privacy_settings",
+            "settings",
+            None,
+            "legal/privacy text updated",
+            old_values=old_state,
+            new_values={"legal_notice_text": legal_notice_text, "privacy_policy_text": privacy_policy_text},
+        )
         flash("Legal notice and privacy policy updated.", "success")
         return redirect(url_for("admin_settings"))
 
@@ -322,6 +520,7 @@ def register_admin_routes(app, deps: dict):
             flash(f"New password must be at least {MIN_PASSWORD_LENGTH} characters long.", "danger")
             return redirect(url_for("users"))
 
+        old_user = row_to_dict(u)
         conn.execute(
             "UPDATE users SET password_hash=? WHERE id=?",
             (generate_password_hash(new_pw), user_id),
@@ -329,7 +528,7 @@ def register_admin_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("password_reset", "user", user_id, f"username={u['username']}")
+        audit("password_reset", "user", user_id, f"username={u['username']}", old_values=old_user, meta={"password_reset": True})
         flash(f"Password reset for '{u['username']}'.", "warning")
         return redirect(url_for("users"))
 
@@ -346,13 +545,21 @@ def register_admin_routes(app, deps: dict):
         if not u:
             conn.close()
             abort(404)
+        old_user = row_to_dict(u)
         conn.execute(
             "UPDATE users SET totp_secret=NULL, totp_enabled=0, totp_last_step=NULL WHERE id=?",
             (int(user_id),),
         )
         conn.commit()
         conn.close()
-        audit("totp_reset", "user", user_id, f"username={u['username']}")
+        audit(
+            "totp_reset",
+            "user",
+            user_id,
+            f"username={u['username']}",
+            old_values=old_user,
+            new_values={"totp_secret": None, "totp_enabled": 0, "totp_last_step": None},
+        )
         flash(f"2FA reset for '{u['username']}'.", "warning")
         return redirect(url_for("users"))
 
@@ -386,11 +593,19 @@ def register_admin_routes(app, deps: dict):
             flash("You cannot change the role of the last admin user.", "danger")
             return redirect(url_for("users"))
 
+        old_user = row_to_dict(u)
         conn.execute("UPDATE users SET role=? WHERE id=?", (new_role, user_id))
         conn.commit()
         conn.close()
 
-        audit("role_change", "user", user_id, f"username={u['username']} role:{old_role}->{new_role}")
+        audit(
+            "role_change",
+            "user",
+            user_id,
+            f"username={u['username']} role:{old_role}->{new_role}",
+            old_values=old_user,
+            new_values={"role": new_role},
+        )
         flash(f"Role updated for '{u['username']}' ({old_role} -> {new_role}).", "success")
         return redirect(url_for("users"))
 
@@ -418,12 +633,13 @@ def register_admin_routes(app, deps: dict):
             flash("You cannot delete the last admin user.", "danger")
             return redirect(url_for("users"))
 
+        old_user = row_to_dict(u)
         conn.execute("UPDATE items SET created_by=NULL WHERE created_by=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
         conn.commit()
         conn.close()
 
-        audit("delete", "user", user_id, f"username={u['username']}")
+        audit("delete", "user", user_id, f"username={u['username']}", old_values=old_user)
         flash("User deleted.", "warning")
         return redirect(url_for("users"))
 
@@ -463,11 +679,19 @@ def register_admin_routes(app, deps: dict):
                 flash("You cannot deactivate the last active admin-capable user.", "danger")
                 return redirect(url_for("users"))
 
+        old_user = row_to_dict(u)
         conn.execute("UPDATE users SET is_active=? WHERE id=?", (new_active, user_id))
         conn.commit()
         conn.close()
 
-        audit("user_active", "user", user_id, f"username={u['username']} active:{old_active}->{new_active}")
+        audit(
+            "user_active",
+            "user",
+            user_id,
+            f"username={u['username']} active:{old_active}->{new_active}",
+            old_values=old_user,
+            new_values={"is_active": new_active},
+        )
         flash(f"User '{u['username']}' is now {'active' if new_active == 1 else 'deactivated'}.", "success")
         return redirect(url_for("users"))
 
@@ -507,7 +731,13 @@ def register_admin_routes(app, deps: dict):
             )
         conn.commit()
         conn.close()
-        audit("role_create", "role", None, f"name={role_name}")
+        audit(
+            "role_create",
+            "role",
+            None,
+            f"name={role_name}",
+            new_values={"name": role_name},
+        )
         flash(f"Role '{role_name}' created.", "success")
         return redirect(url_for("users"))
 
@@ -523,6 +753,13 @@ def register_admin_routes(app, deps: dict):
 
         selected = set(request.form.getlist("permissions"))
         selected = {p for p in selected if p in set(rbac_permission_keys)}
+        old_matrix = {
+            r["permission_key"]: int(r["allowed"] or 0)
+            for r in conn.execute(
+                "SELECT permission_key, allowed FROM role_permissions WHERE role_name=?",
+                (role_name,),
+            ).fetchall()
+        }
         for permission_key in rbac_permission_keys:
             allowed = 1 if permission_key in selected else 0
             conn.execute(
@@ -541,9 +778,23 @@ def register_admin_routes(app, deps: dict):
             flash("At least one user must retain permission to manage users.", "danger")
             return redirect(url_for("users"))
 
+        new_matrix = {
+            r["permission_key"]: int(r["allowed"] or 0)
+            for r in conn.execute(
+                "SELECT permission_key, allowed FROM role_permissions WHERE role_name=?",
+                (role_name,),
+            ).fetchall()
+        }
         conn.commit()
         conn.close()
-        audit("role_permissions_update", "role", None, f"name={role_name}")
+        audit(
+            "role_permissions_update",
+            "role",
+            None,
+            f"name={role_name}",
+            old_values={"role_name": role_name, "permissions": old_matrix},
+            new_values={"role_name": role_name, "permissions": new_matrix},
+        )
         flash(f"Permissions updated for '{role_name}'.", "success")
         return redirect(url_for("users"))
 
@@ -571,11 +822,15 @@ def register_admin_routes(app, deps: dict):
             flash("Role is assigned to users and cannot be deleted.", "danger")
             return redirect(url_for("users"))
 
+        old_permissions = [
+            row_to_dict(r)
+            for r in conn.execute("SELECT role_name, permission_key, allowed FROM role_permissions WHERE role_name=?", (role_name,)).fetchall()
+        ]
         conn.execute("DELETE FROM role_permissions WHERE role_name=?", (role_name,))
         conn.execute("DELETE FROM roles WHERE name=?", (role_name,))
         conn.commit()
         conn.close()
-        audit("role_delete", "role", None, f"name={role_name}")
+        audit("role_delete", "role", None, f"name={role_name}", old_values={"name": role_name, "permissions": old_permissions})
         flash(f"Role '{role_name}' deleted.", "warning")
         return redirect(url_for("users"))
 
@@ -622,7 +877,8 @@ def register_admin_routes(app, deps: dict):
                 (name, sort_order, now_utc()),
             )
             conn.commit()
-            audit("create", "category", None, f"name={name} sort_order={sort_order}")
+            created = conn.execute("SELECT id, name, is_active, sort_order FROM categories WHERE name=?", (name,)).fetchone()
+            audit("create", "category", int(created["id"]) if created else None, f"name={name} sort_order={sort_order}", new_values=row_to_dict(created))
             flash("Category created.", "success")
         except sqlite3.IntegrityError:
             flash("Category already exists.", "danger")
@@ -641,11 +897,12 @@ def register_admin_routes(app, deps: dict):
             abort(404)
 
         new_val = 0 if int(c["is_active"]) == 1 else 1
+        old_cat = row_to_dict(c)
         conn.execute("UPDATE categories SET is_active=? WHERE id=?", (new_val, cat_id))
         conn.commit()
         conn.close()
 
-        audit("toggle", "category", cat_id, f"name={c['name']} is_active={new_val}")
+        audit("toggle", "category", cat_id, f"name={c['name']} is_active={new_val}", old_values=old_cat, new_values={"is_active": new_val})
         flash("Category " + ("enabled." if new_val == 1 else "disabled."), "warning" if new_val == 0 else "success")
         return redirect(url_for("admin_categories"))
 
@@ -665,9 +922,17 @@ def register_admin_routes(app, deps: dict):
 
         conn = get_db()
         try:
+            old_cat = conn.execute("SELECT id, name, is_active, sort_order FROM categories WHERE id=?", (cat_id,)).fetchone()
             conn.execute("UPDATE categories SET name=?, sort_order=? WHERE id=?", (name, sort_order, cat_id))
             conn.commit()
-            audit("update", "category", cat_id, f"name={name} sort_order={sort_order}")
+            audit(
+                "update",
+                "category",
+                cat_id,
+                f"name={name} sort_order={sort_order}",
+                old_values=row_to_dict(old_cat),
+                new_values={"name": name, "sort_order": sort_order},
+            )
             flash("Category updated.", "success")
         except sqlite3.IntegrityError:
             flash("Category name already exists.", "danger")
@@ -692,10 +957,11 @@ def register_admin_routes(app, deps: dict):
             flash("Category is in use by items. Disable it instead.", "danger")
             return redirect(url_for("admin_categories"))
 
+        old_cat = row_to_dict(cat)
         conn.execute("DELETE FROM categories WHERE id=?", (cat_id,))
         conn.commit()
         conn.close()
 
-        audit("delete", "category", cat_id, f"name={cat['name']}")
+        audit("delete", "category", cat_id, f"name={cat['name']}", old_values=old_cat)
         flash("Category deleted.", "warning")
         return redirect(url_for("admin_categories"))

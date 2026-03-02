@@ -33,6 +33,9 @@
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('index') }}">Home</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('dashboard') }}">Dashboard</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
+          {% if can_review_items %}
+            <a class="btn btn-sm btn-outline-light" href="{{ url_for('lost_review_queue') }}">Lost Reviews</a>
+          {% endif %}
 
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -79,6 +82,8 @@
     <a href="{{ url_for('legal_notice') }}" class="text-decoration-none">Legal Notice</a>
     ·
     <a href="{{ url_for('privacy_policy') }}" class="text-decoration-none">Privacy Policy</a>
+    ·
+    <a href="{{ url_for('public_lost_new') }}" class="text-decoration-none">Report Lost Item</a>
     ·
     <a href="https://github.com/bgernand/LostandFound-App" target="_blank" rel="noopener noreferrer" class="text-decoration-none">GitHub Project</a>
   </div>

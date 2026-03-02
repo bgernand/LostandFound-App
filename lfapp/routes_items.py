@@ -43,6 +43,8 @@ def register_item_routes(app, deps: dict):
     STATUSES = deps["STATUSES"]
     get_smtp_settings = deps["get_smtp_settings"]
     send_smtp_mail = deps["send_smtp_mail"]
+    get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
+    render_mail_template = deps["render_mail_template"]
     get_description_quality_result = deps["get_description_quality_result"]
 
     def can_edit_item(user_obj, item_row) -> bool:
@@ -53,6 +55,54 @@ def register_item_routes(app, deps: dict):
         if item_row["kind"] == "found" and has_permission("items.edit_found", user=user_obj):
             return True
         return False
+
+    def row_to_dict(row):
+        if not row:
+            return None
+        return {k: row[k] for k in row.keys()}
+
+    def save_uploaded_photos(conn, item_id: int) -> int:
+        files = request.files.getlist("photos")
+        saved = 0
+        for f in files:
+            if not f or f.filename == "":
+                continue
+            if not allowed_file(f.filename):
+                continue
+            safe = secure_filename(f.filename)
+            ext = safe.rsplit(".", 1)[1].lower()
+            filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
+            f.save(UPLOAD_DIR / filename)
+            conn.execute(
+                "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
+                (item_id, filename, now_utc()),
+            )
+            saved += 1
+        return saved
+
+    def next_pending_lost_id(conn, exclude_item_id=None):
+        if exclude_item_id is None:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM items
+                WHERE kind='lost' AND review_pending=1
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM items
+                WHERE kind='lost' AND review_pending=1 AND id <> ?
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """,
+                (int(exclude_item_id),),
+            ).fetchone()
+        return int(row["id"]) if row else None
 
     @app.get("/items/new")
     @login_required
@@ -85,6 +135,232 @@ def register_item_routes(app, deps: dict):
             forced_kind="found",
             form_action=url_for("create_found_item"),
         )
+
+    @app.get("/report/lost")
+    def public_lost_new():
+        return render_item_form(
+            item=None,
+            matches=[],
+            errors={},
+            forced_kind="lost",
+            form_action=url_for("public_lost_create"),
+            hide_status_field=True,
+            hide_postage_fields=True,
+            public_submit_mode=True,
+            submit_label="Submit Lost Request",
+            cancel_url=url_for("login"),
+        )
+
+    @app.post("/report/lost")
+    def public_lost_create():
+        kind = "lost"
+        title = ""
+        description = (request.form.get("description") or "").strip()
+        category = (request.form.get("category") or "").strip()
+        location = (request.form.get("location") or "").strip()
+        event_date = (request.form.get("event_date") or "").strip()
+        notes = (request.form.get("lost_notes") or "").strip()
+        status = "Lost"
+
+        lost = read_lost_fields_from_form(request)
+        # Public form must not set postage fields.
+        lost["postage_price"] = None
+        lost["postage_paid"] = 0
+        ok, lost_errors = validate_lost_fields(lost, CONTACT_WAYS)
+        if not ok:
+            flash("Please fix the highlighted fields.", "danger")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors=lost_errors,
+                forced_kind=kind,
+                form_action=url_for("public_lost_create"),
+                hide_status_field=True,
+                hide_postage_fields=True,
+                public_submit_mode=True,
+                submit_label="Submit Lost Request",
+                cancel_url=url_for("login"),
+            )
+        title = lost.get("lost_what", "").strip()
+
+        errors = {}
+        if not title:
+            errors["title"] = "Title is required."
+        if not description:
+            errors["description"] = "Description is required."
+        quality = get_description_quality_result(description)
+        if quality["hard_ok"] is False:
+            errors["description"] = quality["hard_errors"][0]
+        elif quality["score_ok"] is False and quality["strict_mode"]:
+            errors["description"] = (
+                f"Description quality is too low (score {quality['score']}/{quality['score_threshold']}). "
+                "Add clearer color/material/brand/model details."
+            )
+
+        active_cats = set(category_names(active_only=True))
+        if category not in active_cats:
+            category = safe_default_category(active_cats)
+
+        if event_date:
+            try:
+                datetime.strptime(event_date, "%Y-%m-%d")
+            except ValueError:
+                errors["event_date"] = "Date must be in YYYY-MM-DD format."
+        else:
+            event_date = None
+
+        if errors:
+            flash("Please fix the highlighted fields.", "danger")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors=errors,
+                forced_kind=kind,
+                form_action=url_for("public_lost_create"),
+                hide_status_field=True,
+                hide_postage_fields=True,
+                public_submit_mode=True,
+                submit_label="Submit Lost Request",
+                cancel_url=url_for("login"),
+            )
+
+        public_token = secrets.token_urlsafe(16)
+        conn = get_db()
+        try:
+            public_id = generate_public_item_id(conn)
+            cur = conn.execute(
+                """
+                INSERT INTO items (
+                kind, title, description, category, location, event_date,
+                status, created_by, public_token, public_id, created_at, review_pending,
+                lost_what, lost_last_name, lost_first_name, lost_group_leader,
+                lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
+                lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
+                postage_price, postage_paid
+                )
+                VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?
+                )
+                """,
+                (
+                    kind, title, description, category, location, event_date,
+                    status, None, public_token, public_id, now_utc(), 1,
+                    lost.get("lost_what"),
+                    lost.get("lost_last_name"),
+                    lost.get("lost_first_name"),
+                    lost.get("lost_group_leader"),
+                    lost.get("lost_street"),
+                    lost.get("lost_number"),
+                    lost.get("lost_additional"),
+                    lost.get("lost_postcode"),
+                    lost.get("lost_town"),
+                    lost.get("lost_country"),
+                    lost.get("lost_email"),
+                    lost.get("lost_phone"),
+                    lost.get("lost_leaving_date"),
+                    lost.get("lost_contact_way"),
+                    notes,
+                    None,
+                    0,
+                ),
+            )
+            item_id = int(cur.lastrowid)
+            saved = save_uploaded_photos(conn, item_id)
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            conn.close()
+            flash("Database error while saving your request. Please retry.", "danger")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors={},
+                forced_kind=kind,
+                form_action=url_for("public_lost_create"),
+                hide_status_field=True,
+                hide_postage_fields=True,
+                public_submit_mode=True,
+                submit_label="Submit Lost Request",
+                cancel_url=url_for("login"),
+            )
+        conn.close()
+
+        conn = get_db()
+        created_item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        conn.close()
+        audit(
+            "public_create",
+            "item",
+            item_id,
+            f"lost review_pending=1 photos={saved}",
+            new_values=row_to_dict(created_item),
+            meta={"photos_added": saved, "source": "public_lost_form"},
+        )
+        public_mail_cfg = get_public_lost_confirmation_settings()
+        smtp_cfg = get_smtp_settings()
+        recipient = (lost.get("lost_email") or "").strip()
+        if public_mail_cfg.get("enabled") and smtp_cfg.get("enabled") and recipient:
+            context = {
+                "item_id": created_item["public_id"] if created_item else "",
+                "title": created_item["title"] if created_item else title,
+                "status": created_item["status"] if created_item else status,
+                "submitted_at": created_item["created_at"] if created_item else now_utc(),
+                "category": created_item["category"] if created_item else category,
+                "location": created_item["location"] if created_item else location,
+                "event_date": created_item["event_date"] if created_item and created_item["event_date"] else "",
+                "first_name": lost.get("lost_first_name", ""),
+                "last_name": lost.get("lost_last_name", ""),
+                "email": recipient,
+                "phone": lost.get("lost_phone", ""),
+                "base_url": public_base_url().rstrip("/"),
+            }
+            subject = render_mail_template(public_mail_cfg.get("subject", ""), context).strip()
+            body = render_mail_template(public_mail_cfg.get("body", ""), context).strip()
+            ok_mail, msg_mail = send_smtp_mail(recipient, subject, body)
+            if ok_mail:
+                audit(
+                    "public_confirmation_mail_sent",
+                    "item",
+                    item_id,
+                    f"to={recipient}",
+                    meta={"subject": subject[:200]},
+                )
+            else:
+                audit(
+                    "public_confirmation_mail_failed",
+                    "item",
+                    item_id,
+                    f"to={recipient} error={msg_mail[:200]}",
+                    meta={"subject": subject[:200]},
+                )
+                flash("Your request was saved, but confirmation e-mail could not be sent.", "warning")
+        flash("Thank you. Your Lost Request was submitted and is pending review.", "success")
+        return redirect(url_for("public_lost_new"))
+
+    @app.get("/reviews/lost")
+    @require_permission("items.review")
+    def lost_review_queue():
+        conn = get_db()
+        queue = conn.execute(
+            """
+            SELECT id, public_id, title, category, location, event_date, created_at
+            FROM items
+            WHERE kind='lost' AND review_pending=1
+            ORDER BY created_at ASC, id ASC
+            LIMIT 500
+            """
+        ).fetchall()
+        next_id = next_pending_lost_id(conn)
+        conn.close()
+        return render_template("lost_review_queue.html", queue=queue, next_id=next_id, user=current_user())
 
     def _create_item_impl(forced_kind=None):
         u = current_user()
@@ -170,7 +446,7 @@ def register_item_routes(app, deps: dict):
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, public_id, created_at,
+                status, created_by, public_token, public_id, created_at, review_pending,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -178,7 +454,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -187,7 +463,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, u["id"], public_token, public_id, now_utc(),
+                    status, u["id"], public_token, public_id, now_utc(), 0,
                     (lost.get("lost_what") if kind == "lost" else None),
                     (lost.get("lost_last_name") if kind == "lost" else None),
                     (lost.get("lost_first_name") if kind == "lost" else None),
@@ -208,22 +484,7 @@ def register_item_routes(app, deps: dict):
                 ),
             )
             item_id = cur.lastrowid
-            files = request.files.getlist("photos")
-            saved = 0
-            for f in files:
-                if not f or f.filename == "":
-                    continue
-                if not allowed_file(f.filename):
-                    continue
-                safe = secure_filename(f.filename)
-                ext = safe.rsplit(".", 1)[1].lower()
-                filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
-                f.save(UPLOAD_DIR / filename)
-                conn.execute(
-                    "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
-                    (item_id, filename, now_utc()),
-                )
-                saved += 1
+            saved = save_uploaded_photos(conn, item_id)
             matches = find_matches(conn, kind, title, category, location, event_date=event_date, item_id=item_id)
             conn.commit()
         except sqlite3.Error:
@@ -247,7 +508,17 @@ def register_item_routes(app, deps: dict):
                 "warning",
             )
         save_and_new = str(request.form.get("save_and_new", "")).strip().lower() in {"1", "true", "yes", "on"}
-        audit("create", "item", item_id, f"{kind} '{title}' photos={saved}")
+        conn = get_db()
+        created_item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        conn.close()
+        audit(
+            "create",
+            "item",
+            item_id,
+            f"{kind} '{title}' photos={saved}",
+            new_values=row_to_dict(created_item),
+            meta={"photos_added": saved},
+        )
         if save_and_new:
             flash("Item created. Ready for the next one.", "success")
             if matches:
@@ -373,6 +644,7 @@ def register_item_routes(app, deps: dict):
     @login_required
     def edit_item(item_id: int):
         u = current_user()
+        review_mode = str(request.args.get("review", "")).strip().lower() in {"1", "true", "yes", "on"}
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
@@ -384,13 +656,33 @@ def register_item_routes(app, deps: dict):
         matches = find_matches(
             conn, item["kind"], item["title"], item["category"], item["location"], event_date=item["event_date"], item_id=item_id
         )
+        next_review_id = None
+        review_queue_count = 0
+        if review_mode and has_permission("items.review", user=u) and item["kind"] == "lost":
+            next_review_id = next_pending_lost_id(conn, exclude_item_id=item_id)
+            review_queue_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM items WHERE kind='lost' AND review_pending=1"
+                ).fetchone()["c"]
+            )
         conn.close()
-        return render_item_form(item=item, matches=matches, errors={})
+        return render_item_form(
+            item=item,
+            matches=matches,
+            errors={},
+            review_mode=review_mode,
+            show_review_next=bool(review_mode and has_permission("items.review", user=u) and item["kind"] == "lost"),
+            review_queue_count=review_queue_count,
+            next_review_id=next_review_id,
+            cancel_url=(url_for("lost_review_queue") if review_mode else url_for("index")),
+        )
 
     @app.post("/items/<int:item_id>/update")
     @login_required
     def update_item(item_id: int):
         u = current_user()
+        review_mode = str(request.form.get("review_mode", "")).strip().lower() in {"1", "true", "yes", "on"}
+        reviewed_and_next = str(request.form.get("reviewed_and_next", "")).strip().lower() in {"1", "true", "yes", "on"}
         conn = get_db()
         existing = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not existing:
@@ -423,7 +715,14 @@ def register_item_routes(app, deps: dict):
                 draft = build_item_form_draft(request, existing)
                 draft["id"] = item_id
                 conn.close()
-                return render_item_form(item=draft, matches=[], errors=lost_errors)
+                return render_item_form(
+                    item=draft,
+                    matches=[],
+                    errors=lost_errors,
+                    review_mode=review_mode,
+                    show_review_next=bool(review_mode and has_permission("items.review", user=u) and existing["kind"] == "lost"),
+                    cancel_url=(url_for("lost_review_queue") if review_mode else url_for("index")),
+                )
             title = lost.get("lost_what", "").strip()
 
         errors = {}
@@ -459,7 +758,14 @@ def register_item_routes(app, deps: dict):
             draft = build_item_form_draft(request, existing)
             draft["id"] = item_id
             conn.close()
-            return render_item_form(item=draft, matches=[], errors=errors)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors=errors,
+                review_mode=review_mode,
+                show_review_next=bool(review_mode and has_permission("items.review", user=u) and existing["kind"] == "lost"),
+                cancel_url=(url_for("lost_review_queue") if review_mode else url_for("index")),
+            )
 
         conn.execute(
             """
@@ -494,24 +800,25 @@ def register_item_routes(app, deps: dict):
             ),
         )
 
-        files = request.files.getlist("photos")
-        saved = 0
-        for f in files:
-            if not f or f.filename == "":
-                continue
-            if not allowed_file(f.filename):
-                continue
-            safe = secure_filename(f.filename)
-            ext = safe.rsplit(".", 1)[1].lower()
-            filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
-            f.save(UPLOAD_DIR / filename)
-            conn.execute(
-                "INSERT INTO photos (item_id, filename, uploaded_at) VALUES (?, ?, ?)",
-                (item_id, filename, now_utc()),
+        saved = save_uploaded_photos(conn, item_id)
+
+        next_id = None
+        old_item = row_to_dict(existing)
+        if reviewed_and_next and has_permission("items.review", user=u) and existing["kind"] == "lost":
+            conn.execute("UPDATE items SET review_pending=0, updated_at=? WHERE id=?", (now_utc(), item_id))
+            next_id = next_pending_lost_id(conn, exclude_item_id=item_id)
+            audit(
+                "review_done",
+                "item",
+                item_id,
+                "review_pending=0",
+                old_values={"review_pending": existing["review_pending"]},
+                new_values={"review_pending": 0},
+                meta={"next_item_id": next_id},
             )
-            saved += 1
 
         synced_count = sync_linked_group_status(conn, item_id, status, STATUSES, now_utc)
+        updated_item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         conn.commit()
         conn.close()
 
@@ -524,10 +831,19 @@ def register_item_routes(app, deps: dict):
         audit(
             "update", "item", item_id,
             f"user={u['username']} status:{old_status}->{status} photos_added={saved} linked_status_sync={synced_count}",
+            old_values=old_item,
+            new_values=row_to_dict(updated_item),
+            meta={"photos_added": saved, "linked_status_sync": synced_count},
         )
         flash("Item updated.", "success")
         if synced_count > 1:
             flash(f"Status synchronized to {synced_count} linked items.", "info")
+        if reviewed_and_next and has_permission("items.review", user=u) and existing["kind"] == "lost":
+            if next_id:
+                flash("Review saved. Opening next pending lost request.", "success")
+                return redirect(url_for("edit_item", item_id=next_id, review=1))
+            flash("Review saved. No more pending lost requests.", "success")
+            return redirect(url_for("lost_review_queue"))
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/bulk-status")
@@ -555,6 +871,11 @@ def register_item_routes(app, deps: dict):
             return redirect(url_for("index"))
 
         conn = get_db()
+        old_rows = conn.execute(
+            f"SELECT id, status FROM items WHERE id IN ({','.join(['?'] * len(ids))})",
+            ids,
+        ).fetchall()
+        old_status_map = {int(r["id"]): r["status"] for r in old_rows}
         placeholders = ",".join(["?"] * len(ids))
         params = [new_status, now_utc()] + ids
         conn.execute(f"UPDATE items SET status=?, updated_at=? WHERE id IN ({placeholders})", params)
@@ -564,7 +885,15 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("bulk_status", "item", None, f"count={len(ids)} status={new_status} linked_sync={synced_total}")
+        audit(
+            "bulk_status",
+            "item",
+            None,
+            f"count={len(ids)} status={new_status} linked_sync={synced_total}",
+            old_values={"statuses": old_status_map},
+            new_values={"status": new_status},
+            meta={"item_ids": ids, "linked_sync_count": synced_total},
+        )
         flash(f"Updated {len(ids)} items to '{new_status}'.", "success")
         if synced_total > 0:
             flash(f"Additionally synchronized {synced_total} linked items.", "info")
@@ -627,7 +956,14 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("link_create", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id} status_sync={synced_count}")
+        audit(
+            "link_create",
+            "item_link",
+            None,
+            f"found_item_id={found_id} lost_item_id={lost_id} status_sync={synced_count}",
+            new_values={"found_item_id": found_id, "lost_item_id": lost_id},
+            meta={"status_sync_count": synced_count},
+        )
         flash("Link created.", "success")
         if synced_count > 1:
             flash(f"Linked items were automatically set to status 'Found' ({synced_count} items).", "info")
@@ -660,7 +996,13 @@ def register_item_routes(app, deps: dict):
         conn.close()
 
         if cur.rowcount > 0:
-            audit("link_delete", "item_link", None, f"found_item_id={found_id} lost_item_id={lost_id}")
+            audit(
+                "link_delete",
+                "item_link",
+                None,
+                f"found_item_id={found_id} lost_item_id={lost_id}",
+                old_values={"found_item_id": found_id, "lost_item_id": lost_id},
+            )
             flash("Link removed.", "warning")
         else:
             flash("No link found for these items.", "info")
@@ -671,6 +1013,10 @@ def register_item_routes(app, deps: dict):
     def delete_item(item_id: int):
         conn = get_db()
         ensure_item_links_schema(conn)
+        old_item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        if not old_item:
+            conn.close()
+            abort(404)
         photos = conn.execute("SELECT filename FROM photos WHERE item_id=?", (item_id,)).fetchall()
         conn.execute("DELETE FROM item_links WHERE found_item_id=? OR lost_item_id=?", (item_id, item_id))
         conn.execute("DELETE FROM items WHERE id=?", (item_id,))
@@ -682,7 +1028,14 @@ def register_item_routes(app, deps: dict):
             if UPLOAD_DIR.resolve() in path.parents and path.exists():
                 path.unlink()
 
-        audit("delete", "item", item_id)
+        audit(
+            "delete",
+            "item",
+            item_id,
+            details=f"photos={len(photos)}",
+            old_values=row_to_dict(old_item),
+            meta={"photo_filenames": [p["filename"] for p in photos]},
+        )
         flash("Item deleted (admin).", "warning")
         return redirect(url_for("index"))
 
@@ -705,7 +1058,13 @@ def register_item_routes(app, deps: dict):
         if path.exists():
             path.unlink()
 
-        audit("delete", "photo", photo_id, f"item_id={item_id}")
+        audit(
+            "delete",
+            "photo",
+            photo_id,
+            f"item_id={item_id}",
+            old_values=row_to_dict(p),
+        )
         flash("Photo deleted.", "warning")
         return redirect(url_for("detail", item_id=item_id))
 
@@ -723,7 +1082,14 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("public_toggle", "item", item_id, f"public_enabled={new_val}")
+        audit(
+            "public_toggle",
+            "item",
+            item_id,
+            f"public_enabled={new_val}",
+            old_values={"public_enabled": int(item["public_enabled"] or 0)},
+            new_values={"public_enabled": new_val},
+        )
         flash("Public link " + ("enabled." if new_val == 1 else "disabled."), "warning" if new_val == 0 else "success")
         return redirect(url_for("detail", item_id=item_id))
 
@@ -741,7 +1107,14 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("public_photos_toggle", "item", item_id, f"public_photos_enabled={new_val}")
+        audit(
+            "public_photos_toggle",
+            "item",
+            item_id,
+            f"public_photos_enabled={new_val}",
+            old_values={"public_photos_enabled": int(item["public_photos_enabled"] or 0)},
+            new_values={"public_photos_enabled": new_val},
+        )
         flash("Public photos " + ("enabled." if new_val == 1 else "disabled."), "warning" if new_val == 0 else "success")
         return redirect(url_for("detail", item_id=item_id))
 
@@ -750,7 +1123,7 @@ def register_item_routes(app, deps: dict):
     def regenerate_public_token(item_id: int):
         new_token = secrets.token_urlsafe(16)
         conn = get_db()
-        item = conn.execute("SELECT id FROM items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute("SELECT id, public_token FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
             conn.close()
             abort(404)
@@ -766,7 +1139,14 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
-        audit("public_regenerate", "item", item_id, "token regenerated")
+        audit(
+            "public_regenerate",
+            "item",
+            item_id,
+            "token regenerated",
+            old_values={"public_token": item["public_token"]},
+            new_values={"public_token": new_token},
+        )
         flash("Public link regenerated (old link is no longer valid).", "info")
         return redirect(url_for("detail", item_id=item_id))
 

@@ -1,7 +1,8 @@
 import sqlite3
+import json
 from functools import wraps
 
-from flask import abort, redirect, request, session, url_for
+from flask import abort, has_request_context, redirect, request, session, url_for
 
 
 def build_auth_helpers(app, get_db, now_utc):
@@ -92,17 +93,45 @@ def build_auth_helpers(app, get_db, now_utc):
 
         return deco
 
-    def audit(action, entity_type, entity_id=None, details=None):
+    def _json_dump_safe(payload):
+        if payload is None:
+            return None
+        try:
+            return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            return json.dumps({"_unserializable": str(payload)}, ensure_ascii=False)
+
+    def audit(action, entity_type, entity_id=None, details=None, old_values=None, new_values=None, meta=None):
         u = current_user()
         conn = None
         try:
+            ip_address = None
+            user_agent = None
+            if has_request_context():
+                ip_address = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip() or None
+                user_agent = (request.headers.get("User-Agent") or "").strip()[:512] or None
             conn = get_db()
             conn.execute(
                 """
-                INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, details, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO audit_log (
+                    actor_user_id, action, entity_type, entity_id, details,
+                    old_values, new_values, meta_json, ip_address, user_agent, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (u["id"] if u else None, action, entity_type, entity_id, details, now_utc()),
+                (
+                    u["id"] if u else None,
+                    action,
+                    entity_type,
+                    entity_id,
+                    details,
+                    _json_dump_safe(old_values),
+                    _json_dump_safe(new_values),
+                    _json_dump_safe(meta),
+                    ip_address,
+                    user_agent,
+                    now_utc(),
+                ),
             )
             conn.commit()
         except sqlite3.Error:

@@ -3,6 +3,7 @@ from email.message import EmailMessage
 from pathlib import Path
 import ipaddress
 import os
+import re
 import secrets
 import smtplib
 import time
@@ -26,6 +27,7 @@ from lfapp.db_utils import (
     init_db as db_init_db,
     is_totp_mandatory as db_is_totp_mandatory,
     now_utc,
+    prune_audit_log,
     set_setting,
 )
 from lfapp.filter_utils import (
@@ -115,6 +117,40 @@ Please contact the responsible organization listed in the legal notice.
 
 This is a template privacy policy and should be adapted to local legal requirements.
 """
+DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = "Lost Request received (Item ID {{ item_id }})"
+DEFAULT_PUBLIC_LOST_CONFIRM_BODY = """Hello {{ first_name }} {{ last_name }},
+
+we received your lost request.
+
+Important information:
+- Item ID: {{ item_id }}
+- Title: {{ title }}
+- Status: {{ status }}
+- Submitted at: {{ submitted_at }}
+- Category: {{ category }}
+- Location: {{ location }}
+- Date of loss: {{ event_date }}
+
+Our team will review your request as soon as possible.
+
+Best regards
+Lost & Found Team
+"""
+MAIL_TEMPLATE_VAR_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
+PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
+    "item_id",
+    "title",
+    "status",
+    "submitted_at",
+    "category",
+    "location",
+    "event_date",
+    "first_name",
+    "last_name",
+    "email",
+    "phone",
+    "base_url",
+}
 
 STATUSES = [
     "Lost",
@@ -241,11 +277,14 @@ def create_app(config: dict | None = None):
     if smtp_use_ssl and smtp_use_tls:
         raise RuntimeError("SMTP_USE_SSL and SMTP_USE_TLS cannot both be enabled.")
 
+    audit_retention_days = int(app.config.get("AUDIT_RETENTION_DAYS", os.environ.get("AUDIT_RETENTION_DAYS", "180")))
+    audit_max_rows = int(app.config.get("AUDIT_MAX_ROWS", os.environ.get("AUDIT_MAX_ROWS", "200000")))
+
     trusted_proxy_networks = _parse_proxy_networks(
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
     )
 
-    state = {"db_inited": False, "status_maintenance_day": None}
+    state = {"db_inited": False, "status_maintenance_day": None, "audit_maintenance_day": None}
 
     def get_db():
         return db_get_db(db_path)
@@ -365,6 +404,39 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
+    def validate_mail_template_variables(text: str, allowed_vars: set[str]):
+        found = set(MAIL_TEMPLATE_VAR_RE.findall(text or ""))
+        unknown = sorted(v for v in found if v not in allowed_vars)
+        return len(unknown) == 0, unknown
+
+    def render_mail_template(text: str, context: dict):
+        payload = str(text or "")
+
+        def repl(match):
+            key = match.group(1)
+            return str(context.get(key, ""))
+
+        return MAIL_TEMPLATE_VAR_RE.sub(repl, payload)
+
+    def get_public_lost_confirmation_settings(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            enabled_raw = get_setting(conn, "smtp_public_lost_confirm_enabled", "0")
+            subject = get_setting(conn, "smtp_public_lost_confirm_subject", DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT) or DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT
+            body = get_setting(conn, "smtp_public_lost_confirm_body", DEFAULT_PUBLIC_LOST_CONFIRM_BODY) or DEFAULT_PUBLIC_LOST_CONFIRM_BODY
+            return {
+                "enabled": _is_truthy(enabled_raw),
+                "subject": subject,
+                "body": body,
+                "allowed_vars": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
+            }
+        finally:
+            if own_conn:
+                conn.close()
+
     def get_legal_privacy_settings(conn=None):
         own_conn = False
         if conn is None:
@@ -477,6 +549,29 @@ def create_app(config: dict | None = None):
         if reminders > 0:
             app.logger.info("Auto reminders: %s follow-up reminders created.", reminders)
 
+    @app.before_request
+    def _auto_audit_maintenance():
+        today = datetime.now(timezone.utc).date().isoformat()
+        if state["audit_maintenance_day"] == today:
+            return
+        conn = get_db()
+        try:
+            deleted_by_age, deleted_by_count = prune_audit_log(
+                conn,
+                retention_days=audit_retention_days,
+                max_rows=audit_max_rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        state["audit_maintenance_day"] = today
+        if deleted_by_age or deleted_by_count:
+            app.logger.info(
+                "Audit rotation: deleted_by_age=%s deleted_by_count=%s",
+                deleted_by_age,
+                deleted_by_count,
+            )
+
     @app.context_processor
     def inject_globals():
         u = current_user()
@@ -485,6 +580,7 @@ def create_app(config: dict | None = None):
         can_edit_items = bool(has_permission("items.edit", user=u))
         can_edit_found_items = bool(has_permission("items.edit_found", user=u))
         can_view_pii = bool(has_permission("items.view_pii", user=u))
+        can_review_items = bool(has_permission("items.review", user=u))
         can_bulk_status = bool(has_permission("items.bulk_status", user=u))
         can_manage_links = bool(has_permission("items.link", user=u))
         can_delete_photo = bool(has_permission("items.photo_delete", user=u))
@@ -512,6 +608,7 @@ def create_app(config: dict | None = None):
                 can_edit_items,
                 can_edit_found_items,
                 can_bulk_status,
+                can_review_items,
                 can_manage_links,
                 can_delete_photo,
                 can_manage_public,
@@ -528,6 +625,7 @@ def create_app(config: dict | None = None):
             "can_edit_items": can_edit_items,
             "can_edit_found_items": can_edit_found_items,
             "can_view_pii": can_view_pii,
+            "can_review_items": can_review_items,
             "can_bulk_status": can_bulk_status,
             "can_manage_links": can_manage_links,
             "can_delete_photo": can_delete_photo,
@@ -581,19 +679,23 @@ def create_app(config: dict | None = None):
         flash("Two-factor authentication is required. Please set up 2FA (TOTP) to continue.", "warning")
         return redirect(url_for("account_totp"))
 
-    def render_item_form(item=None, matches=None, errors=None, forced_kind=None, form_action=None):
+    def render_item_form(item=None, matches=None, errors=None, forced_kind=None, form_action=None, **extra_context):
         description_quality_settings = get_description_quality_settings()
+        payload = {
+            "item": item,
+            "categories": category_names(active_only=True),
+            "statuses": STATUSES,
+            "user": current_user(),
+            "matches": (matches or []),
+            "errors": (errors or {}),
+            "forced_kind": forced_kind,
+            "form_action": form_action,
+            "description_quality_settings": description_quality_settings,
+        }
+        payload.update(extra_context or {})
         return render_template(
             "form.html",
-            item=item,
-            categories=category_names(active_only=True),
-            statuses=STATUSES,
-            user=current_user(),
-            matches=(matches or []),
-            errors=(errors or {}),
-            forced_kind=forced_kind,
-            form_action=form_action,
-            description_quality_settings=description_quality_settings,
+            **payload,
         )
 
     @app.get("/legal")
@@ -694,6 +796,8 @@ def create_app(config: dict | None = None):
             "STATUSES": STATUSES,
             "get_smtp_settings": get_smtp_settings,
             "send_smtp_mail": send_smtp_mail,
+            "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
+            "render_mail_template": render_mail_template,
             "get_description_quality_result": get_description_quality_result,
         },
     )
@@ -710,6 +814,9 @@ def create_app(config: dict | None = None):
             "set_setting": set_setting,
             "get_setting": get_setting,
             "get_smtp_settings": get_smtp_settings,
+            "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
+            "validate_mail_template_variables": validate_mail_template_variables,
+            "render_mail_template": render_mail_template,
             "get_description_quality_settings": get_description_quality_settings,
             "audit": audit,
             "now_utc": now_utc,
@@ -718,6 +825,9 @@ def create_app(config: dict | None = None):
             "rbac_permission_keys": RBAC_PERMISSION_KEYS,
             "DEFAULT_LEGAL_NOTICE_TEXT": DEFAULT_LEGAL_NOTICE_TEXT,
             "DEFAULT_PRIVACY_POLICY_TEXT": DEFAULT_PRIVACY_POLICY_TEXT,
+            "DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT": DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT,
+            "DEFAULT_PUBLIC_LOST_CONFIRM_BODY": DEFAULT_PUBLIC_LOST_CONFIRM_BODY,
+            "PUBLIC_LOST_CONFIRM_ALLOWED_VARS": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
             "MIN_PASSWORD_LENGTH": min_password_length,
         },
     )

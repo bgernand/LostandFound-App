@@ -25,6 +25,9 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Admin controls for TOTP mandatory mode and per-user 2FA reset
 - Manual SMTP e-mail sending from Lost Request detail view to requester address
 - Description quality validation with live form feedback and admin-managed blacklist extension
+- Public Lost submission page (`/report/lost`) without login
+- Dedicated Lost Review Queue with mass-processing flow (`Reviewed & Next`)
+- Optional confirmation e-mail to requester after public lost submission (configurable template with preview in `Settings -> System Settings`)
 
 ## Status Behavior
 - Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Handed over / Sent`, `Lost forever`
@@ -36,6 +39,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ## Roles and Permissions
 - `admin`: full access, including user/category admin and destructive actions
 - `staff`: operational write access (create/edit/link/update items, reminders, bulk actions)
+- `staff`: includes review of public lost submissions (`items.review`)
 - `viewer`: read-only access to overviews/details/dashboard (no write actions)
 
 ## Two-Factor Authentication (TOTP)
@@ -60,6 +64,19 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - A follow-up reminder is generated automatically when an item stays in `In contact` for more than 7 days without updates.
 - Open reminders are shown on the dashboard and as a warning on the items overview.
 - Staff/admin can mark reminders as done.
+
+## Public Lost Submission + Review
+- Public users can submit a new `Lost Request` via `/report/lost`.
+- Public submission always creates:
+  - `kind = lost`
+  - `status = Lost`
+  - `review_pending = 1`
+- Public form excludes `Price of postage` and `Paid`.
+- Staff with permission `items.review` process queue items in:
+  - `Lost Reviews` (menu) / `/reviews/lost`
+- Review workflow is optimized for throughput:
+  - always edit mode
+  - `Reviewed & Next` marks current entry reviewed and opens the next pending one.
 
 ## Quality and CI
 - Basic automated tests are included in `tests/`.
@@ -170,6 +187,8 @@ chmod +x deploy.sh
 - `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
 - `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
 - `FLASK_DEBUG` (optional, default `false`; local development only)
+- `AUDIT_RETENTION_DAYS` (optional, default `180`; `0` disables age-based audit cleanup)
+- `AUDIT_MAX_ROWS` (optional, default `200000`; `0` disables count-based audit cleanup)
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
@@ -181,6 +200,8 @@ chmod +x deploy.sh
 - Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
 - Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
 - Description quality defaults and blacklist extension are managed in `Settings -> System Settings`.
+- Audit log stores action context plus structured before/after snapshots for critical changes (items/users/roles/settings/categories).
+- Daily audit rotation runs automatically (age + max-row cap configurable by `.env`).
 - Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
