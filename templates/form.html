@@ -204,16 +204,18 @@
               {% if errors.get('lost_leaving_date') %}<div class="invalid-feedback">{{ errors.get('lost_leaving_date') }}</div>{% endif %}
             </div>
 
-            <div class="col-12 col-md-6">
-              <label class="form-label">Way of contact</label>
-              <select class="form-select {% if errors.get('lost_contact_way') %}is-invalid{% endif %}" name="lost_contact_way">
-                <option value="">—</option>
-                {% for w in CONTACT_WAYS %}
-                  <option value="{{ w }}" {% if item and item['lost_contact_way']==w %}selected{% endif %}>{{ w }}</option>
-                {% endfor %}
-              </select>
-              {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
-            </div>
+            {% if not public_submit_mode %}
+              <div class="col-12 col-md-6">
+                <label class="form-label">Way of contact</label>
+                <select class="form-select {% if errors.get('lost_contact_way') %}is-invalid{% endif %}" name="lost_contact_way">
+                  <option value="">—</option>
+                  {% for w in CONTACT_WAYS %}
+                    <option value="{{ w }}" {% if item and item['lost_contact_way']==w %}selected{% endif %}>{{ w }}</option>
+                  {% endfor %}
+                </select>
+                {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
+              </div>
+            {% endif %}
 
             <div class="col-12 col-md-6">
               <label class="form-label">Name of Groupleader</label>

@@ -166,6 +166,7 @@ def register_item_routes(app, deps: dict):
         # Public form must not set postage fields.
         lost["postage_price"] = None
         lost["postage_paid"] = 0
+        lost["lost_contact_way"] = ""
         ok, lost_errors = validate_lost_fields(lost, CONTACT_WAYS)
         if not ok:
             flash("Please fix the highlighted fields.", "danger")
@@ -183,6 +184,7 @@ def register_item_routes(app, deps: dict):
                 cancel_url=url_for("login"),
             )
         title = lost.get("lost_what", "").strip()
+        lost["lost_contact_way"] = "Online Form"
 
         errors = {}
         if not title:
