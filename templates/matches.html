@@ -134,12 +134,12 @@
           <div class="fw-semibold">
             <a href="{{ url_for('detail', item_id=src['id']) }}">
               {% if src['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ src['title'] }}
-              <span class="text-muted fw-normal">(Item ID: {{ src['public_id'] or src['id'] }})</span>
+              <span class="text-muted fw-normal">(Item ID: {{ src['public_id'] or "—" }})</span>
             </a>
             <span class="mx-2">↔</span>
             <a href="{{ url_for('detail', item_id=cand['id']) }}">
               {% if cand['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ cand['title'] }}
-              <span class="text-muted fw-normal">(Item ID: {{ cand['public_id'] or cand['id'] }})</span>
+              <span class="text-muted fw-normal">(Item ID: {{ cand['public_id'] or "—" }})</span>
             </a>
           </div>
           <div class="small text-muted">
@@ -161,7 +161,7 @@
               <span class="badge text-bg-secondary">{{ r }}</span>
             {% endfor %}
           </div>
-          {% if can_write %}
+          {% if can_manage_links %}
             <form class="mt-2" method="post" action="{{ url_for('create_link', item_id=src['id']) }}">
               <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="target_item_id" value="{{ cand['id'] }}">

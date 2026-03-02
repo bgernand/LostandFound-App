@@ -57,7 +57,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
 
     base_rows = conn.execute(
         """
-        SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
+        SELECT id, public_id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
         FROM items
         WHERE kind = ?
           AND status NOT IN ('Handed over / Sent', 'Lost forever')
@@ -97,7 +97,7 @@ def find_matches(conn, kind, title, category, location, event_date=None, item_id
     if fts_ids:
         placeholders = ",".join(["?"] * len(fts_ids))
         extra_rows = conn.execute(
-            f"""SELECT id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
+            f"""SELECT id, public_id, kind, title, description, category, location, event_date, status, created_at, lost_last_name, lost_first_name
                 FROM items
                 WHERE id IN ({placeholders}) AND status NOT IN ('Handed over / Sent', 'Lost forever')""",
             tuple(fts_ids),

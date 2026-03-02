@@ -24,8 +24,11 @@
       <div class="ms-auto d-flex flex-column flex-lg-row gap-2 align-items-lg-center mt-3 mt-lg-0">
         {% if user %}
           <span class="text-white-50 small">👤 {{ user['username'] }} ({{ user['role'] }})</span>
-          {% if can_write %}
-            <a class="btn btn-sm btn-success" href="{{ url_for('new_item') }}">+ New item</a>
+          {% if can_create_lost %}
+            <a class="btn btn-sm btn-danger" href="{{ url_for('new_lost_item') }}">+ New Lost</a>
+          {% endif %}
+          {% if can_create_found %}
+            <a class="btn btn-sm btn-success" href="{{ url_for('new_found_item') }}">+ New Found</a>
           {% endif %}
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('index') }}">Home</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('dashboard') }}">Dashboard</a>
@@ -38,7 +41,7 @@
             <ul class="dropdown-menu dropdown-menu-end">
               <li><a class="dropdown-item" href="{{ url_for('account_password') }}">Change password</a></li>
               <li><a class="dropdown-item" href="{{ url_for('account_totp') }}">Two-factor authentication</a></li>
-              {% if user['role'] == 'admin' %}
+              {% if can_admin_access %}
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item" href="{{ url_for('admin_settings') }}">System Settings</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>

@@ -16,10 +16,12 @@ from lfapp.category_utils import (
     safe_default_category as cat_safe_default_category,
 )
 from lfapp.db_utils import (
+    RBAC_PERMISSION_KEYS,
     auto_create_followup_reminders,
     auto_mark_lost_forever,
     ensure_item_links_schema,
     get_db as db_get_db,
+    get_roles as db_get_roles,
     get_setting,
     init_db as db_init_db,
     is_totp_mandatory as db_is_totp_mandatory,
@@ -66,6 +68,53 @@ from lfapp.totp_utils import (
 DEFAULT_DATA_DIR = "/app/data"
 DEFAULT_UPLOAD_DIR = "/app/uploads"
 DEFAULT_TRUSTED_PROXY_CIDRS = "127.0.0.1/32,::1/128,172.16.0.0/12"
+DEFAULT_LEGAL_NOTICE_TEXT = """Responsible for this service:
+YOUR ORGANIZATION NAME
+Street 1
+12345 City
+Germany
+
+Contact:
+Phone: ---
+Email: ---
+
+Responsible according to §55 RStV:
+YOUR NAME
+
+This system is used exclusively for internal lost & found documentation.
+Public item pages contain only minimal information.
+"""
+DEFAULT_PRIVACY_POLICY_TEXT = """1. Purpose of this system
+This application is used to document lost and found items.
+Personal data is only stored to identify owners and return items.
+
+2. Stored data
+- Item description
+- Location and date
+- Internal contact details for lost items
+- Uploaded photos
+- User accounts for staff
+- Audit log of changes
+
+3. Public pages
+Public item links contain only minimal information.
+Contact details are never published.
+Photos may be hidden by a privacy setting.
+
+4. Access restriction
+Only authorized staff members have access to internal data.
+Actions may be logged for accountability.
+
+5. Data retention
+Data is stored only as long as required to return property
+or comply with legal retention obligations.
+
+6. Your rights
+You have the right to request correction or deletion of stored personal data.
+Please contact the responsible organization listed in the legal notice.
+
+This is a template privacy policy and should be adapted to local legal requirements.
+"""
 
 STATUSES = [
     "Lost",
@@ -87,8 +136,6 @@ STATUS_COLORS = {
     "Lost forever": "dark",
 }
 
-ROLES = ["admin", "staff", "viewer"]
-WRITE_ROLES = ("admin", "staff")
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
 SAVED_SEARCH_SCOPES = {"index", "matches"}
 SAVED_SEARCH_ALLOWED_KEYS = {
@@ -318,6 +365,22 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
+    def get_legal_privacy_settings(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
+            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
+            return {
+                "legal_notice_text": legal_notice_text,
+                "privacy_policy_text": privacy_policy_text,
+            }
+        finally:
+            if own_conn:
+                conn.close()
+
     def send_smtp_mail(to_address: str, subject: str, body: str, reply_to: str | None = None):
         smtp_cfg = get_smtp_settings()
         if not smtp_cfg["enabled"]:
@@ -367,6 +430,8 @@ def create_app(config: dict | None = None):
     current_user = auth_helpers["current_user"]
     login_required = auth_helpers["login_required"]
     require_role = auth_helpers["require_role"]
+    has_permission = auth_helpers["has_permission"]
+    require_permission = auth_helpers["require_permission"]
     audit = auth_helpers["audit"]
 
     @app.before_request
@@ -415,12 +480,49 @@ def create_app(config: dict | None = None):
     @app.context_processor
     def inject_globals():
         u = current_user()
-        can_write = bool(u and u["role"] in WRITE_ROLES)
+        can_create_lost = bool(has_permission("items.create_lost", user=u))
+        can_create_found = bool(has_permission("items.create_found", user=u))
+        can_edit_items = bool(has_permission("items.edit", user=u))
+        can_bulk_status = bool(has_permission("items.bulk_status", user=u))
+        can_manage_links = bool(has_permission("items.link", user=u))
+        can_delete_photo = bool(has_permission("items.photo_delete", user=u))
+        can_manage_public = bool(has_permission("items.public_manage", user=u))
+        can_regenerate_public = bool(has_permission("items.public_regenerate", user=u))
+        can_delete_item = bool(has_permission("items.delete", user=u))
+        can_send_email = bool(has_permission("items.send_email", user=u))
+        can_manage_reminders = bool(has_permission("reminders.manage", user=u))
+        can_admin_access = bool(has_permission("admin.access", user=u))
+        can_write = any(
+            [
+                can_create_lost,
+                can_create_found,
+                can_edit_items,
+                can_bulk_status,
+                can_manage_links,
+                can_delete_photo,
+                can_manage_public,
+                can_send_email,
+            ]
+        )
         return {
             "STATUS_COLORS": STATUS_COLORS,
             "CONTACT_WAYS": CONTACT_WAYS,
             "csrf_token": csrf_token,
+            "has_permission": lambda permission_key: bool(has_permission(permission_key, user=u)),
+            "can_create_lost": can_create_lost,
+            "can_create_found": can_create_found,
+            "can_edit_items": can_edit_items,
+            "can_bulk_status": can_bulk_status,
+            "can_manage_links": can_manage_links,
+            "can_delete_photo": can_delete_photo,
+            "can_manage_public": can_manage_public,
+            "can_regenerate_public": can_regenerate_public,
+            "can_delete_item": can_delete_item,
+            "can_send_email": can_send_email,
+            "can_manage_reminders": can_manage_reminders,
+            "can_admin_access": can_admin_access,
             "can_write": can_write,
+            "rbac_permission_keys": RBAC_PERMISSION_KEYS,
         }
 
     @app.before_request
@@ -458,7 +560,7 @@ def create_app(config: dict | None = None):
         flash("Two-factor authentication is required. Please set up 2FA (TOTP) to continue.", "warning")
         return redirect(url_for("account_totp"))
 
-    def render_item_form(item=None, matches=None, errors=None):
+    def render_item_form(item=None, matches=None, errors=None, forced_kind=None, form_action=None):
         description_quality_settings = get_description_quality_settings()
         return render_template(
             "form.html",
@@ -468,16 +570,20 @@ def create_app(config: dict | None = None):
             user=current_user(),
             matches=(matches or []),
             errors=(errors or {}),
+            forced_kind=forced_kind,
+            form_action=form_action,
             description_quality_settings=description_quality_settings,
         )
 
     @app.get("/legal")
     def legal_notice():
-        return render_template("legal.html", user=current_user())
+        legal_privacy = get_legal_privacy_settings()
+        return render_template("legal.html", user=current_user(), legal_notice_text=legal_privacy["legal_notice_text"])
 
     @app.get("/privacy")
     def privacy_policy():
-        return render_template("privacy.html", user=current_user())
+        legal_privacy = get_legal_privacy_settings()
+        return render_template("privacy.html", user=current_user(), privacy_policy_text=legal_privacy["privacy_policy_text"])
 
     register_auth_routes(
         app,
@@ -527,7 +633,8 @@ def create_app(config: dict | None = None):
             "saved_search_target": saved_search_target,
             "safe_next_url": safe_next_url,
             "STATUSES": STATUSES,
-            "WRITE_ROLES": WRITE_ROLES,
+            "has_permission": has_permission,
+            "require_permission": require_permission,
             "SAVED_SEARCH_SCOPES": SAVED_SEARCH_SCOPES,
             "SAVED_SEARCH_ALLOWED_KEYS": SAVED_SEARCH_ALLOWED_KEYS,
             "SAVED_SEARCH_MULTI_KEYS": SAVED_SEARCH_MULTI_KEYS,
@@ -541,6 +648,8 @@ def create_app(config: dict | None = None):
             "current_user": current_user,
             "login_required": login_required,
             "require_role": require_role,
+            "require_permission": require_permission,
+            "has_permission": has_permission,
             "render_item_form": render_item_form,
             "read_lost_fields_from_form": read_lost_fields_from_form,
             "validate_lost_fields": validate_lost_fields,
@@ -562,7 +671,6 @@ def create_app(config: dict | None = None):
             "secrets": secrets,
             "CONTACT_WAYS": CONTACT_WAYS,
             "STATUSES": STATUSES,
-            "WRITE_ROLES": WRITE_ROLES,
             "get_smtp_settings": get_smtp_settings,
             "send_smtp_mail": send_smtp_mail,
             "get_description_quality_result": get_description_quality_result,
@@ -575,6 +683,8 @@ def create_app(config: dict | None = None):
             "get_db": get_db,
             "current_user": current_user,
             "require_role": require_role,
+            "require_permission": require_permission,
+            "has_permission": has_permission,
             "is_totp_mandatory": is_totp_mandatory,
             "set_setting": set_setting,
             "get_setting": get_setting,
@@ -583,7 +693,10 @@ def create_app(config: dict | None = None):
             "audit": audit,
             "now_utc": now_utc,
             "get_categories": get_categories,
-            "ROLES": ROLES,
+            "get_roles": db_get_roles,
+            "rbac_permission_keys": RBAC_PERMISSION_KEYS,
+            "DEFAULT_LEGAL_NOTICE_TEXT": DEFAULT_LEGAL_NOTICE_TEXT,
+            "DEFAULT_PRIVACY_POLICY_TEXT": DEFAULT_PRIVACY_POLICY_TEXT,
             "MIN_PASSWORD_LENGTH": min_password_length,
         },
     )

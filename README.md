@@ -186,6 +186,23 @@ chmod +x deploy.sh
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
 - Daily automatic maintenance updates stale `Lost` items (`event_date` older than 90 days) to `Lost forever`.
 
+## Reset INITIAL_ADMIN Password (Console)
+If you no longer know the password of the protected `INITIAL_ADMIN` account, reset it from console:
+
+```bash
+docker compose exec app python -m lfapp.cli reset-initial-admin-password
+```
+
+Optional non-interactive mode:
+
+```bash
+docker compose exec app python -m lfapp.cli reset-initial-admin-password --password 'YourNewStrongPassword'
+```
+
+Notes:
+- The command targets `INITIAL_ADMIN` (`is_root_admin=1`).
+- It enforces role `admin` and re-activates the account.
+
 ## Documentation
 - Deployment details: `DeploymentGuide.md`
 

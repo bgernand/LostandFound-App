@@ -58,6 +58,7 @@
                 <th>ID</th>
                 <th>Username</th>
                 <th>Role</th>
+                <th>Active</th>
                 <th>2FA</th>
                 <th>Created</th>
                 <th class="text-end">Actions</th>
@@ -72,11 +73,21 @@
                   {% if user and u['id'] == user['id'] %}
                     <span class="badge text-bg-secondary ms-1">you</span>
                   {% endif %}
+                  {% if u['is_root_admin'] == 1 or u['is_root_admin'] == '1' %}
+                    <span class="badge text-bg-danger ms-1">INITIAL_ADMIN</span>
+                  {% endif %}
                 </td>
                 <td class="text-nowrap">
                   <span class="badge {% if u['role']=='admin' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">
                     {{ u['role'] }}
                   </span>
+                </td>
+                <td class="text-nowrap">
+                  {% if u['is_active'] == 1 or u['is_active'] == '1' %}
+                    <span class="badge text-bg-success">Active</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">Inactive</span>
+                  {% endif %}
                 </td>
                 <td class="text-nowrap">
                   {% if (u['totp_enabled'] == 1 or u['totp_enabled'] == '1') and u['totp_secret'] %}
@@ -88,52 +99,79 @@
                 <td class="text-nowrap small text-muted">{{ u['created_at'] }}</td>
 
                 <td class="text-end text-nowrap">
+                  {% set role_form_id = 'roleForm' ~ u['id'] %}
                   <form method="post"
                         action="{{ url_for('users_change_role', user_id=u['id']) }}"
+                        id="{{ role_form_id }}"
                         class="d-inline me-1">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <select class="form-select form-select-sm d-inline-block" style="width: 120px;" name="role">
+                    <select class="form-select form-select-sm d-inline-block" style="width: 120px;" name="role"
+                            {% if u['is_root_admin'] == 1 or u['is_root_admin'] == '1' %}disabled{% endif %}>
                       {% for r in roles %}
                         <option value="{{ r }}" {% if u['role'] == r %}selected{% endif %}>{{ r }}</option>
                       {% endfor %}
                     </select>
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Set role</button>
+                    {% if not (u['is_root_admin'] == 1 or u['is_root_admin'] == '1') %}
+                      <button class="btn btn-sm btn-outline-primary" type="submit">Set role</button>
+                    {% else %}
+                      <span class="btn btn-sm btn-outline-secondary disabled">Locked</span>
+                    {% endif %}
                   </form>
 
-                  {% if user and u['id'] != user['id'] %}
-                    <form method="post"
-                          action="{{ url_for('users_reset_password', user_id=u['id']) }}"
-                          onsubmit="return confirm('Reset password for {{ u['username'] }}?');"
-                          class="d-inline">
+                  {% if user and u['id'] != user['id'] and not (u['is_root_admin'] == 1 or u['is_root_admin'] == '1') %}
+                    <form method="post" action="{{ url_for('users_reset_password', user_id=u['id']) }}" id="resetPwForm{{ u['id'] }}" class="d-none">
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <input class="form-control form-control-sm d-inline-block" style="width: 180px;"
-                             type="password" name="new_password" minlength="10"
-                             placeholder="New password (min 10)" required>
-                      <button class="btn btn-sm btn-outline-warning" type="submit">Reset password</button>
+                      <input type="hidden" name="new_password" id="resetPwInput{{ u['id'] }}">
                     </form>
-                    <form method="post"
-                          action="{{ url_for('users_reset_totp', user_id=u['id']) }}"
-                          onsubmit="return confirm('Reset 2FA for {{ u['username'] }}?');"
-                          class="d-inline ms-1">
+                    <form method="post" action="{{ url_for('users_reset_totp', user_id=u['id']) }}" id="resetTotpForm{{ u['id'] }}" class="d-none">
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <button class="btn btn-sm btn-outline-secondary" type="submit">Reset 2FA</button>
+                    </form>
+                    <form method="post" action="{{ url_for('users_set_active', user_id=u['id']) }}" id="activeForm{{ u['id'] }}" class="d-none">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="is_active" value="{% if u['is_active'] == 1 or u['is_active'] == '1' %}0{% else %}1{% endif %}">
+                    </form>
+                    <form method="post" action="{{ url_for('users_delete', user_id=u['id']) }}" id="deleteUserForm{{ u['id'] }}" class="d-none">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     </form>
 
-                    <form method="post"
-                          action="{{ url_for('users_delete', user_id=u['id']) }}"
-                          onsubmit="return confirm('Delete user {{ u['username'] }}?');"
-                          class="d-inline ms-1">
-                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
-                    </form>
+                    <div class="dropdown d-inline">
+                      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        Actions
+                      </button>
+                      <ul class="dropdown-menu dropdown-menu-end">
+                        <li>
+                          <button class="dropdown-item" type="button"
+                                  onclick='return resetUserPassword({{ u["id"] }}, {{ u["username"]|tojson }});'>Reset password</button>
+                        </li>
+                        <li>
+                          <button class="dropdown-item" type="button"
+                                  onclick='if(confirm("Reset 2FA for " + {{ u["username"]|tojson }} + "?")) document.getElementById("resetTotpForm{{ u["id"] }}").submit();'>
+                            Reset 2FA
+                          </button>
+                        </li>
+                        <li>
+                          <button class="dropdown-item" type="button"
+                                  onclick='if(confirm("{% if u["is_active"] == 1 or u["is_active"] == "1" %}Deactivate{% else %}Activate{% endif %} user " + {{ u["username"]|tojson }} + "?")) document.getElementById("activeForm{{ u["id"] }}").submit();'>
+                            {% if u['is_active'] == 1 or u['is_active'] == '1' %}Deactivate{% else %}Activate{% endif %}
+                          </button>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                          <button class="dropdown-item text-danger" type="button"
+                                  onclick='if(confirm("Delete user " + {{ u["username"]|tojson }} + "?")) document.getElementById("deleteUserForm{{ u["id"] }}").submit();'>
+                            Delete
+                          </button>
+                        </li>
+                      </ul>
+                    </div>
                   {% else %}
-                    <span class="text-muted small">self</span>
+                    <span class="text-muted small">{% if user and u['id'] == user['id'] %}self{% else %}protected{% endif %}</span>
                   {% endif %}
                 </td>
               </tr>
               {% else %}
               <tr>
-                <td colspan="6" class="text-muted text-center py-4">
+                <td colspan="7" class="text-muted text-center py-4">
                   No users found.
                 </td>
               </tr>
@@ -143,7 +181,7 @@
         </div>
 
         <div class="text-muted small mt-3">
-          The last admin account cannot be deleted.
+          At least one user must retain admin access.
         </div>
 
       </div>
@@ -151,5 +189,81 @@
   </div>
 
 </div>
+
+<div class="card mt-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+      <h5 class="card-title mb-0">Roles & Permissions</h5>
+      <form class="d-flex gap-2" method="post" action="{{ url_for('roles_create') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <input class="form-control form-control-sm" name="role_name" placeholder="new-role" required>
+        <button class="btn btn-sm btn-outline-primary" type="submit">Create role</button>
+      </form>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Role</th>
+            {% for p in permission_keys %}
+              <th class="text-nowrap">{{ permission_labels.get(p, p) }}</th>
+            {% endfor %}
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rr in role_rows %}
+            {% set role_name = rr['name'] %}
+            {% set perm_form_id = 'rolePermForm' ~ loop.index %}
+            <tr>
+              <td class="text-nowrap">
+                <form id="{{ perm_form_id }}" method="post" action="{{ url_for('roles_permissions_update', role_name=role_name) }}"></form>
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" form="{{ perm_form_id }}">
+                <span class="fw-semibold">{{ role_name }}</span>
+                {% if rr['is_system'] == 1 or rr['is_system'] == '1' %}
+                  <span class="badge text-bg-secondary ms-1">system</span>
+                {% endif %}
+              </td>
+              {% for p in permission_keys %}
+                <td class="text-center">
+                  <input class="form-check-input" type="checkbox" name="permissions" value="{{ p }}" form="{{ perm_form_id }}"
+                         {% if role_permissions.get(role_name, {}).get(p) %}checked{% endif %}>
+                </td>
+              {% endfor %}
+              <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-primary" type="submit" form="{{ perm_form_id }}">Save</button>
+                {% if not (rr['is_system'] == 1 or rr['is_system'] == '1') %}
+                  <form method="post" action="{{ url_for('roles_delete', role_name=role_name) }}" class="d-inline ms-1"
+                        onsubmit="return confirm('Delete role {{ role_name }}?');">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  function resetUserPassword(userId, username) {
+    const newPassword = window.prompt("Enter new password for " + username + " (min 10 chars):");
+    if (newPassword === null) return false;
+    if (newPassword.length < 10) {
+      window.alert("Password must be at least 10 characters.");
+      return false;
+    }
+    const input = document.getElementById("resetPwInput" + userId);
+    const form = document.getElementById("resetPwForm" + userId);
+    if (!input || !form) return false;
+    input.value = newPassword;
+    form.submit();
+    return false;
+  }
+</script>
 
 {% endblock %}

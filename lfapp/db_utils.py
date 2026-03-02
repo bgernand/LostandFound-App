@@ -9,6 +9,43 @@ from werkzeug.security import generate_password_hash
 _fts5_available = None
 
 
+RBAC_PERMISSION_KEYS = [
+    "admin.access",
+    "items.create_lost",
+    "items.create_found",
+    "items.edit",
+    "items.bulk_status",
+    "items.link",
+    "items.photo_delete",
+    "items.public_manage",
+    "items.public_regenerate",
+    "items.delete",
+    "items.send_email",
+    "reminders.manage",
+]
+
+DEFAULT_ROLE_PERMISSIONS = {
+    "admin": set(RBAC_PERMISSION_KEYS),
+    "staff": {
+        "items.create_lost",
+        "items.create_found",
+        "items.edit",
+        "items.bulk_status",
+        "items.link",
+        "items.photo_delete",
+        "items.public_manage",
+        "items.send_email",
+        "reminders.manage",
+    },
+    "found-staff": {
+        "items.create_found",
+    },
+    "viewer": set(),
+}
+
+SYSTEM_ROLES = ("admin", "staff", "found-staff", "viewer")
+
+
 def get_db(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -23,6 +60,110 @@ def ensure_column(conn, table, col_name, col_def_sql):
     cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if col_name not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def_sql}")
+
+
+def ensure_rbac_defaults(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roles (
+            name TEXT PRIMARY KEY,
+            is_system INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS role_permissions (
+            role_name TEXT NOT NULL,
+            permission_key TEXT NOT NULL,
+            allowed INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (role_name, permission_key),
+            FOREIGN KEY(role_name) REFERENCES roles(name) ON DELETE CASCADE
+        )
+        """
+    )
+
+    stamp = now_utc()
+    for role_name in SYSTEM_ROLES:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO roles (name, is_system, created_at)
+            VALUES (?, 1, ?)
+            """,
+            (role_name, stamp),
+        )
+
+    existing_user_roles = conn.execute(
+        "SELECT DISTINCT trim(role) AS role FROM users WHERE role IS NOT NULL AND trim(role) <> ''"
+    ).fetchall()
+    for row in existing_user_roles:
+        role_name = (row["role"] or "").strip()
+        if not role_name:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO roles (name, is_system, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (role_name, 1 if role_name in SYSTEM_ROLES else 0, stamp),
+        )
+
+    roles = conn.execute("SELECT name FROM roles").fetchall()
+    for r in roles:
+        role_name = (r["name"] or "").strip()
+        allowed_defaults = DEFAULT_ROLE_PERMISSIONS.get(role_name, set())
+        for permission_key in RBAC_PERMISSION_KEYS:
+            allowed = 1 if permission_key in allowed_defaults else 0
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO role_permissions (role_name, permission_key, allowed, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (role_name, permission_key, allowed, stamp),
+            )
+
+
+def role_has_permission(conn, role_name: str, permission_key: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT allowed
+        FROM role_permissions
+        WHERE role_name=? AND permission_key=?
+        """,
+        (role_name, permission_key),
+    ).fetchone()
+    return bool(row and int(row["allowed"] or 0) == 1)
+
+
+def get_roles(conn):
+    return conn.execute(
+        """
+        SELECT name, is_system, created_at
+        FROM roles
+        ORDER BY
+            CASE WHEN name='admin' THEN 0 ELSE 1 END,
+            CASE WHEN is_system=1 THEN 0 ELSE 1 END,
+            name COLLATE NOCASE ASC
+        """
+    ).fetchall()
+
+
+def get_role_permissions_matrix(conn):
+    rows = conn.execute(
+        """
+        SELECT role_name, permission_key, allowed
+        FROM role_permissions
+        """
+    ).fetchall()
+    matrix = {}
+    for row in rows:
+        role_name = row["role_name"]
+        permission_key = row["permission_key"]
+        allowed = bool(int(row["allowed"] or 0) == 1)
+        matrix.setdefault(role_name, {})[permission_key] = allowed
+    return matrix
 
 
 def generate_public_item_id(conn, when_dt=None) -> str:
@@ -197,6 +338,8 @@ def init_db(db_path: str):
     ensure_column(conn, "users", "totp_secret", "TEXT")
     ensure_column(conn, "users", "totp_enabled", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "users", "totp_last_step", "INTEGER")
+    ensure_column(conn, "users", "is_active", "INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "users", "is_root_admin", "INTEGER NOT NULL DEFAULT 0")
     try:
         conn.execute(
             """
@@ -340,6 +483,8 @@ def init_db(db_path: str):
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('totp_mandatory', '0', ?)",
         (now_utc(),),
     )
+
+    ensure_rbac_defaults(conn)
     # System settings defaults (overridable in Admin UI).
     conn.execute(
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_chars', '30', ?)",
@@ -435,8 +580,8 @@ def init_db(db_path: str):
             raise RuntimeError("INITIAL_ADMIN_PASSWORD environment variable is required for first startup.")
         conn.execute(
             """
-            INSERT INTO users (username, password_hash, role, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users (username, password_hash, role, created_at, is_root_admin)
+            VALUES (?, ?, ?, ?, 1)
             """,
             (
                 initial_admin_username,
@@ -446,6 +591,19 @@ def init_db(db_path: str):
             ),
         )
         conn.commit()
+    else:
+        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
+        has_root = conn.execute("SELECT id FROM users WHERE is_root_admin=1 LIMIT 1").fetchone()
+        if not has_root:
+            root_candidate = conn.execute(
+                "SELECT id FROM users WHERE username = ? COLLATE NOCASE ORDER BY id ASC LIMIT 1",
+                (initial_admin_username,),
+            ).fetchone()
+            if root_candidate:
+                conn.execute(
+                    "UPDATE users SET is_root_admin=1, role='admin', is_active=1 WHERE id=?",
+                    (int(root_candidate["id"]),),
+                )
 
     cat_count = conn.execute("SELECT COUNT(*) AS c FROM categories").fetchone()["c"]
     if cat_count == 0:

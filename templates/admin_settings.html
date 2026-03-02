@@ -109,4 +109,30 @@
   </div>
 </div>
 
+<div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Legal Pages</h5>
+        <form method="post" action="{{ url_for('admin_set_legal_privacy_settings') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-3">
+            <div class="col-12 col-lg-6">
+              <label class="form-label small">Legal Notice (footer link)</label>
+              <textarea class="form-control form-control-sm" rows="14" name="legal_notice_text">{{ legal_notice_text }}</textarea>
+            </div>
+            <div class="col-12 col-lg-6">
+              <label class="form-label small">Privacy Policy (footer link)</label>
+              <textarea class="form-control form-control-sm" rows="14" name="privacy_policy_text">{{ privacy_policy_text }}</textarea>
+            </div>
+          </div>
+          <div class="d-grid d-md-flex justify-content-md-end mt-3">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Save legal pages</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

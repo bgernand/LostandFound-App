@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 {% set errors = errors if errors is defined else {} %}
+{% set form_kind = (item['kind'] if item and item['kind'] else (forced_kind or 'lost')) %}
+{% set form_kind_label = 'Lost Request' if form_kind == 'lost' else 'Found Item' %}
 
 <div class="card">
   <div class="card-body">
-    <h5 class="card-title">{{ "Edit item" if item else "New item" }}</h5>
+    <h5 class="card-title">{{ "Edit " ~ form_kind_label if item else "New " ~ form_kind_label }}</h5>
     {% if errors and errors|length %}
       <div class="alert alert-danger mt-3" role="alert">
         <div class="fw-semibold mb-1">Please fix the following fields:</div>
@@ -20,17 +22,15 @@
 
     <form method="post"
           enctype="multipart/form-data"
-          action="{{ url_for('update_item', item_id=item['id']) if (item and item['id']) else url_for('create_item') }}"
+          action="{{ url_for('update_item', item_id=item['id']) if (item and item['id']) else (form_action or url_for('create_item')) }}"
           novalidate>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="kind" id="kindSel" value="{{ form_kind }}">
       <div class="row g-3">
 
         <div class="col-12 col-md-4">
           <label class="form-label">Type</label>
-          <select class="form-select" name="kind" id="kindSel">
-            <option value="lost" {% if item and item['kind']=='lost' %}selected{% endif %}>Lost Request</option>
-            <option value="found" {% if item and item['kind']=='found' %}selected{% endif %}>Found Item</option>
-          </select>
+          <input class="form-control" value="{{ form_kind_label }}" readonly>
         </div>
 
         <!-- Found-only primary title -->
@@ -223,6 +223,9 @@
 
         <div class="col-12 d-grid d-sm-flex gap-2">
           <button class="btn btn-primary" type="submit">Save</button>
+          {% if not (item and item['id']) %}
+            <button class="btn btn-outline-primary" type="submit" name="save_and_new" value="1">Save & New</button>
+          {% endif %}
           <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Cancel</a>
         </div>
       </div>
@@ -237,7 +240,7 @@
       {% for m in matches %}
         <li>
           <a href="{{ url_for('detail', item_id=m['id']) }}">
-            {{ m['public_id'] or m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
+            {{ m['public_id'] or "—" }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
           </a>
           {% if m.get('match_score') %}
             <span class="badge text-bg-dark ms-1">Score {{ m['match_score'] }}</span>
@@ -315,7 +318,7 @@
 
     // New item default status
     if (!isEdit && statusSel) {
-      statusSel.value = "Lost";
+      statusSel.value = isLost ? "Lost" : "Found";
     }
   }
 

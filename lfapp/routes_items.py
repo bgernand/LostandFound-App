@@ -18,7 +18,8 @@ def register_item_routes(app, deps: dict):
     get_db = deps["get_db"]
     current_user = deps["current_user"]
     login_required = deps["login_required"]
-    require_role = deps["require_role"]
+    require_permission = deps["require_permission"]
+    has_permission = deps["has_permission"]
     render_item_form = deps["render_item_form"]
     read_lost_fields_from_form = deps["read_lost_fields_from_form"]
     validate_lost_fields = deps["validate_lost_fields"]
@@ -40,24 +41,52 @@ def register_item_routes(app, deps: dict):
     secrets = deps["secrets"]
     CONTACT_WAYS = deps["CONTACT_WAYS"]
     STATUSES = deps["STATUSES"]
-    WRITE_ROLES = deps["WRITE_ROLES"]
     get_smtp_settings = deps["get_smtp_settings"]
     send_smtp_mail = deps["send_smtp_mail"]
     get_description_quality_result = deps["get_description_quality_result"]
 
     @app.get("/items/new")
-    @require_role(*WRITE_ROLES)
+    @login_required
     def new_item():
-        return render_item_form(item=None, matches=[], errors={})
+        u = current_user()
+        if has_permission("items.create_lost", user=u):
+            return redirect(url_for("new_lost_item"))
+        if has_permission("items.create_found", user=u):
+            return redirect(url_for("new_found_item"))
+        abort(403)
 
-    @app.post("/items")
-    @require_role(*WRITE_ROLES)
-    def create_item():
+    @app.get("/items/new/lost")
+    @require_permission("items.create_lost")
+    def new_lost_item():
+        return render_item_form(
+            item=None,
+            matches=[],
+            errors={},
+            forced_kind="lost",
+            form_action=url_for("create_lost_item"),
+        )
+
+    @app.get("/items/new/found")
+    @require_permission("items.create_found")
+    def new_found_item():
+        return render_item_form(
+            item=None,
+            matches=[],
+            errors={},
+            forced_kind="found",
+            form_action=url_for("create_found_item"),
+        )
+
+    def _create_item_impl(forced_kind=None):
         u = current_user()
 
-        kind = (request.form.get("kind", "lost") or "lost").strip()
+        kind = (forced_kind or request.form.get("kind", "lost") or "lost").strip()
         if kind not in ["lost", "found"]:
             kind = "lost"
+        if kind == "lost" and not has_permission("items.create_lost", user=u):
+            abort(403)
+        if kind == "found" and not has_permission("items.create_found", user=u):
+            abort(403)
 
         title = (request.form.get("title") or "").strip()
         description = (request.form.get("description") or "").strip()
@@ -75,7 +104,13 @@ def register_item_routes(app, deps: dict):
             if not ok:
                 flash("Please fix the highlighted fields.", "danger")
                 draft = build_item_form_draft(request)
-                return render_item_form(item=draft, matches=[], errors=lost_errors)
+                return render_item_form(
+                    item=draft,
+                    matches=[],
+                    errors=lost_errors,
+                    forced_kind=kind,
+                    form_action=url_for("create_lost_item") if kind == "lost" else url_for("create_found_item"),
+                )
             title = lost.get("lost_what", "").strip()
 
         errors = {}
@@ -110,7 +145,13 @@ def register_item_routes(app, deps: dict):
         if errors:
             flash("Please fix the highlighted fields.", "danger")
             draft = build_item_form_draft(request)
-            return render_item_form(item=draft, matches=[], errors=errors)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors=errors,
+                forced_kind=kind,
+                form_action=url_for("create_lost_item") if kind == "lost" else url_for("create_found_item"),
+            )
 
         public_token = secrets.token_urlsafe(16)
         conn = get_db()
@@ -181,7 +222,13 @@ def register_item_routes(app, deps: dict):
             conn.close()
             flash("Database error while saving item. Please retry.", "danger")
             draft = build_item_form_draft(request)
-            return render_item_form(item=draft, matches=[], errors={})
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors={},
+                forced_kind=kind,
+                form_action=url_for("create_lost_item") if kind == "lost" else url_for("create_found_item"),
+            )
         conn.close()
 
         if quality["score_ok"] is False:
@@ -190,11 +237,33 @@ def register_item_routes(app, deps: dict):
                 "Try adding color, material, and brand/model details.",
                 "warning",
             )
+        save_and_new = str(request.form.get("save_and_new", "")).strip().lower() in {"1", "true", "yes", "on"}
         audit("create", "item", item_id, f"{kind} '{title}' photos={saved}")
+        if save_and_new:
+            flash("Item created. Ready for the next one.", "success")
+            if matches:
+                flash(f"{len(matches)} possible matches found.", "info")
+            return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
+
         flash("Item created.", "success")
         if matches:
             flash(f"{len(matches)} possible matches found.", "info")
         return redirect(url_for("detail", item_id=item_id))
+
+    @app.post("/items")
+    @login_required
+    def create_item():
+        return _create_item_impl()
+
+    @app.post("/items/lost")
+    @require_permission("items.create_lost")
+    def create_lost_item():
+        return _create_item_impl("lost")
+
+    @app.post("/items/found")
+    @require_permission("items.create_found")
+    def create_found_item():
+        return _create_item_impl("found")
 
     @app.get("/items/<int:item_id>")
     @login_required
@@ -248,7 +317,7 @@ def register_item_routes(app, deps: dict):
         )
 
     @app.post("/items/<int:item_id>/send-email")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.send_email")
     def send_item_email(item_id: int):
         conn = get_db()
         item = conn.execute(
@@ -289,7 +358,7 @@ def register_item_routes(app, deps: dict):
         return send_file(path)
 
     @app.get("/items/<int:item_id>/edit")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.edit")
     def edit_item(item_id: int):
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
@@ -303,7 +372,7 @@ def register_item_routes(app, deps: dict):
         return render_item_form(item=item, matches=matches, errors={})
 
     @app.post("/items/<int:item_id>/update")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.edit")
     def update_item(item_id: int):
         u = current_user()
         conn = get_db()
@@ -440,7 +509,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/bulk-status")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.bulk_status")
     def bulk_status_update():
         raw_ids = request.form.getlist("item_ids")
         new_status = (request.form.get("bulk_status") or "").strip()
@@ -480,7 +549,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("index"))
 
     @app.post("/items/<int:item_id>/links")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.link")
     def create_link(item_id: int):
         target_raw = (request.form.get("target_item_id") or "").strip()
         if not target_raw:
@@ -543,7 +612,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/<int:item_id>/links/<int:target_id>/delete")
-    @require_role(*WRITE_ROLES)
+    @require_permission("items.link")
     def delete_link(item_id: int, target_id: int):
         if target_id == item_id:
             flash("Invalid link target.", "danger")
@@ -576,7 +645,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/<int:item_id>/delete")
-    @require_role("admin")
+    @require_permission("items.delete")
     def delete_item(item_id: int):
         conn = get_db()
         ensure_item_links_schema(conn)
@@ -596,7 +665,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("index"))
 
     @app.post("/photos/<int:photo_id>/delete")
-    @require_role("admin", "staff")
+    @require_permission("items.photo_delete")
     def delete_photo(photo_id: int):
         conn = get_db()
         p = conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
@@ -619,7 +688,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/<int:item_id>/public/toggle")
-    @require_role("admin", "staff")
+    @require_permission("items.public_manage")
     def toggle_public(item_id: int):
         conn = get_db()
         item = conn.execute("SELECT id, public_enabled FROM items WHERE id=?", (item_id,)).fetchone()
@@ -637,7 +706,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/<int:item_id>/public/photos-toggle")
-    @require_role("admin", "staff")
+    @require_permission("items.public_manage")
     def toggle_public_photos(item_id: int):
         conn = get_db()
         item = conn.execute("SELECT id, public_photos_enabled FROM items WHERE id=?", (item_id,)).fetchone()
@@ -655,7 +724,7 @@ def register_item_routes(app, deps: dict):
         return redirect(url_for("detail", item_id=item_id))
 
     @app.post("/items/<int:item_id>/public/regenerate")
-    @require_role("admin")
+    @require_permission("items.public_regenerate")
     def regenerate_public_token(item_id: int):
         new_token = secrets.token_urlsafe(16)
         conn = get_db()

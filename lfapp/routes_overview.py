@@ -21,6 +21,7 @@ def register_overview_routes(app, deps: dict):
     current_user = deps["current_user"]
     login_required = deps["login_required"]
     require_role = deps["require_role"]
+    require_permission = deps["require_permission"]
     category_names = deps["category_names"]
     now_utc = deps["now_utc"]
     audit = deps["audit"]
@@ -35,7 +36,6 @@ def register_overview_routes(app, deps: dict):
     saved_search_target = deps["saved_search_target"]
     safe_next_url = deps["safe_next_url"]
     STATUSES = deps["STATUSES"]
-    WRITE_ROLES = deps["WRITE_ROLES"]
     SAVED_SEARCH_SCOPES = deps["SAVED_SEARCH_SCOPES"]
     SAVED_SEARCH_ALLOWED_KEYS = deps["SAVED_SEARCH_ALLOWED_KEYS"]
     SAVED_SEARCH_MULTI_KEYS = deps["SAVED_SEARCH_MULTI_KEYS"]
@@ -82,6 +82,88 @@ def register_overview_routes(app, deps: dict):
             LIMIT 100
             """
         ).fetchall()
+
+        # Compact "Possible Matches" snapshot for dashboard widgets.
+        source_rows = conn.execute(
+            """
+            SELECT *
+            FROM items
+            WHERE status NOT IN ('Handed over / Sent', 'Lost forever')
+            ORDER BY created_at DESC
+            LIMIT 40
+            """
+        ).fetchall()
+        score_bins = {"high": 0, "medium": 0, "low": 0}
+        top_pairs = []
+        seen_pairs = set()
+        for src in source_rows:
+            candidates = find_matches(
+                conn,
+                src["kind"],
+                src["title"],
+                src["category"],
+                src["location"],
+                event_date=src["event_date"],
+                item_id=int(src["id"]),
+            )
+            for cand in candidates:
+                score = int(cand.get("match_score") or 0)
+                if score < 35:
+                    continue
+                pair_key = tuple(sorted((int(src["id"]), int(cand["id"]))))
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                if score >= 80:
+                    score_bins["high"] += 1
+                elif score >= 55:
+                    score_bins["medium"] += 1
+                else:
+                    score_bins["low"] += 1
+
+                top_pairs.append(
+                    {
+                        "source": src,
+                        "candidate": cand,
+                        "score": score,
+                        "reasons": cand.get("match_reasons") or [],
+                    }
+                )
+        top_pairs.sort(
+            key=lambda p: (
+                p["score"],
+                p["source"]["created_at"] or "",
+                p["candidate"]["created_at"] or "",
+            ),
+            reverse=True,
+        )
+        top_pairs = top_pairs[:10]
+        matches_total = score_bins["high"] + score_bins["medium"] + score_bins["low"]
+        bins_with_pct = [
+            {
+                "key": "high",
+                "label": "High confidence (80+)",
+                "count": score_bins["high"],
+                "pct": int(round((score_bins["high"] / matches_total) * 100)) if matches_total else 0,
+                "bar_class": "bg-success",
+            },
+            {
+                "key": "medium",
+                "label": "Medium confidence (55-79)",
+                "count": score_bins["medium"],
+                "pct": int(round((score_bins["medium"] / matches_total) * 100)) if matches_total else 0,
+                "bar_class": "bg-warning",
+            },
+            {
+                "key": "low",
+                "label": "Low confidence (35-54)",
+                "count": score_bins["low"],
+                "pct": int(round((score_bins["low"] / matches_total) * 100)) if matches_total else 0,
+                "bar_class": "bg-info",
+            },
+        ]
+        u = current_user()
         conn.close()
         return render_template(
             "dashboard.html",
@@ -89,11 +171,14 @@ def register_overview_routes(app, deps: dict):
             top_categories=top_categories,
             reminders=reminders,
             kpi=kpi,
-            user=current_user(),
+            possible_matches_total=matches_total,
+            possible_matches_bins=bins_with_pct,
+            possible_matches_top=top_pairs,
+            user=u,
         )
 
     @app.post("/reminders/<int:reminder_id>/done")
-    @require_role(*WRITE_ROLES)
+    @require_permission("reminders.manage")
     def reminder_done(reminder_id: int):
         conn = get_db()
         row = conn.execute(

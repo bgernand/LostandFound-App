@@ -129,6 +129,23 @@ pytest -q
 
 
 
+## INITIAL_ADMIN Password Reset (Console)
+If the protected `INITIAL_ADMIN` password is lost:
+
+```bash
+docker compose exec app python -m lfapp.cli reset-initial-admin-password
+```
+
+Optional non-interactive mode:
+```bash
+docker compose exec app python -m lfapp.cli reset-initial-admin-password --password 'YourNewStrongPassword'
+```
+
+Behavior:
+- Targets the `INITIAL_ADMIN` account (`is_root_admin=1`).
+- Forces role `admin`.
+- Reactivates the account if it was inactive.
+
 ## 10. Manual Sanity Check (Post-Refactor)
 Run this quick checklist after updates that touch routing or app initialization:
 - Open `/login` and verify redirect to `/dashboard` after login.

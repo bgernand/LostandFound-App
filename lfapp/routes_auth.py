@@ -59,6 +59,13 @@ def register_auth_routes(app, deps: dict):
             flash("Multiple accounts with same username (case-insensitive) exist. Please contact admin.", "danger")
             return redirect(url_for("login", next=nxt))
 
+        if u and int(u["is_active"] or 0) != 1:
+            record_login_attempt(conn, username_key, ip_addr, False, now_ts, LOGIN_WINDOW_SECONDS)
+            conn.commit()
+            conn.close()
+            flash("Account is deactivated. Please contact an administrator.", "danger")
+            return redirect(url_for("login", next=nxt))
+
         if not u or not check_password_hash(u["password_hash"], password):
             record_login_attempt(conn, username_key, ip_addr, False, now_ts, LOGIN_WINDOW_SECONDS)
             conn.commit()
@@ -92,9 +99,12 @@ def register_auth_routes(app, deps: dict):
         if not pending_uid:
             return redirect(url_for("login"))
         conn = get_db()
-        u = conn.execute("SELECT id, username, totp_enabled, totp_secret FROM users WHERE id=?", (pending_uid,)).fetchone()
+        u = conn.execute(
+            "SELECT id, username, totp_enabled, totp_secret, is_active FROM users WHERE id=?",
+            (pending_uid,),
+        ).fetchone()
         conn.close()
-        if not u or not user_totp_enabled(u):
+        if not u or int(u["is_active"] or 0) != 1 or not user_totp_enabled(u):
             session.pop("pre_2fa_user_id", None)
             session.pop("pre_2fa_next", None)
             flash("Two-factor login is not available for this account.", "danger")
@@ -110,10 +120,10 @@ def register_auth_routes(app, deps: dict):
         code = request.form.get("totp_code") or ""
         conn = get_db()
         u = conn.execute(
-            "SELECT id, username, totp_enabled, totp_secret, totp_last_step FROM users WHERE id=?",
+            "SELECT id, username, totp_enabled, totp_secret, totp_last_step, is_active FROM users WHERE id=?",
             (pending_uid,),
         ).fetchone()
-        if not u or not user_totp_enabled(u):
+        if not u or int(u["is_active"] or 0) != 1 or not user_totp_enabled(u):
             conn.close()
             session.pop("pre_2fa_user_id", None)
             session.pop("pre_2fa_next", None)

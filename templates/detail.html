@@ -8,7 +8,7 @@
         <h5 class="card-title mb-1">
           {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
           {{ item['title'] }}
-          <span class="text-muted fs-6">(Item ID: {{ item['public_id'] or item['id'] }})</span>
+          <span class="text-muted fs-6">(Item ID: {{ item['public_id'] or "—" }})</span>
         </h5>
         <div class="text-muted small">
           Created: {{ item['created_at'] }}{% if item['updated_at'] %} · Updated: {{ item['updated_at'] }}{% endif %}
@@ -88,7 +88,7 @@
             </a>
             <div class="mt-2 d-flex justify-content-between align-items-center gap-2">
               <small class="text-muted">{{ p['uploaded_at'] }}</small>
-              {% if can_write %}
+              {% if can_delete_photo %}
                 <form method="post" action="{{ url_for('delete_photo', photo_id=p['id']) }}"
                       onsubmit="return confirm('Delete this photo?');">
                   <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
@@ -104,7 +104,7 @@
     <hr>
 
     <div class="d-flex flex-column flex-sm-row flex-wrap gap-2">
-      {% if can_write %}
+      {% if can_edit_items %}
         <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
       {% endif %}
       <a class="btn btn-outline-primary" href="{{ url_for('receipt', item_id=item['id']) }}">Receipt</a>
@@ -115,7 +115,7 @@
         <a class="btn btn-outline-info" href="{{ url_for('public_view', token=item['public_token']) }}" target="_blank" rel="noopener noreferrer">Public view</a>
       {% endif %}
 
-      {% if can_write %}
+      {% if can_manage_public %}
         <form method="post" action="{{ url_for('toggle_public', item_id=item['id']) }}"
               onsubmit="return confirm('Toggle public link?');">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
@@ -129,7 +129,7 @@
         </form>
       {% endif %}
 
-      {% if can_write %}
+      {% if can_manage_public %}
         <form method="post" action="{{ url_for('toggle_public_photos', item_id=item['id']) }}"
               onsubmit="return confirm('Toggle public photos visibility?');">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
@@ -143,15 +143,18 @@
         </form>
       {% endif %}
 
-      {% if user and user['role'] == 'admin' %}
+      {% if can_regenerate_public %}
         <form method="post" action="{{ url_for('regenerate_public_token', item_id=item['id']) }}"
               onsubmit="return confirm('Regenerate public link? The old one will stop working.');">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-outline-danger" type="submit">Regenerate public link</button>
         </form>
 
+      {% endif %}
+
+      {% if can_delete_item %}
         <form method="post" action="{{ url_for('delete_item', item_id=item['id']) }}"
-              onsubmit="return confirm('Delete this item? (Admin)');">
+              onsubmit="return confirm('Delete this item?');">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-outline-danger" type="submit">Delete</button>
         </form>
@@ -160,11 +163,11 @@
       <a class="btn btn-outline-secondary ms-sm-auto" href="{{ url_for('index') }}">Back</a>
     </div>
 
-    {% if can_write and item['kind'] == 'lost' %}
+    {% if can_send_email and item['kind'] == 'lost' %}
       <hr>
       <div class="fw-bold mb-2">Send E-Mail</div>
       {% if not smtp_enabled %}
-        <div class="alert alert-warning mb-2">SMTP is disabled. Configure SMTP settings in .env.</div>
+        <div class="alert alert-warning mb-2">SMTP is disabled. Configure SMTP settings in Settings -> System Settings.</div>
       {% elif not item['lost_email'] %}
         <div class="alert alert-warning mb-2">No recipient e-mail found on this item.</div>
       {% else %}
@@ -175,13 +178,13 @@
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <div class="mb-2">
             <label class="form-label">Subject</label>
-            <input class="form-control" name="subject" value="Lost & Found update for item {{ item['public_id'] or item['id'] }}" required>
+            <input class="form-control" name="subject" value="Lost & Found update for item {{ item['public_id'] or "—" }}" required>
           </div>
           <div class="mb-2">
             <label class="form-label">Message</label>
             <textarea class="form-control" name="body" rows="5" required>Hello,
 
-we have an update regarding your Lost & Found request (Item ID {{ item['public_id'] or item['id'] }}).
+we have an update regarding your Lost & Found request (Item ID {{ item['public_id'] or "—" }}).
 
 Best regards</textarea>
           </div>
@@ -209,14 +212,14 @@ Best regards</textarea>
                 <div class="fw-semibold">
                   <a href="{{ url_for('detail', item_id=li['id']) }}">
                     {% if li['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ li['title'] }}
-                    <span class="text-muted fw-normal">(Item ID: {{ li['public_id'] or li['id'] }})</span>
+                    <span class="text-muted fw-normal">(Item ID: {{ li['public_id'] or "—" }})</span>
                   </a>
                 </div>
                 <div class="small text-muted">{{ li['category'] }} · {{ li['location'] or "—" }} · linked at {{ li['link_created_at'] }}</div>
               </div>
               <div class="text-end">
                 <span class="badge text-bg-{{ STATUS_COLORS.get(li['status'], 'secondary') }}">{{ li['status'] }}</span>
-                {% if can_write %}
+                {% if can_manage_links %}
                   <form class="mt-2" method="post" action="{{ url_for('delete_link', item_id=item['id'], target_id=li['id']) }}" onsubmit="return confirm('Remove this link?');">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Unlink</button>
@@ -231,7 +234,7 @@ Best regards</textarea>
       <div class="text-muted small mb-3">{{ "No linked found items." if item['kind'] == 'lost' else "No linked lost requests." }}</div>
     {% endif %}
 
-    {% if can_write %}
+    {% if can_manage_links %}
       <form class="row g-2 align-items-end mb-3" method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="col-12 col-md-6">
@@ -261,10 +264,10 @@ Best regards</textarea>
           {% for c in link_candidates %}
             <div class="list-group-item d-flex justify-content-between align-items-center gap-2">
               <div>
-                <a href="{{ url_for('detail', item_id=c['id']) }}">{% if c['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ c['title'] }} <span class="text-muted fw-normal">(Item ID: {{ c['public_id'] or c['id'] }})</span></a>
+                <a href="{{ url_for('detail', item_id=c['id']) }}">{% if c['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ c['title'] }} <span class="text-muted fw-normal">(Item ID: {{ c['public_id'] or "—" }})</span></a>
                 <div class="small text-muted">{{ c['kind'] }} · {{ c['status'] }} · {{ c['category'] }} · {{ c['location'] or "—" }}</div>
               </div>
-              {% if can_write %}
+              {% if can_manage_links %}
                 <form method="post" action="{{ url_for('create_link', item_id=item['id']) }}">
                   <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="target_item_id" value="{{ c['id'] }}">
@@ -292,7 +295,7 @@ Best regards</textarea>
               <div class="fw-semibold">
                 <a href="{{ url_for('detail', item_id=m['id']) }}">
                   {% if m['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ m['title'] }}
-                  <span class="text-muted fw-normal">(Item ID: {{ m['public_id'] or m['id'] }})</span>
+                  <span class="text-muted fw-normal">(Item ID: {{ m['public_id'] or "—" }})</span>
                 </a>
               </div>
               <div class="small text-muted">

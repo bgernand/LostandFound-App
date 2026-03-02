@@ -12,12 +12,17 @@ def build_auth_helpers(app, get_db, now_utc):
         conn = get_db()
         u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         conn.close()
+        if not u or int(u["is_active"] or 0) != 1:
+            session.clear()
+            return None
         return u
 
     def login_required(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             if not session.get("user_id"):
+                return redirect(url_for("login", next=request.path))
+            if not current_user():
                 return redirect(url_for("login", next=request.path))
             return fn(*args, **kwargs)
 
@@ -32,6 +37,40 @@ def build_auth_helpers(app, get_db, now_utc):
                     return redirect(url_for("login", next=request.path))
                 if u["role"] not in roles:
                     abort(403)
+                return fn(*args, **kwargs)
+
+            return wrapper
+
+        return deco
+
+    def has_permission(permission_key: str, user=None) -> bool:
+        u = user or current_user()
+        if not u:
+            return False
+        if int(u["is_root_admin"] or 0) == 1:
+            return True
+        conn = get_db()
+        row = conn.execute(
+            """
+            SELECT allowed
+            FROM role_permissions
+            WHERE role_name=? AND permission_key=?
+            """,
+            (u["role"], permission_key),
+        ).fetchone()
+        conn.close()
+        return bool(row and int(row["allowed"] or 0) == 1)
+
+    def require_permission(*permission_keys):
+        def deco(fn):
+            @wraps(fn)
+            def wrapper(*args, **kwargs):
+                u = current_user()
+                if not u:
+                    return redirect(url_for("login", next=request.path))
+                for permission_key in permission_keys:
+                    if not has_permission(permission_key, user=u):
+                        abort(403)
                 return fn(*args, **kwargs)
 
             return wrapper
@@ -66,5 +105,7 @@ def build_auth_helpers(app, get_db, now_utc):
         "current_user": current_user,
         "login_required": login_required,
         "require_role": require_role,
+        "has_permission": has_permission,
+        "require_permission": require_permission,
         "audit": audit,
     }

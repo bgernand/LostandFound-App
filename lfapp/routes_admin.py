@@ -7,7 +7,7 @@ from werkzeug.security import generate_password_hash
 def register_admin_routes(app, deps: dict):
     get_db = deps["get_db"]
     current_user = deps["current_user"]
-    require_role = deps["require_role"]
+    require_permission = deps["require_permission"]
     is_totp_mandatory = deps["is_totp_mandatory"]
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
@@ -16,42 +16,100 @@ def register_admin_routes(app, deps: dict):
     audit = deps["audit"]
     now_utc = deps["now_utc"]
     get_categories = deps["get_categories"]
-    ROLES = deps["ROLES"]
+    get_roles = deps["get_roles"]
+    rbac_permission_keys = deps["rbac_permission_keys"]
+    DEFAULT_LEGAL_NOTICE_TEXT = deps["DEFAULT_LEGAL_NOTICE_TEXT"]
+    DEFAULT_PRIVACY_POLICY_TEXT = deps["DEFAULT_PRIVACY_POLICY_TEXT"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
 
+    permission_labels = {
+        "admin.access": "Admin access",
+        "items.create_lost": "Create Lost",
+        "items.create_found": "Create Found",
+        "items.edit": "Edit items",
+        "items.bulk_status": "Bulk status",
+        "items.link": "Manage links",
+        "items.photo_delete": "Delete photos",
+        "items.public_manage": "Public controls",
+        "items.public_regenerate": "Regenerate public link",
+        "items.delete": "Delete items",
+        "items.send_email": "Send mail",
+        "reminders.manage": "Manage reminders",
+    }
+
+    def _role_names(conn):
+        return [r["name"] for r in get_roles(conn)]
+
+    def _admin_capable_users_count(conn):
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM users u
+            JOIN role_permissions rp ON rp.role_name = u.role
+            WHERE rp.permission_key='admin.access' AND rp.allowed=1 AND u.is_active=1
+            """
+        ).fetchone()
+        return int(row["c"] if row else 0)
+
+    def _role_has_admin_access(conn, role_name: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT allowed
+            FROM role_permissions
+            WHERE role_name=? AND permission_key='admin.access'
+            """,
+            (role_name,),
+        ).fetchone()
+        return bool(row and int(row["allowed"] or 0) == 1)
+
     @app.get("/admin/users")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users():
         conn = get_db()
         users = conn.execute(
-            "SELECT id, username, role, created_at, totp_enabled, totp_secret FROM users ORDER BY created_at DESC"
+            "SELECT id, username, role, created_at, totp_enabled, totp_secret, is_active, is_root_admin FROM users ORDER BY created_at DESC"
         ).fetchall()
+        role_rows = get_roles(conn)
+        role_permissions_rows = conn.execute(
+            "SELECT role_name, permission_key, allowed FROM role_permissions"
+        ).fetchall()
+        role_permissions = {}
+        for rp in role_permissions_rows:
+            role_permissions.setdefault(rp["role_name"], {})[rp["permission_key"]] = bool(int(rp["allowed"] or 0) == 1)
         totp_mandatory = is_totp_mandatory(conn)
         conn.close()
         return render_template(
             "users.html",
             users=users,
-            roles=ROLES,
+            roles=[r["name"] for r in role_rows],
+            role_rows=role_rows,
+            permission_keys=rbac_permission_keys,
+            permission_labels=permission_labels,
+            role_permissions=role_permissions,
             user=current_user(),
             totp_mandatory=totp_mandatory,
         )
 
     @app.get("/admin/settings")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_settings():
         conn = get_db()
         description_quality_settings = get_description_quality_settings(conn)
         smtp_settings = get_smtp_settings(conn)
+        legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
+        privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
         conn.close()
         return render_template(
             "admin_settings.html",
             user=current_user(),
             description_quality_settings=description_quality_settings,
             smtp_settings=smtp_settings,
+            legal_notice_text=legal_notice_text,
+            privacy_policy_text=privacy_policy_text,
         )
 
     @app.post("/admin/users")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users_create():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -63,10 +121,10 @@ def register_admin_routes(app, deps: dict):
         if len(password) < MIN_PASSWORD_LENGTH:
             flash(f"Password must be at least {MIN_PASSWORD_LENGTH} characters long.", "danger")
             return redirect(url_for("users"))
-        if role not in ROLES:
-            role = "staff"
-
         conn = get_db()
+        role_names = _role_names(conn)
+        if role not in role_names:
+            role = "staff"
         try:
             exists = conn.execute(
                 "SELECT id FROM users WHERE username = ? COLLATE NOCASE",
@@ -91,7 +149,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/settings/totp-mandatory")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_set_totp_mandatory():
         enabled = (request.form.get("totp_mandatory") or "") == "1"
         conn = get_db()
@@ -103,7 +161,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/settings/description-quality")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_set_description_quality():
         min_chars_raw = (request.form.get("description_min_chars") or "").strip()
         min_words_raw = (request.form.get("description_min_words") or "").strip()
@@ -151,7 +209,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_set_smtp_settings():
         enabled = (request.form.get("smtp_enabled") or "") == "1"
         host = (request.form.get("smtp_host") or "").strip()
@@ -216,8 +274,27 @@ def register_admin_routes(app, deps: dict):
         flash("SMTP settings updated.", "success")
         return redirect(url_for("admin_settings"))
 
+    @app.post("/admin/settings/legal-privacy")
+    @require_permission("admin.access")
+    def admin_set_legal_privacy_settings():
+        legal_notice_text = (request.form.get("legal_notice_text") or "").strip()
+        privacy_policy_text = (request.form.get("privacy_policy_text") or "").strip()
+        if not legal_notice_text:
+            legal_notice_text = DEFAULT_LEGAL_NOTICE_TEXT
+        if not privacy_policy_text:
+            privacy_policy_text = DEFAULT_PRIVACY_POLICY_TEXT
+
+        conn = get_db()
+        set_setting(conn, "legal_notice_text", legal_notice_text)
+        set_setting(conn, "privacy_policy_text", privacy_policy_text)
+        conn.commit()
+        conn.close()
+        audit("legal_privacy_settings", "settings", None, "legal/privacy text updated")
+        flash("Legal notice and privacy policy updated.", "success")
+        return redirect(url_for("admin_settings"))
+
     @app.post("/admin/users/<int:user_id>/reset-password")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users_reset_password(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -248,7 +325,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/reset-totp")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users_reset_totp(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -271,18 +348,22 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/role")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users_change_role(user_id: int):
         new_role = (request.form.get("role") or "").strip()
-        if new_role not in ROLES:
+        conn = get_db()
+        if new_role not in _role_names(conn):
+            conn.close()
             flash("Invalid role selected.", "danger")
             return redirect(url_for("users"))
-
-        conn = get_db()
-        u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
+        u = conn.execute("SELECT id, username, role, is_root_admin FROM users WHERE id=?", (user_id,)).fetchone()
         if not u:
             conn.close()
             abort(404)
+        if int(u["is_root_admin"] or 0) == 1:
+            conn.close()
+            flash("Role of INITIAL_ADMIN cannot be changed.", "danger")
+            return redirect(url_for("users"))
 
         old_role = u["role"]
         if old_role == new_role:
@@ -290,8 +371,8 @@ def register_admin_routes(app, deps: dict):
             flash("Role unchanged.", "info")
             return redirect(url_for("users"))
 
-        admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-        if old_role == "admin" and new_role != "admin" and admins <= 1:
+        admins = _admin_capable_users_count(conn)
+        if _role_has_admin_access(conn, old_role) and (not _role_has_admin_access(conn, new_role)) and admins <= 1:
             conn.close()
             flash("You cannot change the role of the last admin user.", "danger")
             return redirect(url_for("users"))
@@ -305,7 +386,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/delete")
-    @require_role("admin")
+    @require_permission("admin.access")
     def users_delete(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -313,13 +394,17 @@ def register_admin_routes(app, deps: dict):
             return redirect(url_for("users"))
 
         conn = get_db()
-        u = conn.execute("SELECT id, username, role FROM users WHERE id=?", (user_id,)).fetchone()
+        u = conn.execute("SELECT id, username, role, is_root_admin FROM users WHERE id=?", (user_id,)).fetchone()
         if not u:
             conn.close()
             abort(404)
+        if int(u["is_root_admin"] or 0) == 1:
+            conn.close()
+            flash("INITIAL_ADMIN cannot be deleted.", "danger")
+            return redirect(url_for("users"))
 
-        admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-        if u["role"] == "admin" and admins <= 1:
+        admins = _admin_capable_users_count(conn)
+        if _role_has_admin_access(conn, u["role"]) and admins <= 1:
             conn.close()
             flash("You cannot delete the last admin user.", "danger")
             return redirect(url_for("users"))
@@ -333,8 +418,160 @@ def register_admin_routes(app, deps: dict):
         flash("User deleted.", "warning")
         return redirect(url_for("users"))
 
+    @app.post("/admin/users/<int:user_id>/active")
+    @require_permission("admin.access")
+    def users_set_active(user_id: int):
+        me = current_user()
+        me_id = int(me["id"]) if me else None
+        enabled = (request.form.get("is_active") or "0").strip() == "1"
+
+        conn = get_db()
+        u = conn.execute("SELECT id, username, role, is_active, is_root_admin FROM users WHERE id=?", (user_id,)).fetchone()
+        if not u:
+            conn.close()
+            abort(404)
+        if int(u["is_root_admin"] or 0) == 1 and not enabled:
+            conn.close()
+            flash("INITIAL_ADMIN cannot be deactivated.", "danger")
+            return redirect(url_for("users"))
+
+        if me_id is not None and int(u["id"]) == me_id and not enabled:
+            conn.close()
+            flash("You cannot deactivate your own account.", "danger")
+            return redirect(url_for("users"))
+
+        old_active = int(u["is_active"] or 0)
+        new_active = 1 if enabled else 0
+        if old_active == new_active:
+            conn.close()
+            flash("User status unchanged.", "info")
+            return redirect(url_for("users"))
+
+        if old_active == 1 and new_active == 0 and _role_has_admin_access(conn, u["role"]):
+            admins = _admin_capable_users_count(conn)
+            if admins <= 1:
+                conn.close()
+                flash("You cannot deactivate the last active admin-capable user.", "danger")
+                return redirect(url_for("users"))
+
+        conn.execute("UPDATE users SET is_active=? WHERE id=?", (new_active, user_id))
+        conn.commit()
+        conn.close()
+
+        audit("user_active", "user", user_id, f"username={u['username']} active:{old_active}->{new_active}")
+        flash(f"User '{u['username']}' is now {'active' if new_active == 1 else 'deactivated'}.", "success")
+        return redirect(url_for("users"))
+
+    @app.post("/admin/roles")
+    @require_permission("admin.access")
+    def roles_create():
+        role_name = (request.form.get("role_name") or "").strip().lower()
+        if not role_name:
+            flash("Role name is required.", "danger")
+            return redirect(url_for("users"))
+        if len(role_name) < 2 or len(role_name) > 40:
+            flash("Role name must be between 2 and 40 characters.", "danger")
+            return redirect(url_for("users"))
+        for ch in role_name:
+            if ch not in "abcdefghijklmnopqrstuvwxyz0123456789-_":
+                flash("Role name may only contain: a-z, 0-9, '-' and '_'.", "danger")
+                return redirect(url_for("users"))
+
+        conn = get_db()
+        exists = conn.execute("SELECT name FROM roles WHERE name=?", (role_name,)).fetchone()
+        if exists:
+            conn.close()
+            flash("Role already exists.", "danger")
+            return redirect(url_for("users"))
+
+        conn.execute(
+            "INSERT INTO roles (name, is_system, created_at) VALUES (?, 0, ?)",
+            (role_name, now_utc()),
+        )
+        for permission_key in rbac_permission_keys:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO role_permissions (role_name, permission_key, allowed, updated_at)
+                VALUES (?, ?, 0, ?)
+                """,
+                (role_name, permission_key, now_utc()),
+            )
+        conn.commit()
+        conn.close()
+        audit("role_create", "role", None, f"name={role_name}")
+        flash(f"Role '{role_name}' created.", "success")
+        return redirect(url_for("users"))
+
+    @app.post("/admin/roles/<role_name>/permissions")
+    @require_permission("admin.access")
+    def roles_permissions_update(role_name: str):
+        role_name = (role_name or "").strip()
+        conn = get_db()
+        role = conn.execute("SELECT name FROM roles WHERE name=?", (role_name,)).fetchone()
+        if not role:
+            conn.close()
+            abort(404)
+
+        selected = set(request.form.getlist("permissions"))
+        selected = {p for p in selected if p in set(rbac_permission_keys)}
+        for permission_key in rbac_permission_keys:
+            allowed = 1 if permission_key in selected else 0
+            conn.execute(
+                """
+                INSERT INTO role_permissions (role_name, permission_key, allowed, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(role_name, permission_key) DO UPDATE
+                SET allowed=excluded.allowed, updated_at=excluded.updated_at
+                """,
+                (role_name, permission_key, allowed, now_utc()),
+            )
+
+        if _admin_capable_users_count(conn) <= 0:
+            conn.rollback()
+            conn.close()
+            flash("At least one user must retain admin access.", "danger")
+            return redirect(url_for("users"))
+
+        conn.commit()
+        conn.close()
+        audit("role_permissions_update", "role", None, f"name={role_name}")
+        flash(f"Permissions updated for '{role_name}'.", "success")
+        return redirect(url_for("users"))
+
+    @app.post("/admin/roles/<role_name>/delete")
+    @require_permission("admin.access")
+    def roles_delete(role_name: str):
+        role_name = (role_name or "").strip()
+        if role_name == "admin":
+            flash("System role 'admin' cannot be deleted.", "danger")
+            return redirect(url_for("users"))
+
+        conn = get_db()
+        role = conn.execute("SELECT name, is_system FROM roles WHERE name=?", (role_name,)).fetchone()
+        if not role:
+            conn.close()
+            abort(404)
+        if int(role["is_system"] or 0) == 1:
+            conn.close()
+            flash("System roles cannot be deleted.", "danger")
+            return redirect(url_for("users"))
+
+        in_use = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role=?", (role_name,)).fetchone()
+        if int(in_use["c"] or 0) > 0:
+            conn.close()
+            flash("Role is assigned to users and cannot be deleted.", "danger")
+            return redirect(url_for("users"))
+
+        conn.execute("DELETE FROM role_permissions WHERE role_name=?", (role_name,))
+        conn.execute("DELETE FROM roles WHERE name=?", (role_name,))
+        conn.commit()
+        conn.close()
+        audit("role_delete", "role", None, f"name={role_name}")
+        flash(f"Role '{role_name}' deleted.", "warning")
+        return redirect(url_for("users"))
+
     @app.get("/admin/audit")
-    @require_role("admin")
+    @require_permission("admin.access")
     def audit_view():
         conn = get_db()
         logs = conn.execute(
@@ -350,13 +587,13 @@ def register_admin_routes(app, deps: dict):
         return render_template("audit.html", logs=logs, user=current_user())
 
     @app.get("/admin/categories")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_categories():
         cats = get_categories(active_only=False)
         return render_template("categories.html", categories=cats, user=current_user())
 
     @app.post("/admin/categories")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_categories_create():
         name = (request.form.get("name") or "").strip()
         sort_order_raw = request.form.get("sort_order") or "100"
@@ -386,7 +623,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/toggle")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_categories_toggle(cat_id: int):
         conn = get_db()
         c = conn.execute("SELECT id, is_active, name FROM categories WHERE id=?", (cat_id,)).fetchone()
@@ -404,7 +641,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/update")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_categories_update(cat_id: int):
         name = (request.form.get("name") or "").strip()
         sort_order_raw = request.form.get("sort_order") or "100"
@@ -431,7 +668,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/delete")
-    @require_role("admin")
+    @require_permission("admin.access")
     def admin_categories_delete(cat_id: int):
         conn = get_db()
 
