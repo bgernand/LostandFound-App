@@ -25,6 +25,34 @@ def ensure_column(conn, table, col_name, col_def_sql):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def_sql}")
 
 
+def generate_public_item_id(conn, when_dt=None) -> str:
+    ref = when_dt or datetime.now(timezone.utc)
+    iso = ref.isocalendar()
+    prefix = f"{iso.year:04d}{iso.week:02d}"
+
+    rows = conn.execute("SELECT public_id FROM items WHERE public_id LIKE ?", (f"{prefix}%",)).fetchall()
+    used_suffixes = set()
+    for row in rows:
+        public_id = ((row["public_id"] or "") if row else "").strip().upper()
+        if len(public_id) != 9 or not public_id.startswith(prefix):
+            continue
+        suffix = public_id[6:9]
+        try:
+            used_suffixes.add(int(suffix, 16))
+        except ValueError:
+            continue
+
+    for seq in range(0x1000):
+        if seq in used_suffixes:
+            continue
+        candidate = f"{prefix}{seq:03X}"
+        existing = conn.execute("SELECT 1 FROM items WHERE public_id=? LIMIT 1", (candidate,)).fetchone()
+        if not existing:
+            return candidate
+
+    raise RuntimeError(f"Could not generate public item id for prefix {prefix}.")
+
+
 def get_setting(conn, key: str, default: str | None = None) -> str | None:
     row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
     if not row:
@@ -312,10 +340,69 @@ def init_db(db_path: str):
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('totp_mandatory', '0', ?)",
         (now_utc(),),
     )
+    # System settings defaults (overridable in Admin UI).
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_chars', '30', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_words', '5', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_score_threshold', '25', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_quality_strict', '0', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_blacklist_extra', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_enabled', '0', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_host', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_port', '587', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_username', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_password', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_from', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_use_tls', '1', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_use_ssl', '0', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_timeout', '15', ?)",
+        (now_utc(),),
+    )
 
     ensure_column(conn, "items", "public_token", "TEXT")
+    ensure_column(conn, "items", "public_id", "TEXT")
     ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_public_id ON items(public_id)")
 
     ensure_column(conn, "items", "lost_what", "TEXT")
     ensure_column(conn, "items", "lost_last_name", "TEXT")
@@ -382,6 +469,15 @@ def init_db(db_path: str):
             token = secrets.token_urlsafe(16)
             conn.execute("UPDATE items SET public_token=? WHERE id=?", (token, r["id"]))
 
+    rows = conn.execute(
+        "SELECT id FROM items WHERE public_id IS NULL OR trim(public_id) = '' ORDER BY id ASC"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "UPDATE items SET public_id=? WHERE id=?",
+            (generate_public_item_id(conn), r["id"]),
+        )
+
     conn.commit()
     conn.close()
 
@@ -405,7 +501,7 @@ def auto_create_followup_reminders(conn):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
     rows = conn.execute(
         """
-        SELECT i.id, i.title, coalesce(i.updated_at, i.created_at) AS last_touch
+        SELECT i.id, i.public_id, i.title, coalesce(i.updated_at, i.created_at) AS last_touch
         FROM items i
         WHERE i.status='In contact'
           AND coalesce(i.updated_at, i.created_at) IS NOT NULL
@@ -433,7 +529,7 @@ def auto_create_followup_reminders(conn):
             """,
             (
                 int(r["id"]),
-                f"Follow up pending contact for item #{int(r['id'])}: {r['title'] or 'Untitled'}",
+                f"Follow up pending contact for item {(r['public_id'] or int(r['id']))}: {r['title'] or 'Untitled'}",
                 now_utc(),
                 now_utc(),
             ),

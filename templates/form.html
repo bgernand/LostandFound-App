@@ -82,6 +82,14 @@
           <label class="form-label">Description <span class="text-danger">*</span></label>
           <textarea class="form-control {% if errors.get('description') %}is-invalid{% endif %}" rows="3" name="description" id="descInput">{{ item['description'] if item else '' }}</textarea>
           {% if errors.get('description') %}<div class="invalid-feedback">{{ errors.get('description') }}</div>{% endif %}
+          <div id="descQualityHint"
+               class="form-text mt-1"
+               data-min-chars="{{ description_quality_settings['min_chars'] }}"
+               data-min-words="{{ description_quality_settings['min_words'] }}"
+               data-score-threshold="{{ description_quality_settings['score_threshold'] }}"
+               data-blacklist='{{ description_quality_settings["blacklist_terms"]|tojson }}'>
+            Description quality check is active.
+          </div>
         </div>
 
         <div class="col-12">
@@ -229,7 +237,7 @@
       {% for m in matches %}
         <li>
           <a href="{{ url_for('detail', item_id=m['id']) }}">
-            #{{ m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
+            {{ m['public_id'] or m['id'] }} – {{ m['kind'] }} – {{ m['title'] }} ({{ m['category'] }}, {{ m['location'] or "—" }})
           </a>
           {% if m.get('match_score') %}
             <span class="badge text-bg-dark ms-1">Score {{ m['match_score'] }}</span>
@@ -254,6 +262,16 @@
   const lostWhat = document.getElementById('lostWhat');
   const statusSel = document.getElementById('statusSel');
   const isEdit = {{ "true" if item else "false" }};
+  const descHint = document.getElementById('descQualityHint');
+
+  const QUALITY_COLOR_TERMS = new Set([
+    "black","white","red","blue","green","yellow","orange","purple","pink","grey","gray",
+    "brown","gold","silver","beige","navy"
+  ]);
+  const QUALITY_MATERIAL_TERMS = new Set([
+    "leather","metal","plastic","wood","cotton","wool","polyester","glass","rubber",
+    "silicone","paper","aluminum","steel","fabric"
+  ]);
 
   // Fields required ONLY for Lost Request
   const lostRequiredNames = [
@@ -304,6 +322,59 @@
   if (kindSel) kindSel.addEventListener('change', sync);
   if (lostWhat) lostWhat.addEventListener('input', sync);
   sync();
+
+  function evaluateDescriptionQuality() {
+    if (!descHint) return;
+    const descEl = document.getElementById('descInput');
+    if (!descEl) return;
+    const minChars = Number(descHint.dataset.minChars || 30);
+    const minWords = Number(descHint.dataset.minWords || 5);
+    const scoreThreshold = Number(descHint.dataset.scoreThreshold || 25);
+    const blacklist = new Set(JSON.parse(descHint.dataset.blacklist || "[]").map(v => String(v).toLowerCase()));
+    const text = String(descEl.value || "").trim();
+    const normalized = text.toLowerCase();
+    const tokens = text.match(/[A-Za-z0-9]+/g) || [];
+    const words = tokens.filter(t => /[A-Za-z]/.test(t));
+    const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+
+    const hardErrors = [];
+    if (text.length < minChars) hardErrors.push(`min ${minChars} chars`);
+    if (words.length < minWords) hardErrors.push(`min ${minWords} words`);
+    if (!/[A-Za-z]/.test(text)) hardErrors.push("readable text required");
+    if (blacklist.has(normalized)) hardErrors.push("too generic");
+
+    let score = 0;
+    if (words.length >= minWords) score += 10;
+    if (uniqueWords.size >= Math.max(4, minWords)) score += 10;
+    if (/\d/.test(text)) score += 8;
+    if ([...QUALITY_COLOR_TERMS].some(term => normalized.includes(term))) score += 15;
+    if ([...QUALITY_MATERIAL_TERMS].some(term => normalized.includes(term))) score += 15;
+    if (/\b(brand|model|serial|size)\b/.test(normalized)) score += 18;
+    else if (/\b[A-Za-z]{2,}[0-9]{2,}\b/.test(text)) score += 14;
+    if (text.length < (minChars + 10)) score -= 8;
+    if (uniqueWords.size < 4) score -= 10;
+    if ([...blacklist].some(term => term && normalized.includes(term))) score -= 25;
+    if (score < 0) score = 0;
+
+    if (hardErrors.length > 0) {
+      descHint.className = "form-text text-danger mt-1";
+      descHint.textContent = `Description quality: hard fail (${hardErrors.join(", ")}).`;
+      return;
+    }
+    if (score < scoreThreshold) {
+      descHint.className = "form-text text-warning mt-1";
+      descHint.textContent = `Description quality: warning (${score}/${scoreThreshold}). Add color/material/brand/model details.`;
+      return;
+    }
+    descHint.className = "form-text text-success mt-1";
+    descHint.textContent = `Description quality: good (${score}/${scoreThreshold}).`;
+  }
+
+  const descInput = document.getElementById('descInput');
+  if (descInput) {
+    descInput.addEventListener('input', evaluateDescriptionQuality);
+    evaluateDescriptionQuality();
+  }
 
   document.querySelectorAll('.error-link').forEach(link => {
     link.addEventListener('click', (ev) => {

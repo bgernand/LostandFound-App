@@ -74,7 +74,7 @@ def register_overview_routes(app, deps: dict):
         ).fetchone()
         reminders = conn.execute(
             """
-            SELECT r.id, r.item_id, r.message, r.due_at, i.kind, i.title, i.status
+            SELECT r.id, r.item_id, r.message, r.due_at, i.kind, i.title, i.status, i.public_id
             FROM reminders r
             JOIN items i ON i.id = r.item_id
             WHERE r.is_done=0
@@ -195,7 +195,8 @@ def register_overview_routes(app, deps: dict):
 
         if q:
             terms = expanded_search_terms(q)
-            q_clauses = ["CAST(id AS TEXT) = ?"]
+            q_clauses = ["upper(public_id) = upper(?)", "CAST(id AS TEXT) = ?"]
+            source_params.append(q)
             source_params.append(q)
             for term in terms:
                 like = f"%{term}%"

@@ -215,11 +215,13 @@ def search_link_candidates(conn, item, q: str):
 
     rows = conn.execute(
         """
-        SELECT id, kind, title, category, location, status, created_at
+        SELECT id, public_id, kind, title, category, location, status, created_at
         FROM items
         WHERE kind = ?
           AND (
-              CAST(id AS TEXT) = ?
+              upper(public_id) = upper(?)
+              OR CAST(id AS TEXT) = ?
+              OR public_id LIKE ?
               OR title LIKE ?
               OR description LIKE ?
               OR category LIKE ?
@@ -230,7 +232,6 @@ def search_link_candidates(conn, item, q: str):
         ORDER BY created_at DESC
         LIMIT 40
         """,
-        (other_kind, q, like, like, like, like, like, like),
+        (other_kind, q, q, like, like, like, like, like, like, like),
     ).fetchall()
     return rows
-

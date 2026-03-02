@@ -9,7 +9,7 @@
     <form class="row g-2" method="get" action="{{ url_for('matches_overview') }}">
       <div class="col-12 col-lg-4">
         <label class="form-label small text-muted mb-1">Search</label>
-        <input class="form-control" name="q" value="{{ q }}" placeholder="Search source items (id, title, names, location)">
+        <input class="form-control" name="q" value="{{ q }}" placeholder="Search source items (Item ID, title, names, location)">
       </div>
       <div class="col-12 col-md-6 col-lg-2">
         <label class="form-label small text-muted mb-1">Type</label>
@@ -134,12 +134,12 @@
           <div class="fw-semibold">
             <a href="{{ url_for('detail', item_id=src['id']) }}">
               {% if src['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ src['title'] }}
-              <span class="text-muted fw-normal">(Item ID: {{ src['id'] }})</span>
+              <span class="text-muted fw-normal">(Item ID: {{ src['public_id'] or src['id'] }})</span>
             </a>
             <span class="mx-2">↔</span>
             <a href="{{ url_for('detail', item_id=cand['id']) }}">
               {% if cand['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %} {{ cand['title'] }}
-              <span class="text-muted fw-normal">(Item ID: {{ cand['id'] }})</span>
+              <span class="text-muted fw-normal">(Item ID: {{ cand['public_id'] or cand['id'] }})</span>
             </a>
           </div>
           <div class="small text-muted">

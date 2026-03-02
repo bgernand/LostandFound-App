@@ -1,4 +1,127 @@
 from datetime import datetime
+import re
+
+
+DEFAULT_DESCRIPTION_BLACKLIST = (
+    "unknown",
+    "n/a",
+    "na",
+    "none",
+    "test",
+    "lost item",
+    "found item",
+    "item",
+    "stuff",
+    "thing",
+    "i don't know",
+    "dont know",
+    "no idea",
+    "idk",
+)
+
+DESCRIPTION_COLOR_TERMS = {
+    "black", "white", "red", "blue", "green", "yellow", "orange", "purple", "pink", "grey", "gray",
+    "brown", "gold", "silver", "beige", "navy",
+}
+
+DESCRIPTION_MATERIAL_TERMS = {
+    "leather", "metal", "plastic", "wood", "cotton", "wool", "polyester", "glass", "rubber",
+    "silicone", "paper", "aluminum", "steel", "fabric",
+}
+
+GENERIC_PHRASES = {
+    "lost item",
+    "found item",
+    "some item",
+    "an item",
+    "unknown item",
+    "no details",
+}
+
+
+def parse_description_blacklist(raw_value: str | None):
+    entries = set()
+    raw = (raw_value or "").strip()
+    if not raw:
+        return []
+    for chunk in re.split(r"[\n,;]+", raw):
+        term = (chunk or "").strip().lower()
+        if term:
+            entries.add(term)
+    return sorted(entries)
+
+
+def _word_tokens(text: str):
+    return re.findall(r"[A-Za-z0-9]+", text or "")
+
+
+def assess_description_quality(description: str, min_chars: int, min_words: int, blacklist_terms: list[str], score_threshold: int = 25):
+    text = (description or "").strip()
+    normalized = text.lower()
+    tokens = _word_tokens(text)
+    words = [t for t in tokens if re.search(r"[A-Za-z]", t)]
+    word_count = len(words)
+    unique_words = len({w.lower() for w in words})
+
+    hard_errors = []
+    if len(text) < min_chars:
+        hard_errors.append(f"Description must be at least {min_chars} characters.")
+    if word_count < min_words:
+        hard_errors.append(f"Description must contain at least {min_words} words.")
+    if not re.search(r"[A-Za-z]", text):
+        hard_errors.append("Description must include readable text.")
+    if normalized in set(blacklist_terms):
+        hard_errors.append("Description is too generic.")
+
+    score = 0
+    hints = []
+
+    if word_count >= min_words:
+        score += 10
+    if unique_words >= max(4, min_words):
+        score += 10
+    if re.search(r"\d", text):
+        score += 8
+        hints.append("Contains numbers/details")
+
+    if any(term in normalized for term in DESCRIPTION_COLOR_TERMS):
+        score += 15
+        hints.append("Contains color details")
+    if any(term in normalized for term in DESCRIPTION_MATERIAL_TERMS):
+        score += 15
+        hints.append("Contains material details")
+
+    # Brand/model signals.
+    if re.search(r"\b(brand|model|serial|size)\b", normalized):
+        score += 18
+        hints.append("Contains brand/model details")
+    elif re.search(r"\b[A-Za-z]{2,}[0-9]{2,}\b", text):
+        score += 14
+        hints.append("Contains model-like identifier")
+
+    if normalized in GENERIC_PHRASES:
+        score -= 40
+    for term in blacklist_terms:
+        if term and term in normalized:
+            score -= 25
+            break
+
+    if len(text) < (min_chars + 10):
+        score -= 8
+    if unique_words < 4:
+        score -= 10
+
+    if score < 0:
+        score = 0
+
+    return {
+        "hard_ok": len(hard_errors) == 0,
+        "hard_errors": hard_errors,
+        "score": score,
+        "score_threshold": score_threshold,
+        "score_ok": score >= score_threshold,
+        "hints": hints,
+    }
 
 
 def read_lost_fields_from_form(request_obj):
@@ -100,4 +223,3 @@ def build_item_form_draft(request_obj, existing=None):
         "postage_paid": 1 if request_obj.form.get("postage_paid") == "on" else 0,
     }
     return draft
-

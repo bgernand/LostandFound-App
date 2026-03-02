@@ -40,6 +40,7 @@
               <li><a class="dropdown-item" href="{{ url_for('account_totp') }}">Two-factor authentication</a></li>
               {% if user['role'] == 'admin' %}
                 <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{{ url_for('admin_settings') }}">System Settings</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('audit_view') }}">Audit</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('admin_categories') }}">Categories</a></li>

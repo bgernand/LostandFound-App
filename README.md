@@ -23,6 +23,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Improved search with token expansion, synonym support, and phonetic (`soundex`) matching
 - Optional per-user 2FA with TOTP (authenticator app)
 - Admin controls for TOTP mandatory mode and per-user 2FA reset
+- Manual SMTP e-mail sending from Lost Request detail view to requester address
+- Description quality validation with live form feedback and admin-managed blacklist extension
 
 ## Status Behavior
 - Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Handed over / Sent`, `Lost forever`
@@ -161,13 +163,13 @@ chmod +x deploy.sh
 - `MIN_PASSWORD_LENGTH` (optional, default `10`)
 - `TOTP_ISSUER` (optional, default `Lost & Found`)
 - `TRUSTED_PROXY_CIDRS` (optional, default `127.0.0.1/32,::1/128,172.16.0.0/12`)
-- `SESSION_COOKIE_SECURE` (optional, default `1`)
+- `SESSION_COOKIE_SECURE` (optional, default `true`)
 - `SESSION_COOKIE_SAMESITE` (optional, default `Lax`)
 - `SESSION_MAX_AGE_SECONDS` (optional, default `28800` = 8h absolute login session max age)
 - `MAX_CONTENT_LENGTH` (optional, default `20971520`)
 - `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
 - `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
-- `FLASK_DEBUG` (optional, default `0`; local development only)
+- `FLASK_DEBUG` (optional, default `false`; local development only)
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
@@ -177,6 +179,8 @@ chmod +x deploy.sh
 - No default fallback `SECRET_KEY` is used.
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
 - Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
+- Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
+- Description quality defaults and blacklist extension are managed in `Settings -> System Settings`.
 - Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
@@ -187,6 +191,7 @@ chmod +x deploy.sh
 
 ## Disclaimer
 This project is provided without any warranty. No liability is assumed for any direct or indirect damages, data loss, outages, or any other consequences resulting from the use, operation, or distribution of this software. Use of this software is entirely at your own risk.
+
 
 
 

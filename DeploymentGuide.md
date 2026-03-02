@@ -43,10 +43,13 @@ Set at minimum:
 Recommended security settings:
 - `MIN_PASSWORD_LENGTH=10` (or higher)
 - `TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,172.16.0.0/12` (adapt to your proxy network)
-- `SESSION_COOKIE_SECURE=1`
+- `SESSION_COOKIE_SECURE=true`
 - `SESSION_COOKIE_SAMESITE=Lax`
 - `SESSION_MAX_AGE_SECONDS=28800` (8h absolute login session max age)
 - `MAX_CONTENT_LENGTH=20971520` (20 MB)
+
+After first login as admin, configure SMTP and description-quality settings in:
+- `Settings -> System Settings`
 
 ## 3. One-Click Deploy
 ```bash
@@ -134,6 +137,7 @@ Run this quick checklist after updates that touch routing or app initialization:
 - Download `Receipt` PDF and verify filename uses receipt number.
 - Open Possible Matches, apply filters, save/open/delete one saved search.
 - Export CSV from filtered home view and verify file content.
+
 
 
 

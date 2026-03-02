@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from pathlib import Path
 import ipaddress
 import os
 import secrets
+import smtplib
 import time
 
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
@@ -18,6 +20,7 @@ from lfapp.db_utils import (
     auto_mark_lost_forever,
     ensure_item_links_schema,
     get_db as db_get_db,
+    get_setting,
     init_db as db_init_db,
     is_totp_mandatory as db_is_totp_mandatory,
     now_utc,
@@ -31,7 +34,10 @@ from lfapp.filter_utils import (
     saved_search_target,
 )
 from lfapp.item_form_utils import (
+    DEFAULT_DESCRIPTION_BLACKLIST,
+    assess_description_quality,
     build_item_form_draft,
+    parse_description_blacklist,
     read_lost_fields_from_form,
     validate_lost_fields,
 )
@@ -119,6 +125,10 @@ def _parse_proxy_networks(raw: str):
     return nets
 
 
+def _is_truthy(raw):
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def create_app(config: dict | None = None):
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     if config:
@@ -131,7 +141,7 @@ def create_app(config: dict | None = None):
 
     session_cookie_secure_raw = app.config.get("SESSION_COOKIE_SECURE")
     if session_cookie_secure_raw is None:
-        session_cookie_secure_raw = os.environ.get("SESSION_COOKIE_SECURE", "1")
+        session_cookie_secure_raw = os.environ.get("SESSION_COOKIE_SECURE", "true")
     app.config["SESSION_COOKIE_SECURE"] = str(session_cookie_secure_raw).lower() in {"1", "true", "yes", "on"}
 
     app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -161,6 +171,28 @@ def create_app(config: dict | None = None):
     login_window_seconds = int(app.config.get("LOGIN_WINDOW_SECONDS", os.environ.get("LOGIN_WINDOW_SECONDS", "900")))
     login_max_attempts = int(app.config.get("LOGIN_MAX_ATTEMPTS", os.environ.get("LOGIN_MAX_ATTEMPTS", "5")))
     min_password_length = int(app.config.get("MIN_PASSWORD_LENGTH", os.environ.get("MIN_PASSWORD_LENGTH", "10")))
+    smtp_enabled = _is_truthy(app.config.get("SMTP_ENABLED", "false"))
+    smtp_host = str(app.config.get("SMTP_HOST", "")).strip()
+    smtp_port = int(app.config.get("SMTP_PORT", "587"))
+    smtp_username = str(app.config.get("SMTP_USERNAME", "")).strip()
+    smtp_password = str(app.config.get("SMTP_PASSWORD", ""))
+    smtp_from = str(app.config.get("SMTP_FROM", "")).strip()
+    smtp_use_tls = _is_truthy(app.config.get("SMTP_USE_TLS", "true"))
+    smtp_use_ssl = _is_truthy(app.config.get("SMTP_USE_SSL", "false"))
+    smtp_timeout = int(app.config.get("SMTP_TIMEOUT", "15"))
+    description_min_chars_default = int(app.config.get("DESCRIPTION_MIN_CHARS", "30"))
+    description_min_words_default = int(app.config.get("DESCRIPTION_MIN_WORDS", "5"))
+    description_score_threshold_default = int(
+        app.config.get("DESCRIPTION_SCORE_THRESHOLD", "25")
+    )
+    description_quality_strict_default = _is_truthy(
+        app.config.get("DESCRIPTION_QUALITY_STRICT", "false")
+    )
+    description_blacklist_extra_default = str(
+        app.config.get("DESCRIPTION_BLACKLIST_EXTRA", "")
+    )
+    if smtp_use_ssl and smtp_use_tls:
+        raise RuntimeError("SMTP_USE_SSL and SMTP_USE_TLS cannot both be enabled.")
 
     trusted_proxy_networks = _parse_proxy_networks(
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
@@ -190,6 +222,139 @@ def create_app(config: dict | None = None):
 
     def public_base_url():
         return base_url.rstrip("/") + "/"
+
+    def get_description_quality_settings(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            min_chars_raw = get_setting(conn, "description_min_chars", str(description_min_chars_default))
+            min_words_raw = get_setting(conn, "description_min_words", str(description_min_words_default))
+            score_threshold_raw = get_setting(conn, "description_score_threshold", str(description_score_threshold_default))
+            strict_raw = get_setting(conn, "description_quality_strict", "1" if description_quality_strict_default else "0")
+            blacklist_extra_raw = get_setting(conn, "description_blacklist_extra", description_blacklist_extra_default) or ""
+
+            try:
+                min_chars = int(min_chars_raw or description_min_chars_default)
+            except ValueError:
+                min_chars = description_min_chars_default
+            try:
+                min_words = int(min_words_raw or description_min_words_default)
+            except ValueError:
+                min_words = description_min_words_default
+            try:
+                score_threshold = int(score_threshold_raw or description_score_threshold_default)
+            except ValueError:
+                score_threshold = description_score_threshold_default
+
+            min_chars = max(10, min(300, min_chars))
+            min_words = max(3, min(30, min_words))
+            score_threshold = max(0, min(100, score_threshold))
+            strict_mode = _is_truthy(strict_raw)
+
+            blacklist_terms = sorted(set(DEFAULT_DESCRIPTION_BLACKLIST) | set(parse_description_blacklist(blacklist_extra_raw)))
+            return {
+                "min_chars": min_chars,
+                "min_words": min_words,
+                "score_threshold": score_threshold,
+                "strict_mode": strict_mode,
+                "blacklist_terms": blacklist_terms,
+                "blacklist_extra_raw": blacklist_extra_raw,
+            }
+        finally:
+            if own_conn:
+                conn.close()
+
+    def get_description_quality_result(description: str, conn=None):
+        settings = get_description_quality_settings(conn)
+        result = assess_description_quality(
+            description=description,
+            min_chars=settings["min_chars"],
+            min_words=settings["min_words"],
+            blacklist_terms=settings["blacklist_terms"],
+            score_threshold=settings["score_threshold"],
+        )
+        result["strict_mode"] = settings["strict_mode"]
+        return result
+
+    def get_smtp_settings(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            enabled_raw = get_setting(conn, "smtp_enabled", "1" if smtp_enabled else "0")
+            host = (get_setting(conn, "smtp_host", smtp_host) or "").strip()
+            port_raw = get_setting(conn, "smtp_port", str(smtp_port))
+            username = (get_setting(conn, "smtp_username", smtp_username) or "").strip()
+            password = str(get_setting(conn, "smtp_password", smtp_password) or "")
+            from_addr = (get_setting(conn, "smtp_from", smtp_from) or "").strip()
+            tls_raw = get_setting(conn, "smtp_use_tls", "1" if smtp_use_tls else "0")
+            ssl_raw = get_setting(conn, "smtp_use_ssl", "1" if smtp_use_ssl else "0")
+            timeout_raw = get_setting(conn, "smtp_timeout", str(smtp_timeout))
+            try:
+                port = int(port_raw or smtp_port)
+            except ValueError:
+                port = smtp_port
+            try:
+                timeout = int(timeout_raw or smtp_timeout)
+            except ValueError:
+                timeout = smtp_timeout
+            port = max(1, min(65535, port))
+            timeout = max(3, min(120, timeout))
+            return {
+                "enabled": _is_truthy(enabled_raw),
+                "host": host,
+                "port": port,
+                "username": username,
+                "password": password,
+                "from": from_addr,
+                "use_tls": _is_truthy(tls_raw),
+                "use_ssl": _is_truthy(ssl_raw),
+                "timeout": timeout,
+            }
+        finally:
+            if own_conn:
+                conn.close()
+
+    def send_smtp_mail(to_address: str, subject: str, body: str, reply_to: str | None = None):
+        smtp_cfg = get_smtp_settings()
+        if not smtp_cfg["enabled"]:
+            return False, "SMTP is disabled."
+        if not smtp_cfg["host"]:
+            return False, "SMTP_HOST is missing."
+        if not smtp_cfg["from"]:
+            return False, "SMTP_FROM is missing."
+        if not (to_address or "").strip():
+            return False, "Recipient address is empty."
+        if not (subject or "").strip():
+            return False, "Subject is empty."
+        if not (body or "").strip():
+            return False, "Message body is empty."
+        if smtp_cfg["use_ssl"] and smtp_cfg["use_tls"]:
+            return False, "SMTP_USE_SSL and SMTP_USE_TLS cannot both be enabled."
+
+        msg = EmailMessage()
+        msg["From"] = smtp_cfg["from"]
+        msg["To"] = to_address.strip()
+        msg["Subject"] = subject.strip()
+        if reply_to:
+            msg["Reply-To"] = reply_to
+        msg.set_content(body)
+
+        try:
+            smtp_cls = smtplib.SMTP_SSL if smtp_cfg["use_ssl"] else smtplib.SMTP
+            with smtp_cls(smtp_cfg["host"], smtp_cfg["port"], timeout=smtp_cfg["timeout"]) as smtp:
+                if smtp_cfg["use_tls"] and not smtp_cfg["use_ssl"]:
+                    smtp.starttls()
+                if smtp_cfg["username"]:
+                    smtp.login(smtp_cfg["username"], smtp_cfg["password"])
+                smtp.send_message(msg)
+            return True, "Mail sent."
+        except Exception as exc:
+            app.logger.exception("SMTP send failed to=%s subject=%s", to_address, subject)
+            return False, str(exc)
 
     def csrf_token():
         token = session.get("_csrf_token")
@@ -294,6 +459,7 @@ def create_app(config: dict | None = None):
         return redirect(url_for("account_totp"))
 
     def render_item_form(item=None, matches=None, errors=None):
+        description_quality_settings = get_description_quality_settings()
         return render_template(
             "form.html",
             item=item,
@@ -302,6 +468,7 @@ def create_app(config: dict | None = None):
             user=current_user(),
             matches=(matches or []),
             errors=(errors or {}),
+            description_quality_settings=description_quality_settings,
         )
 
     @app.get("/legal")
@@ -396,6 +563,9 @@ def create_app(config: dict | None = None):
             "CONTACT_WAYS": CONTACT_WAYS,
             "STATUSES": STATUSES,
             "WRITE_ROLES": WRITE_ROLES,
+            "get_smtp_settings": get_smtp_settings,
+            "send_smtp_mail": send_smtp_mail,
+            "get_description_quality_result": get_description_quality_result,
         },
     )
 
@@ -407,6 +577,9 @@ def create_app(config: dict | None = None):
             "require_role": require_role,
             "is_totp_mandatory": is_totp_mandatory,
             "set_setting": set_setting,
+            "get_setting": get_setting,
+            "get_smtp_settings": get_smtp_settings,
+            "get_description_quality_settings": get_description_quality_settings,
             "audit": audit,
             "now_utc": now_utc,
             "get_categories": get_categories,
@@ -426,7 +599,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(debug=(os.environ.get("FLASK_DEBUG") == "1"))
+    app.run(debug=_is_truthy(os.environ.get("FLASK_DEBUG", "false")))
 
 
 

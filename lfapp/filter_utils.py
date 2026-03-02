@@ -45,6 +45,10 @@ def build_filters(args, statuses: list[str], active_categories: list[str]):
     if q:
         terms = expanded_search_terms(q)
         q_clauses = []
+        q_clauses.append("upper(public_id) = upper(?)")
+        params.append(q)
+        q_clauses.append("CAST(id AS TEXT) = ?")
+        params.append(q)
         for term in terms:
             like = f"%{term}%"
             q_clauses.append(

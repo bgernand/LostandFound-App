@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">Description Quality</h5>
+        <form method="post" action="{{ url_for('admin_set_description_quality') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2 mb-2">
+            <div class="col-12 col-md-4">
+              <label class="form-label small">Min characters</label>
+              <input class="form-control form-control-sm" type="number" min="10" max="300"
+                     name="description_min_chars"
+                     value="{{ description_quality_settings['min_chars'] }}">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label small">Min words</label>
+              <input class="form-control form-control-sm" type="number" min="3" max="30"
+                     name="description_min_words"
+                     value="{{ description_quality_settings['min_words'] }}">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label small">Score threshold</label>
+              <input class="form-control form-control-sm" type="number" min="0" max="100"
+                     name="description_score_threshold"
+                     value="{{ description_quality_settings['score_threshold'] }}">
+            </div>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="descriptionQualityStrict" name="description_quality_strict" value="1"
+                   {% if description_quality_settings['strict_mode'] %}checked{% endif %}>
+            <label class="form-check-label small" for="descriptionQualityStrict">
+              Strict mode: block save when quality score is below threshold
+            </label>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small">Additional blacklist terms (one per line)</label>
+            <textarea class="form-control form-control-sm" rows="6" name="description_blacklist_extra"
+                      placeholder="unknown item&#10;random stuff&#10;no details">{{ description_quality_settings['blacklist_extra_raw'] }}</textarea>
+          </div>
+          <div class="d-grid d-md-flex justify-content-md-end">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Save description settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">SMTP Mail</h5>
+        <form method="post" action="{{ url_for('admin_set_smtp_settings') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="smtpEnabled" name="smtp_enabled" value="1"
+                   {% if smtp_settings['enabled'] %}checked{% endif %}>
+            <label class="form-check-label small" for="smtpEnabled">Enable SMTP mail sending</label>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label small">SMTP host</label>
+              <input class="form-control form-control-sm" name="smtp_host" value="{{ smtp_settings['host'] }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">SMTP port</label>
+              <input class="form-control form-control-sm" type="number" min="1" max="65535"
+                     name="smtp_port" value="{{ smtp_settings['port'] }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Timeout (s)</label>
+              <input class="form-control form-control-sm" type="number" min="3" max="120"
+                     name="smtp_timeout" value="{{ smtp_settings['timeout'] }}">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">SMTP username</label>
+              <input class="form-control form-control-sm" name="smtp_username" value="{{ smtp_settings['username'] }}">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">SMTP password</label>
+              <input class="form-control form-control-sm" type="password" name="smtp_password" placeholder="Leave empty to keep current password">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">From address</label>
+              <input class="form-control form-control-sm" name="smtp_from" value="{{ smtp_settings['from'] }}">
+            </div>
+          </div>
+
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" id="smtpUseTls" name="smtp_use_tls" value="1"
+                   {% if smtp_settings['use_tls'] %}checked{% endif %}>
+            <label class="form-check-label small" for="smtpUseTls">Use TLS (STARTTLS)</label>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="smtpUseSsl" name="smtp_use_ssl" value="1"
+                   {% if smtp_settings['use_ssl'] %}checked{% endif %}>
+            <label class="form-check-label small" for="smtpUseSsl">Use SSL</label>
+          </div>
+
+          <div class="d-grid d-md-flex justify-content-md-end">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Save SMTP settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

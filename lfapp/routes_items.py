@@ -11,6 +11,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from werkzeug.utils import secure_filename
 
+from lfapp.db_utils import generate_public_item_id
+
 
 def register_item_routes(app, deps: dict):
     get_db = deps["get_db"]
@@ -39,6 +41,9 @@ def register_item_routes(app, deps: dict):
     CONTACT_WAYS = deps["CONTACT_WAYS"]
     STATUSES = deps["STATUSES"]
     WRITE_ROLES = deps["WRITE_ROLES"]
+    get_smtp_settings = deps["get_smtp_settings"]
+    send_smtp_mail = deps["send_smtp_mail"]
+    get_description_quality_result = deps["get_description_quality_result"]
 
     @app.get("/items/new")
     @require_role(*WRITE_ROLES)
@@ -78,6 +83,14 @@ def register_item_routes(app, deps: dict):
             errors["title"] = "Title is required."
         if not description:
             errors["description"] = "Description is required."
+        quality = get_description_quality_result(description)
+        if quality["hard_ok"] is False:
+            errors["description"] = quality["hard_errors"][0]
+        elif quality["score_ok"] is False and quality["strict_mode"]:
+            errors["description"] = (
+                f"Description quality is too low (score {quality['score']}/{quality['score_threshold']}). "
+                "Add clearer color/material/brand/model details."
+            )
 
         active_cats = set(category_names(active_only=True))
         if category not in active_cats:
@@ -102,11 +115,12 @@ def register_item_routes(app, deps: dict):
         public_token = secrets.token_urlsafe(16)
         conn = get_db()
         try:
+            public_id = generate_public_item_id(conn)
             cur = conn.execute(
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, created_at,
+                status, created_by, public_token, public_id, created_at,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -114,7 +128,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -123,7 +137,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, u["id"], public_token, now_utc(),
+                    status, u["id"], public_token, public_id, now_utc(),
                     (lost.get("lost_what") if kind == "lost" else None),
                     (lost.get("lost_last_name") if kind == "lost" else None),
                     (lost.get("lost_first_name") if kind == "lost" else None),
@@ -170,6 +184,12 @@ def register_item_routes(app, deps: dict):
             return render_item_form(item=draft, matches=[], errors={})
         conn.close()
 
+        if quality["score_ok"] is False:
+            flash(
+                f"Description quality warning: score {quality['score']}/{quality['score_threshold']}. "
+                "Try adding color, material, and brand/model details.",
+                "warning",
+            )
         audit("create", "item", item_id, f"{kind} '{title}' photos={saved}")
         flash("Item created.", "success")
         if matches:
@@ -210,6 +230,7 @@ def register_item_routes(app, deps: dict):
         linked_ids = {r["id"] for r in linked_items}
         if link_candidates:
             link_candidates = [r for r in link_candidates if int(r["id"]) not in linked_ids]
+        smtp_cfg = get_smtp_settings(conn)
         conn.close()
 
         return render_template(
@@ -221,8 +242,41 @@ def register_item_routes(app, deps: dict):
             timeline=timeline,
             link_q=link_q,
             link_candidates=link_candidates,
+            smtp_enabled=smtp_cfg["enabled"],
+            smtp_from=smtp_cfg["from"],
             user=current_user(),
         )
+
+    @app.post("/items/<int:item_id>/send-email")
+    @require_role(*WRITE_ROLES)
+    def send_item_email(item_id: int):
+        conn = get_db()
+        item = conn.execute(
+            "SELECT id, public_id, kind, title, lost_email FROM items WHERE id=?",
+            (item_id,),
+        ).fetchone()
+        conn.close()
+        if not item:
+            abort(404)
+
+        if item["kind"] != "lost":
+            flash("E-mail sending is only available for Lost Requests.", "warning")
+            return redirect(url_for("detail", item_id=item_id))
+
+        recipient = (item["lost_email"] or "").strip()
+        if not recipient:
+            flash("No recipient e-mail is available on this item.", "danger")
+            return redirect(url_for("detail", item_id=item_id))
+
+        subject = (request.form.get("subject") or "").strip()
+        body = (request.form.get("body") or "").strip()
+        ok, msg = send_smtp_mail(recipient, subject, body)
+        if ok:
+            audit("email_send", "item", item_id, f"to={recipient} subject={subject[:120]}")
+            flash("E-mail sent.", "success")
+        else:
+            flash(f"E-mail could not be sent: {msg}", "danger")
+        return redirect(url_for("detail", item_id=item_id))
 
     @app.get("/uploads/<path:filename>")
     @login_required
@@ -286,6 +340,14 @@ def register_item_routes(app, deps: dict):
             errors["title"] = "Title is required."
         if not description:
             errors["description"] = "Description is required."
+        quality = get_description_quality_result(description)
+        if quality["hard_ok"] is False:
+            errors["description"] = quality["hard_errors"][0]
+        elif quality["score_ok"] is False and quality["strict_mode"]:
+            errors["description"] = (
+                f"Description quality is too low (score {quality['score']}/{quality['score_threshold']}). "
+                "Add clearer color/material/brand/model details."
+            )
 
         active_cats = set(category_names(active_only=True))
         if category not in active_cats:
@@ -362,6 +424,12 @@ def register_item_routes(app, deps: dict):
         conn.commit()
         conn.close()
 
+        if quality["score_ok"] is False:
+            flash(
+                f"Description quality warning: score {quality['score']}/{quality['score_threshold']}. "
+                "Try adding color, material, and brand/model details.",
+                "warning",
+            )
         audit(
             "update", "item", item_id,
             f"user={u['username']} status:{old_status}->{status} photos_added={saved} linked_status_sync={synced_count}",
@@ -415,19 +483,29 @@ def register_item_routes(app, deps: dict):
     @require_role(*WRITE_ROLES)
     def create_link(item_id: int):
         target_raw = (request.form.get("target_item_id") or "").strip()
-        try:
-            target_id = int(target_raw)
-        except ValueError:
-            flash("Target item id must be a number.", "danger")
+        if not target_raw:
+            flash("Target Item ID is required.", "danger")
             return redirect(url_for("detail", item_id=item_id))
 
+        conn = get_db()
+        ensure_item_links_schema(conn)
+        target = conn.execute("SELECT id FROM items WHERE upper(public_id)=upper(?)", (target_raw,)).fetchone()
+        if target:
+            target_id = int(target["id"])
+        else:
+            try:
+                target_id = int(target_raw)
+            except ValueError:
+                conn.close()
+                flash("Target Item ID was not found.", "danger")
+                return redirect(url_for("detail", item_id=item_id))
+
         if target_id == item_id:
+            conn.close()
             flash("Cannot link an item with itself.", "danger")
             return redirect(url_for("detail", item_id=item_id))
 
         u = current_user()
-        conn = get_db()
-        ensure_item_links_schema(conn)
         src = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (item_id,)).fetchone()
         tgt = conn.execute("SELECT id, kind, title FROM items WHERE id=?", (target_id,)).fetchone()
         if not src or not tgt:
@@ -630,7 +708,8 @@ def register_item_routes(app, deps: dict):
         photos = conn.execute("SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC", (item_id,)).fetchall()
         conn.close()
 
-        receipt_no = f"LF-{item_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        item_code = (item["public_id"] or f"ID{item_id}").strip()
+        receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
         issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         audit("receipt_view", "item", item_id, f"receipt_no={receipt_no}")
         return render_template(
@@ -652,7 +731,8 @@ def register_item_routes(app, deps: dict):
         if not item:
             abort(404)
 
-        receipt_no = f"LF-{item_id}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        item_code = (item["public_id"] or f"ID{item_id}").strip()
+        receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
         issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         def pdf_safe(value):
@@ -686,7 +766,7 @@ def register_item_routes(app, deps: dict):
             c.drawString(40, y, "Item")
             y -= 16
             c.setFont("Helvetica", 10)
-            c.drawString(40, y, pdf_safe(f"ID: {item['id']}"))
+            c.drawString(40, y, pdf_safe(f"Item ID: {item_code}"))
             y -= 14
             c.drawString(40, y, pdf_safe(f"Type: {'Lost Request' if item['kind'] == 'lost' else 'Found Item'}"))
             y -= 14
@@ -792,9 +872,9 @@ def register_item_routes(app, deps: dict):
 
         out = io.StringIO()
         writer = csv.writer(out)
-        writer.writerow(["id", "kind", "title", "category", "location", "event_date", "status", "created_at", "updated_at"])
+        writer.writerow(["item_id", "kind", "title", "category", "location", "event_date", "status", "created_at", "updated_at"])
         for r in rows:
-            writer.writerow([r["id"], r["kind"], r["title"], r["category"], r["location"], r["event_date"], r["status"], r["created_at"], r["updated_at"]])
+            writer.writerow([(r["public_id"] or r["id"]), r["kind"], r["title"], r["category"], r["location"], r["event_date"], r["status"], r["created_at"], r["updated_at"]])
 
         mem = io.BytesIO(out.getvalue().encode("utf-8-sig"))
         audit(

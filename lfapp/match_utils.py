@@ -5,15 +5,14 @@ from difflib import SequenceMatcher
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "for", "with", "in", "on",
-    "is", "are", "am", "my", "your", "our", "der", "die", "das", "und",
-    "ein", "eine", "mit", "im", "am", "zu", "von", "la", "le", "de"
+    "is", "are", "am", "my", "your", "our", "this", "that", "it"
 }
 SEARCH_SYNONYMS = {
-    "phone": ["telefon", "tel", "mobile", "handy"],
+    "phone": ["telephone", "tel", "mobile", "cellphone", "smartphone"],
     "mail": ["email", "e-mail"],
-    "key": ["keys", "schluessel", "schlüssel"],
-    "wallet": ["purse", "geldbeutel", "portemonnaie"],
-    "bag": ["backpack", "rucksack"],
+    "key": ["keys"],
+    "wallet": ["purse"],
+    "bag": ["backpack"],
 }
 
 
@@ -112,4 +111,3 @@ def score_match(src, cand, fts_hit=False):
         if r not in dedup_reasons:
             dedup_reasons.append(r)
     return score, dedup_reasons
-
