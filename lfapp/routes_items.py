@@ -1,11 +1,13 @@
 import csv
 import io
 import sqlite3
+import time
 from datetime import datetime, timezone
 from io import BytesIO
 
 import qrcode
-from flask import Response, abort, flash, redirect, render_template, request, send_file, url_for
+from flask import Response, abort, flash, redirect, render_template, request, send_file, session, url_for
+from PIL import Image, UnidentifiedImageError
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -46,6 +48,34 @@ def register_item_routes(app, deps: dict):
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
     render_mail_template = deps["render_mail_template"]
     get_description_quality_result = deps["get_description_quality_result"]
+    build_address_suggestion = deps["build_address_suggestion"]
+    resolve_client_ip = deps["resolve_client_ip"]
+    is_public_submit_blocked = deps["is_public_submit_blocked"]
+    record_public_submit_attempt = deps["record_public_submit_attempt"]
+    PUBLIC_LOST_WINDOW_SECONDS = deps["PUBLIC_LOST_WINDOW_SECONDS"]
+    PUBLIC_LOST_MAX_ATTEMPTS = deps["PUBLIC_LOST_MAX_ATTEMPTS"]
+    PUBLIC_LOST_DAILY_MAX_ATTEMPTS = deps["PUBLIC_LOST_DAILY_MAX_ATTEMPTS"]
+    PUBLIC_LOST_MAX_FILES = deps["PUBLIC_LOST_MAX_FILES"]
+    PUBLIC_LOST_CAPTCHA_ENABLED = deps["PUBLIC_LOST_CAPTCHA_ENABLED"]
+
+    BACKOFFICE_READ_PERMISSIONS = (
+        "admin.access",
+        "admin.users",
+        "admin.settings",
+        "admin.audit",
+        "admin.categories",
+        "items.create_lost",
+        "items.edit",
+        "items.view_pii",
+        "items.review",
+        "items.bulk_status",
+        "items.link",
+        "items.public_manage",
+        "items.public_regenerate",
+        "items.send_email",
+        "items.delete",
+        "reminders.manage",
+    )
 
     def can_edit_item(user_obj, item_row) -> bool:
         if not user_obj or not item_row:
@@ -56,19 +86,48 @@ def register_item_routes(app, deps: dict):
             return True
         return False
 
+    def can_access_backoffice_read(user_obj) -> bool:
+        if not user_obj:
+            return False
+        return any(has_permission(key, user=user_obj) for key in BACKOFFICE_READ_PERMISSIONS)
+
     def row_to_dict(row):
         if not row:
             return None
         return {k: row[k] for k in row.keys()}
 
-    def save_uploaded_photos(conn, item_id: int) -> int:
+    def _is_safe_uploaded_image(file_storage) -> bool:
+        if not file_storage:
+            return False
+        mimetype = (file_storage.mimetype or "").lower()
+        if mimetype and mimetype not in {"image/png", "image/jpeg", "image/webp"}:
+            return False
+        stream = file_storage.stream
+        pos = stream.tell()
+        try:
+            stream.seek(0)
+            img = Image.open(stream)
+            img.verify()
+            fmt = (img.format or "").upper()
+            if fmt not in {"PNG", "JPEG", "WEBP"}:
+                return False
+        except (UnidentifiedImageError, OSError, ValueError):
+            return False
+        finally:
+            stream.seek(pos)
+        return True
+
+    def save_uploaded_photos(conn, item_id: int, max_files: int = 20) -> int:
         files = request.files.getlist("photos")
+        real_files = [f for f in files if f and f.filename != ""]
+        if len(real_files) > max_files:
+            raise ValueError(f"Too many files uploaded (max {max_files}).")
         saved = 0
-        for f in files:
-            if not f or f.filename == "":
-                continue
+        for f in real_files:
             if not allowed_file(f.filename):
-                continue
+                raise ValueError("Unsupported file type. Allowed: PNG/JPG/JPEG/WEBP.")
+            if not _is_safe_uploaded_image(f):
+                raise ValueError("Invalid or corrupted image upload.")
             safe = secure_filename(f.filename)
             ext = safe.rsplit(".", 1)[1].lower()
             filename = f"item_{item_id}_{int(datetime.now(timezone.utc).timestamp())}_{saved}.{ext}"
@@ -79,6 +138,32 @@ def register_item_routes(app, deps: dict):
             )
             saved += 1
         return saved
+
+    def _new_public_captcha():
+        a = secrets.randbelow(8) + 1
+        b = secrets.randbelow(8) + 1
+        session["public_lost_captcha_answer"] = str(a + b)
+        session["public_lost_captcha_q"] = f"{a} + {b}"
+        return session["public_lost_captcha_q"]
+
+    def _public_captcha_question():
+        existing = (session.get("public_lost_captcha_q") or "").strip()
+        if existing:
+            return existing
+        return _new_public_captcha()
+
+    def _address_suggestion_flow(lost: dict):
+        suggestion = build_address_suggestion(lost)
+        decision = (request.form.get("address_suggestion_decision") or "").strip().lower()
+        if not suggestion["has_changes"]:
+            return None, decision
+        if decision == "accept":
+            for key, value in suggestion["suggested"].items():
+                lost[key] = value
+            return None, decision
+        if decision == "reject":
+            return None, decision
+        return suggestion, decision
 
     def next_pending_lost_id(conn, exclude_item_id=None):
         if exclude_item_id is None:
@@ -138,6 +223,7 @@ def register_item_routes(app, deps: dict):
 
     @app.get("/report/lost")
     def public_lost_new():
+        captcha_question = _public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None
         return render_item_form(
             item=None,
             matches=[],
@@ -149,10 +235,64 @@ def register_item_routes(app, deps: dict):
             public_submit_mode=True,
             submit_label="Submit Lost Request",
             cancel_url=url_for("login"),
+            public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+            public_captcha_question=captcha_question,
         )
 
     @app.post("/report/lost")
     def public_lost_create():
+        if (request.form.get("website") or "").strip():
+            flash("Thank you. Your Lost Request was submitted and is pending review.", "success")
+            return redirect(url_for("public_lost_new"))
+
+        ip_addr = resolve_client_ip(request)
+        now_ts = int(time.time())
+        conn = get_db()
+        blocked, blocked_msg = is_public_submit_blocked(
+            conn,
+            endpoint="report_lost",
+            ip_addr=ip_addr,
+            now_ts=now_ts,
+            window_seconds=PUBLIC_LOST_WINDOW_SECONDS,
+            max_attempts=PUBLIC_LOST_MAX_ATTEMPTS,
+            daily_max_attempts=PUBLIC_LOST_DAILY_MAX_ATTEMPTS,
+        )
+        if blocked:
+            conn.close()
+            flash(blocked_msg, "danger")
+            return redirect(url_for("public_lost_new"))
+        record_public_submit_attempt(
+            conn,
+            endpoint="report_lost",
+            ip_addr=ip_addr,
+            now_ts=now_ts,
+            window_seconds=PUBLIC_LOST_WINDOW_SECONDS,
+        )
+        conn.commit()
+        conn.close()
+
+        if PUBLIC_LOST_CAPTCHA_ENABLED:
+            provided_captcha = (request.form.get("public_captcha_answer") or "").strip()
+            expected_captcha = (session.get("public_lost_captcha_answer") or "").strip()
+            if not expected_captcha or provided_captcha != expected_captcha:
+                flash("Captcha answer is invalid.", "danger")
+                draft = build_item_form_draft(request)
+                return render_item_form(
+                    item=draft,
+                    matches=[],
+                    errors={"public_captcha_answer": "Invalid captcha answer."},
+                    forced_kind="lost",
+                    form_action=url_for("public_lost_create"),
+                    hide_status_field=True,
+                    hide_postage_fields=True,
+                    public_submit_mode=True,
+                    submit_label="Submit Lost Request",
+                    cancel_url=url_for("login"),
+                    public_captcha_enabled=True,
+                    public_captcha_question=_new_public_captcha(),
+                )
+            _new_public_captcha()
+
         kind = "lost"
         title = ""
         description = (request.form.get("description") or "").strip()
@@ -182,6 +322,27 @@ def register_item_routes(app, deps: dict):
                 public_submit_mode=True,
                 submit_label="Submit Lost Request",
                 cancel_url=url_for("login"),
+                public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+                public_captcha_question=_public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None,
+            )
+        address_suggestion, _ = _address_suggestion_flow(lost)
+        if address_suggestion:
+            flash("Address could be improved. Please accept suggestion or keep your original values.", "warning")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors={},
+                forced_kind=kind,
+                form_action=url_for("public_lost_create"),
+                hide_status_field=True,
+                hide_postage_fields=True,
+                public_submit_mode=True,
+                submit_label="Submit Lost Request",
+                cancel_url=url_for("login"),
+                address_suggestion=address_suggestion,
+                public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+                public_captcha_question=_public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None,
             )
         title = lost.get("lost_what", "").strip()
         lost["lost_contact_way"] = "Online Form"
@@ -226,6 +387,8 @@ def register_item_routes(app, deps: dict):
                 public_submit_mode=True,
                 submit_label="Submit Lost Request",
                 cancel_url=url_for("login"),
+                public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+                public_captcha_question=_public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None,
             )
 
         public_token = secrets.token_urlsafe(16)
@@ -274,8 +437,27 @@ def register_item_routes(app, deps: dict):
                 ),
             )
             item_id = int(cur.lastrowid)
-            saved = save_uploaded_photos(conn, item_id)
+            saved = save_uploaded_photos(conn, item_id, max_files=PUBLIC_LOST_MAX_FILES)
             conn.commit()
+        except ValueError as exc:
+            conn.rollback()
+            conn.close()
+            flash(str(exc), "danger")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors={},
+                forced_kind=kind,
+                form_action=url_for("public_lost_create"),
+                hide_status_field=True,
+                hide_postage_fields=True,
+                public_submit_mode=True,
+                submit_label="Submit Lost Request",
+                cancel_url=url_for("login"),
+                public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+                public_captcha_question=_public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None,
+            )
         except sqlite3.Error:
             conn.rollback()
             conn.close()
@@ -292,6 +474,8 @@ def register_item_routes(app, deps: dict):
                 public_submit_mode=True,
                 submit_label="Submit Lost Request",
                 cancel_url=url_for("login"),
+                public_captcha_enabled=PUBLIC_LOST_CAPTCHA_ENABLED,
+                public_captcha_question=_public_captcha_question() if PUBLIC_LOST_CAPTCHA_ENABLED else None,
             )
         conn.close()
 
@@ -398,6 +582,18 @@ def register_item_routes(app, deps: dict):
                     forced_kind=kind,
                     form_action=url_for("create_lost_item") if kind == "lost" else url_for("create_found_item"),
                 )
+            address_suggestion, _ = _address_suggestion_flow(lost)
+            if address_suggestion:
+                flash("Address could be improved. Please accept suggestion or keep your original values.", "warning")
+                draft = build_item_form_draft(request)
+                return render_item_form(
+                    item=draft,
+                    matches=[],
+                    errors={},
+                    forced_kind=kind,
+                    form_action=url_for("create_lost_item"),
+                    address_suggestion=address_suggestion,
+                )
             title = lost.get("lost_what", "").strip()
 
         errors = {}
@@ -486,9 +682,21 @@ def register_item_routes(app, deps: dict):
                 ),
             )
             item_id = cur.lastrowid
-            saved = save_uploaded_photos(conn, item_id)
+            saved = save_uploaded_photos(conn, item_id, max_files=PUBLIC_LOST_MAX_FILES)
             matches = find_matches(conn, kind, title, category, location, event_date=event_date, item_id=item_id)
             conn.commit()
+        except ValueError as exc:
+            conn.rollback()
+            conn.close()
+            flash(str(exc), "danger")
+            draft = build_item_form_draft(request)
+            return render_item_form(
+                item=draft,
+                matches=[],
+                errors={},
+                forced_kind=kind,
+                form_action=url_for("create_lost_item") if kind == "lost" else url_for("create_found_item"),
+            )
         except sqlite3.Error:
             conn.rollback()
             conn.close()
@@ -551,6 +759,8 @@ def register_item_routes(app, deps: dict):
     @login_required
     def detail(item_id: int):
         u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
@@ -635,6 +845,14 @@ def register_item_routes(app, deps: dict):
     @app.get("/uploads/<path:filename>")
     @login_required
     def uploaded_file(filename):
+        u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
+        conn = get_db()
+        photo = conn.execute("SELECT item_id FROM photos WHERE filename=? LIMIT 1", (filename,)).fetchone()
+        conn.close()
+        if not photo:
+            abort(404)
         path = (UPLOAD_DIR / filename).resolve()
         if UPLOAD_DIR.resolve() not in path.parents:
             abort(403)
@@ -725,6 +943,21 @@ def register_item_routes(app, deps: dict):
                     show_review_next=bool(review_mode and has_permission("items.review", user=u) and existing["kind"] == "lost"),
                     cancel_url=(url_for("lost_review_queue") if review_mode else url_for("index")),
                 )
+            address_suggestion, _ = _address_suggestion_flow(lost)
+            if address_suggestion:
+                flash("Address could be improved. Please accept suggestion or keep your original values.", "warning")
+                draft = build_item_form_draft(request, existing)
+                draft["id"] = item_id
+                conn.close()
+                return render_item_form(
+                    item=draft,
+                    matches=[],
+                    errors={},
+                    review_mode=review_mode,
+                    show_review_next=bool(review_mode and has_permission("items.review", user=u) and existing["kind"] == "lost"),
+                    cancel_url=(url_for("lost_review_queue") if review_mode else url_for("index")),
+                    address_suggestion=address_suggestion,
+                )
             title = lost.get("lost_what", "").strip()
 
         errors = {}
@@ -802,7 +1035,13 @@ def register_item_routes(app, deps: dict):
             ),
         )
 
-        saved = save_uploaded_photos(conn, item_id)
+        try:
+            saved = save_uploaded_photos(conn, item_id, max_files=PUBLIC_LOST_MAX_FILES)
+        except ValueError as exc:
+            conn.rollback()
+            conn.close()
+            flash(str(exc), "danger")
+            return redirect(url_for("edit_item", item_id=item_id, review=1 if review_mode else 0))
 
         next_id = None
         old_item = row_to_dict(existing)
@@ -1155,6 +1394,9 @@ def register_item_routes(app, deps: dict):
     @app.get("/items/<int:item_id>/qr.png")
     @login_required
     def item_qr(item_id: int):
+        u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
         conn = get_db()
         item = conn.execute("SELECT id, public_token, public_enabled FROM items WHERE id=?", (item_id,)).fetchone()
         conn.close()
@@ -1174,6 +1416,8 @@ def register_item_routes(app, deps: dict):
     @login_required
     def receipt(item_id: int):
         u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
@@ -1201,6 +1445,8 @@ def register_item_routes(app, deps: dict):
     @login_required
     def receipt_pdf(item_id: int):
         u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         conn.close()
@@ -1337,6 +1583,9 @@ def register_item_routes(app, deps: dict):
     @app.get("/export.csv")
     @login_required
     def export_csv():
+        u = current_user()
+        if not can_access_backoffice_read(u):
+            abort(403)
         sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,

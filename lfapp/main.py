@@ -40,11 +40,13 @@ from lfapp.filter_utils import (
 from lfapp.item_form_utils import (
     DEFAULT_DESCRIPTION_BLACKLIST,
     assess_description_quality,
+    build_address_suggestion,
     build_item_form_draft,
     parse_description_blacklist,
     read_lost_fields_from_form,
     validate_lost_fields,
 )
+from lfapp.crypto_utils import decrypt_secret, encrypt_secret
 from lfapp.link_match_utils import (
     find_matches,
     get_linked_items,
@@ -57,7 +59,14 @@ from lfapp.routes_admin import register_admin_routes
 from lfapp.routes_auth import register_auth_routes
 from lfapp.routes_items import register_item_routes
 from lfapp.routes_overview import register_overview_routes
-from lfapp.security_utils import client_ip, is_login_blocked, record_login_attempt, safe_next_url
+from lfapp.security_utils import (
+    client_ip,
+    is_login_blocked,
+    is_public_submit_blocked,
+    record_login_attempt,
+    record_public_submit_attempt,
+    safe_next_url,
+)
 from lfapp.totp_utils import (
     build_totp_uri,
     generate_totp_secret,
@@ -172,7 +181,7 @@ STATUS_COLORS = {
     "Lost forever": "dark",
 }
 
-CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)"]
+CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)", "Online Form"]
 SAVED_SEARCH_SCOPES = {"index", "matches"}
 SAVED_SEARCH_ALLOWED_KEYS = {
     "index": {"q", "kind", "status", "category", "linked", "date_from", "date_to", "include_lost_forever"},
@@ -263,6 +272,9 @@ def create_app(config: dict | None = None):
     smtp_use_tls = _is_truthy(app.config.get("SMTP_USE_TLS", "true"))
     smtp_use_ssl = _is_truthy(app.config.get("SMTP_USE_SSL", "false"))
     smtp_timeout = int(app.config.get("SMTP_TIMEOUT", "15"))
+    settings_encryption_key = str(
+        app.config.get("SETTINGS_ENCRYPTION_KEY", os.environ.get("SETTINGS_ENCRYPTION_KEY", ""))
+    ).strip()
     description_min_chars_default = int(app.config.get("DESCRIPTION_MIN_CHARS", "30"))
     description_min_words_default = int(app.config.get("DESCRIPTION_MIN_WORDS", "5"))
     description_score_threshold_default = int(
@@ -279,12 +291,31 @@ def create_app(config: dict | None = None):
 
     audit_retention_days = int(app.config.get("AUDIT_RETENTION_DAYS", os.environ.get("AUDIT_RETENTION_DAYS", "180")))
     audit_max_rows = int(app.config.get("AUDIT_MAX_ROWS", os.environ.get("AUDIT_MAX_ROWS", "200000")))
+    audit_redact_enabled = _is_truthy(app.config.get("AUDIT_REDACT_ENABLED", os.environ.get("AUDIT_REDACT_ENABLED", "true")))
+    public_lost_window_seconds = int(app.config.get("PUBLIC_LOST_WINDOW_SECONDS", os.environ.get("PUBLIC_LOST_WINDOW_SECONDS", "900")))
+    public_lost_max_attempts = int(app.config.get("PUBLIC_LOST_MAX_ATTEMPTS", os.environ.get("PUBLIC_LOST_MAX_ATTEMPTS", "8")))
+    public_lost_daily_max_attempts = int(app.config.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", os.environ.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", "30")))
+    public_lost_max_files = int(app.config.get("PUBLIC_LOST_MAX_FILES", os.environ.get("PUBLIC_LOST_MAX_FILES", "5")))
+    public_lost_captcha_enabled = _is_truthy(app.config.get("PUBLIC_LOST_CAPTCHA_ENABLED", os.environ.get("PUBLIC_LOST_CAPTCHA_ENABLED", "false")))
 
     trusted_proxy_networks = _parse_proxy_networks(
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
     )
 
     state = {"db_inited": False, "status_maintenance_day": None, "audit_maintenance_day": None}
+
+    def encrypt_setting_secret(value: str) -> str | None:
+        if not settings_encryption_key:
+            return None
+        return encrypt_secret(value, settings_encryption_key)
+
+    def decrypt_setting_secret(value: str) -> str | None:
+        if not settings_encryption_key:
+            return None
+        return decrypt_secret(value, settings_encryption_key)
+
+    def settings_encryption_ready() -> bool:
+        return bool(settings_encryption_key)
 
     def get_db():
         return db_get_db(db_path)
@@ -375,6 +406,7 @@ def create_app(config: dict | None = None):
             port_raw = get_setting(conn, "smtp_port", str(smtp_port))
             username = (get_setting(conn, "smtp_username", smtp_username) or "").strip()
             password = str(get_setting(conn, "smtp_password", smtp_password) or "")
+            password_enc = str(get_setting(conn, "smtp_password_enc", "") or "")
             from_addr = (get_setting(conn, "smtp_from", smtp_from) or "").strip()
             tls_raw = get_setting(conn, "smtp_use_tls", "1" if smtp_use_tls else "0")
             ssl_raw = get_setting(conn, "smtp_use_ssl", "1" if smtp_use_ssl else "0")
@@ -389,16 +421,21 @@ def create_app(config: dict | None = None):
                 timeout = smtp_timeout
             port = max(1, min(65535, port))
             timeout = max(3, min(120, timeout))
+            if password_enc and settings_encryption_ready():
+                decrypted = decrypt_setting_secret(password_enc)
+                password = decrypted if decrypted is not None else ""
             return {
                 "enabled": _is_truthy(enabled_raw),
                 "host": host,
                 "port": port,
                 "username": username,
                 "password": password,
+                "password_encrypted": bool(password_enc),
                 "from": from_addr,
                 "use_tls": _is_truthy(tls_raw),
                 "use_ssl": _is_truthy(ssl_raw),
                 "timeout": timeout,
+                "settings_encryption_ready": settings_encryption_ready(),
             }
         finally:
             if own_conn:
@@ -498,7 +535,48 @@ def create_app(config: dict | None = None):
             session["_csrf_token"] = token
         return token
 
-    auth_helpers = build_auth_helpers(app=app, get_db=get_db, now_utc=now_utc)
+    AUDIT_SENSITIVE_KEYS = {
+        "password",
+        "password_hash",
+        "smtp_password",
+        "smtp_password_enc",
+        "totp_secret",
+        "public_token",
+        "lost_email",
+        "lost_phone",
+        "lost_street",
+        "lost_number",
+        "lost_additional",
+        "lost_postcode",
+        "lost_town",
+        "lost_country",
+    }
+
+    def redact_audit_payload(payload):
+        if not audit_redact_enabled:
+            return payload
+        if isinstance(payload, dict):
+            out = {}
+            for key, value in payload.items():
+                if str(key).lower() in AUDIT_SENSITIVE_KEYS:
+                    out[key] = "***redacted***"
+                else:
+                    out[key] = redact_audit_payload(value)
+            return out
+        if isinstance(payload, list):
+            return [redact_audit_payload(v) for v in payload]
+        return payload
+
+    def resolve_client_ip_for_audit(req):
+        return client_ip(req, trusted_proxy_networks)
+
+    auth_helpers = build_auth_helpers(
+        app=app,
+        get_db=get_db,
+        now_utc=now_utc,
+        resolve_client_ip=resolve_client_ip_for_audit,
+        redact_audit_payload=redact_audit_payload,
+    )
     current_user = auth_helpers["current_user"]
     login_required = auth_helpers["login_required"]
     require_role = auth_helpers["require_role"]
@@ -794,6 +872,15 @@ def create_app(config: dict | None = None):
             "secrets": secrets,
             "CONTACT_WAYS": CONTACT_WAYS,
             "STATUSES": STATUSES,
+            "build_address_suggestion": build_address_suggestion,
+            "resolve_client_ip": resolve_client_ip_for_audit,
+            "is_public_submit_blocked": is_public_submit_blocked,
+            "record_public_submit_attempt": record_public_submit_attempt,
+            "PUBLIC_LOST_WINDOW_SECONDS": public_lost_window_seconds,
+            "PUBLIC_LOST_MAX_ATTEMPTS": public_lost_max_attempts,
+            "PUBLIC_LOST_DAILY_MAX_ATTEMPTS": public_lost_daily_max_attempts,
+            "PUBLIC_LOST_MAX_FILES": public_lost_max_files,
+            "PUBLIC_LOST_CAPTCHA_ENABLED": public_lost_captcha_enabled,
             "get_smtp_settings": get_smtp_settings,
             "send_smtp_mail": send_smtp_mail,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
@@ -814,6 +901,8 @@ def create_app(config: dict | None = None):
             "set_setting": set_setting,
             "get_setting": get_setting,
             "get_smtp_settings": get_smtp_settings,
+            "encrypt_setting_secret": encrypt_setting_secret,
+            "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
             "validate_mail_template_variables": validate_mail_template_variables,
             "render_mail_template": render_mail_template,

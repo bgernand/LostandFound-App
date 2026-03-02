@@ -184,16 +184,24 @@ chmod +x deploy.sh
 - `SESSION_COOKIE_SAMESITE` (optional, default `Lax`)
 - `SESSION_MAX_AGE_SECONDS` (optional, default `28800` = 8h absolute login session max age)
 - `MAX_CONTENT_LENGTH` (optional, default `20971520`)
+- `PUBLIC_LOST_WINDOW_SECONDS` (optional, default `900`)
+- `PUBLIC_LOST_MAX_ATTEMPTS` (optional, default `8`)
+- `PUBLIC_LOST_DAILY_MAX_ATTEMPTS` (optional, default `30`)
+- `PUBLIC_LOST_MAX_FILES` (optional, default `5`)
+- `PUBLIC_LOST_CAPTCHA_ENABLED` (optional, default `false`)
 - `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
 - `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
 - `FLASK_DEBUG` (optional, default `false`; local development only)
 - `AUDIT_RETENTION_DAYS` (optional, default `180`; `0` disables age-based audit cleanup)
 - `AUDIT_MAX_ROWS` (optional, default `200000`; `0` disables count-based audit cleanup)
+- `AUDIT_REDACT_ENABLED` (optional, default `true`; redacts sensitive snapshots in audit log)
+- `SETTINGS_ENCRYPTION_KEY` (optional but recommended; required to store SMTP password encrypted in DB)
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
 - Open redirect on login is blocked.
 - Brute-force protection for login attempts is enabled.
+- Public `/report/lost` has IP-based submission rate limits, honeypot, and optional captcha.
 - Optional TOTP-based 2FA is supported, including global mandatory mode.
 - No default fallback `SECRET_KEY` is used.
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
@@ -201,8 +209,10 @@ chmod +x deploy.sh
 - Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
 - Description quality defaults and blacklist extension are managed in `Settings -> System Settings`.
 - Audit log stores action context plus structured before/after snapshots for critical changes (items/users/roles/settings/categories).
+- Audit snapshot redaction is enabled by default for sensitive keys (contact/address/token/secret fields).
 - Daily audit rotation runs automatically (age + max-row cap configurable by `.env`).
-- Client IP for login-rate-limit is only taken from proxy headers if request comes from trusted proxy CIDRs.
+- Client IP extraction for login limits and audit is trusted-proxy aware (`TRUSTED_PROXY_CIDRS`).
+- SMTP password in system settings is stored encrypted (requires `SETTINGS_ENCRYPTION_KEY`).
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
 - Daily automatic maintenance updates stale `Lost` items (`event_date` older than 90 days) to `Lost forever`.

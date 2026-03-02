@@ -38,6 +38,10 @@ GENERIC_PHRASES = {
     "no details",
 }
 
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_RE = re.compile(r"^\+?[0-9][0-9\s()./-]{6,24}$")
+POSTCODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\s-]{1,11}$")
+
 
 def parse_description_blacklist(raw_value: str | None):
     entries = set()
@@ -167,6 +171,13 @@ def validate_lost_fields(lost: dict, contact_ways: list[str]):
     if lost.get("lost_contact_way") and lost["lost_contact_way"] not in contact_ways:
         errors["lost_contact_way"] = "Invalid contact way."
 
+    if lost.get("lost_email") and not EMAIL_RE.match(lost["lost_email"]):
+        errors["lost_email"] = "E-Mail address format looks invalid."
+    if lost.get("lost_phone") and not PHONE_RE.match(lost["lost_phone"]):
+        errors["lost_phone"] = "Phone number format looks invalid."
+    if lost.get("lost_postcode") and not POSTCODE_RE.match(lost["lost_postcode"]):
+        errors["lost_postcode"] = "Postcode format looks invalid."
+
     if lost.get("lost_leaving_date"):
         try:
             datetime.strptime(lost["lost_leaving_date"], "%Y-%m-%d")
@@ -182,6 +193,42 @@ def validate_lost_fields(lost: dict, contact_ways: list[str]):
         lost["postage_price"] = None
 
     return len(errors) == 0, errors
+
+
+def build_address_suggestion(lost: dict):
+    original = {
+        "lost_street": (lost.get("lost_street") or "").strip(),
+        "lost_number": (lost.get("lost_number") or "").strip(),
+        "lost_additional": (lost.get("lost_additional") or "").strip(),
+        "lost_postcode": (lost.get("lost_postcode") or "").strip(),
+        "lost_town": (lost.get("lost_town") or "").strip(),
+        "lost_country": (lost.get("lost_country") or "").strip(),
+    }
+
+    def normalize_spaces(value: str):
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    suggested = {
+        "lost_street": normalize_spaces(original["lost_street"]).title(),
+        "lost_number": normalize_spaces(original["lost_number"]).upper(),
+        "lost_additional": normalize_spaces(original["lost_additional"]),
+        "lost_postcode": normalize_spaces(original["lost_postcode"]).upper(),
+        "lost_town": normalize_spaces(original["lost_town"]).title(),
+        "lost_country": normalize_spaces(original["lost_country"]).title(),
+    }
+
+    changes = []
+    for key, old_value in original.items():
+        new_value = suggested[key]
+        if old_value != new_value:
+            label = key.replace("lost_", "").replace("_", " ").title()
+            changes.append({"field": key, "label": label, "from": old_value, "to": new_value})
+
+    return {
+        "has_changes": len(changes) > 0,
+        "changes": changes,
+        "suggested": suggested,
+    }
 
 
 def build_item_form_draft(request_obj, existing=None):

@@ -186,18 +186,20 @@ def generate_public_item_id(conn, when_dt=None) -> str:
     used_suffixes = set()
     for row in rows:
         public_id = ((row["public_id"] or "") if row else "").strip().upper()
-        if len(public_id) != 9 or not public_id.startswith(prefix):
+        if not public_id.startswith(prefix):
             continue
-        suffix = public_id[6:9]
+        suffix = public_id[6:]
+        if len(suffix) not in (3, 4):
+            continue
         try:
             used_suffixes.add(int(suffix, 16))
         except ValueError:
             continue
 
-    for seq in range(0x1000):
+    for seq in range(0x10000):
         if seq in used_suffixes:
             continue
-        candidate = f"{prefix}{seq:03X}"
+        candidate = f"{prefix}{seq:04X}"
         existing = conn.execute("SELECT 1 FROM items WHERE public_id=? LIMIT 1", (candidate,)).fetchone()
         if not existing:
             return candidate
@@ -453,6 +455,22 @@ def init_db(db_path: str):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS public_submit_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endpoint TEXT NOT NULL,
+            ip_address TEXT NOT NULL,
+            attempted_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_submit_attempts_lookup
+        ON public_submit_attempts (endpoint, ip_address, attempted_at)
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS saved_searches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -546,6 +564,10 @@ def init_db(db_path: str):
     )
     conn.execute(
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_password', '', ?)",
+        (now_utc(),),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_password_enc', '', ?)",
         (now_utc(),),
     )
     conn.execute(

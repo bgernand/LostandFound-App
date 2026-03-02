@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from flask import flash, redirect, render_template, request, url_for
+from flask import abort, flash, redirect, render_template, request, url_for
 
 
 def _safe_int_arg(args, name, default, min_value=None, max_value=None):
@@ -35,14 +35,43 @@ def register_overview_routes(app, deps: dict):
     clean_saved_query_string = deps["clean_saved_query_string"]
     saved_search_target = deps["saved_search_target"]
     safe_next_url = deps["safe_next_url"]
+    has_permission = deps["has_permission"]
     STATUSES = deps["STATUSES"]
     SAVED_SEARCH_SCOPES = deps["SAVED_SEARCH_SCOPES"]
     SAVED_SEARCH_ALLOWED_KEYS = deps["SAVED_SEARCH_ALLOWED_KEYS"]
     SAVED_SEARCH_MULTI_KEYS = deps["SAVED_SEARCH_MULTI_KEYS"]
 
+    BACKOFFICE_READ_PERMISSIONS = (
+        "admin.access",
+        "admin.users",
+        "admin.settings",
+        "admin.audit",
+        "admin.categories",
+        "items.create_lost",
+        "items.edit",
+        "items.view_pii",
+        "items.review",
+        "items.bulk_status",
+        "items.link",
+        "items.public_manage",
+        "items.public_regenerate",
+        "items.send_email",
+        "items.delete",
+        "reminders.manage",
+    )
+
+    def ensure_backoffice_read_access():
+        u = current_user()
+        if not u:
+            abort(403)
+        if any(has_permission(key, user=u) for key in BACKOFFICE_READ_PERMISSIONS):
+            return u
+        abort(403)
+
     @app.get("/dashboard")
     @login_required
     def dashboard():
+        ensure_backoffice_read_access()
         conn = get_db()
         status_rows = conn.execute(
             """
@@ -180,6 +209,7 @@ def register_overview_routes(app, deps: dict):
     @app.get("/")
     @login_required
     def index():
+        u = ensure_backoffice_read_access()
         sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,
@@ -203,7 +233,6 @@ def register_overview_routes(app, deps: dict):
             ).fetchall()
         }
         open_reminders = conn.execute("SELECT COUNT(*) AS c FROM reminders WHERE is_done=0").fetchone()["c"]
-        u = current_user()
         saved_searches = filter_get_saved_searches(conn, int(u["id"]), "index", SAVED_SEARCH_SCOPES) if u else []
         conn.close()
         current_path = request.full_path if request.query_string else request.path
@@ -235,6 +264,7 @@ def register_overview_routes(app, deps: dict):
     @app.get("/matches")
     @login_required
     def matches_overview():
+        u = ensure_backoffice_read_access()
         q = (request.args.get("q") or "").strip()
         kinds_selected = get_multi_values(request.args, "kind", {"lost", "found"})
         source_statuses_selected = get_multi_values(request.args, "source_status", set(STATUSES))
@@ -341,7 +371,6 @@ def register_overview_routes(app, deps: dict):
             key=lambda p: (p["score"], p["source"]["created_at"] or "", p["candidate"]["created_at"] or ""),
             reverse=True,
         )
-        u = current_user()
         saved_searches = filter_get_saved_searches(conn, int(u["id"]), "matches", SAVED_SEARCH_SCOPES) if u else []
         conn.close()
         current_path = request.full_path if request.query_string else request.path
@@ -373,7 +402,7 @@ def register_overview_routes(app, deps: dict):
     @app.post("/saved-searches")
     @login_required
     def saved_search_create():
-        u = current_user()
+        u = ensure_backoffice_read_access()
         scope = (request.form.get("scope") or "").strip()
         name = (
             request.form.get("name")
@@ -433,7 +462,7 @@ def register_overview_routes(app, deps: dict):
     @app.post("/saved-searches/open")
     @login_required
     def saved_search_open():
-        u = current_user()
+        u = ensure_backoffice_read_access()
         raw_id = (request.form.get("saved_search_id") or "").strip()
         next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
         try:
@@ -465,7 +494,7 @@ def register_overview_routes(app, deps: dict):
     @app.post("/saved-searches/delete")
     @login_required
     def saved_search_delete_post():
-        u = current_user()
+        u = ensure_backoffice_read_access()
         raw_id = (request.form.get("saved_search_id") or "").strip()
         next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
         try:
@@ -491,7 +520,7 @@ def register_overview_routes(app, deps: dict):
     @app.post("/saved-searches/<int:search_id>/delete")
     @login_required
     def saved_search_delete(search_id: int):
-        u = current_user()
+        u = ensure_backoffice_read_access()
         next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
 
         conn = get_db()

@@ -12,6 +12,8 @@ def register_admin_routes(app, deps: dict):
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
     get_smtp_settings = deps["get_smtp_settings"]
+    encrypt_setting_secret = deps["encrypt_setting_secret"]
+    settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
     validate_mail_template_variables = deps["validate_mail_template_variables"]
     render_mail_template = deps["render_mail_template"]
@@ -313,16 +315,27 @@ def register_admin_routes(app, deps: dict):
             "smtp_use_tls": get_setting(conn, "smtp_use_tls", ""),
             "smtp_use_ssl": get_setting(conn, "smtp_use_ssl", ""),
             "smtp_timeout": get_setting(conn, "smtp_timeout", ""),
+            "smtp_password_enc": "***set***" if (get_setting(conn, "smtp_password_enc", "") or "").strip() else "",
         }
         set_setting(conn, "smtp_enabled", "1" if enabled else "0")
         set_setting(conn, "smtp_host", host)
         set_setting(conn, "smtp_port", str(port))
         set_setting(conn, "smtp_username", username)
         if password:
-            set_setting(conn, "smtp_password", password)
+            if not settings_encryption_ready():
+                conn.close()
+                flash("SETTINGS_ENCRYPTION_KEY is required to store SMTP password securely.", "danger")
+                return redirect(url_for("admin_settings"))
+            encrypted_password = encrypt_setting_secret(password)
+            if not encrypted_password:
+                conn.close()
+                flash("Failed to encrypt SMTP password.", "danger")
+                return redirect(url_for("admin_settings"))
+            set_setting(conn, "smtp_password_enc", encrypted_password)
+            set_setting(conn, "smtp_password", "")
         else:
-            existing_pw = get_setting(conn, "smtp_password", "")
-            set_setting(conn, "smtp_password", existing_pw or "")
+            existing_pw_enc = get_setting(conn, "smtp_password_enc", "")
+            set_setting(conn, "smtp_password_enc", existing_pw_enc or "")
         set_setting(conn, "smtp_from", from_addr)
         set_setting(conn, "smtp_use_tls", "1" if use_tls else "0")
         set_setting(conn, "smtp_use_ssl", "1" if use_ssl else "0")
@@ -349,6 +362,7 @@ def register_admin_routes(app, deps: dict):
                 "smtp_use_tls": "1" if use_tls else "0",
                 "smtp_use_ssl": "1" if use_ssl else "0",
                 "smtp_timeout": str(timeout),
+                "smtp_password_enc": "***set***" if (password or old_state.get("smtp_password_enc")) else "",
             },
         )
         flash("SMTP settings updated.", "success")

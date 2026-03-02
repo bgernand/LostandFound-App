@@ -47,8 +47,15 @@ Recommended security settings:
 - `SESSION_COOKIE_SAMESITE=Lax`
 - `SESSION_MAX_AGE_SECONDS=28800` (8h absolute login session max age)
 - `MAX_CONTENT_LENGTH=20971520` (20 MB)
+- `PUBLIC_LOST_WINDOW_SECONDS=900`
+- `PUBLIC_LOST_MAX_ATTEMPTS=8`
+- `PUBLIC_LOST_DAILY_MAX_ATTEMPTS=30`
+- `PUBLIC_LOST_MAX_FILES=5`
+- `PUBLIC_LOST_CAPTCHA_ENABLED=false` (set `true` to enable captcha on public lost form)
 - `AUDIT_RETENTION_DAYS=180` (daily cleanup by age; set `0` to disable)
 - `AUDIT_MAX_ROWS=200000` (daily cap by row count; set `0` to disable)
+- `AUDIT_REDACT_ENABLED=true`
+- `SETTINGS_ENCRYPTION_KEY=<long-random-secret>` (required for encrypted SMTP password storage)
 
 After first login as admin, configure SMTP and description-quality settings in:
 - `Settings -> System Settings`
@@ -82,6 +89,7 @@ docker compose logs -f certbot
 Functional checks after deploy:
 - Login works and /dashboard opens
 - Public lost submission page `/report/lost` is reachable without login
+- Public lost submission abuse controls work (rate limit + honeypot, optional captcha)
 - Viewer user is read-only (no create/edit/link/delete controls)
 - Bulk status update works for staff/admin
 - Lost review queue `/reviews/lost` opens for roles with `items.review`

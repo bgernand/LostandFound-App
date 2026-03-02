@@ -62,3 +62,52 @@ def record_login_attempt(conn, username: str, ip_addr: str, was_success: bool, n
         (now_ts - max(window_seconds * 4, 86400),),
     )
 
+
+def is_public_submit_blocked(
+    conn,
+    endpoint: str,
+    ip_addr: str,
+    now_ts: int,
+    window_seconds: int,
+    max_attempts: int,
+    daily_max_attempts: int,
+):
+    cutoff = now_ts - window_seconds
+    row_window = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM public_submit_attempts
+        WHERE endpoint=? AND ip_address=? AND attempted_at>=?
+        """,
+        (endpoint, ip_addr, cutoff),
+    ).fetchone()
+    if int(row_window["c"] or 0) >= max_attempts:
+        return True, "Too many submissions. Please try again later."
+
+    day_cutoff = now_ts - 86400
+    row_day = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM public_submit_attempts
+        WHERE endpoint=? AND ip_address=? AND attempted_at>=?
+        """,
+        (endpoint, ip_addr, day_cutoff),
+    ).fetchone()
+    if int(row_day["c"] or 0) >= daily_max_attempts:
+        return True, "Daily submission limit reached for this IP."
+
+    return False, ""
+
+
+def record_public_submit_attempt(conn, endpoint: str, ip_addr: str, now_ts: int, window_seconds: int):
+    conn.execute(
+        """
+        INSERT INTO public_submit_attempts (endpoint, ip_address, attempted_at)
+        VALUES (?, ?, ?)
+        """,
+        (endpoint, ip_addr, now_ts),
+    )
+    conn.execute(
+        "DELETE FROM public_submit_attempts WHERE attempted_at < ?",
+        (now_ts - max(window_seconds * 12, 86400 * 3),),
+    )

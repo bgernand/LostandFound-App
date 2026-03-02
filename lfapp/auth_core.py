@@ -5,7 +5,7 @@ from functools import wraps
 from flask import abort, has_request_context, redirect, request, session, url_for
 
 
-def build_auth_helpers(app, get_db, now_utc):
+def build_auth_helpers(app, get_db, now_utc, resolve_client_ip=None, redact_audit_payload=None):
     def current_user():
         uid = session.get("user_id")
         if not uid:
@@ -108,8 +108,15 @@ def build_auth_helpers(app, get_db, now_utc):
             ip_address = None
             user_agent = None
             if has_request_context():
-                ip_address = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip() or None
+                if resolve_client_ip:
+                    ip_address = resolve_client_ip(request)
+                else:
+                    ip_address = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip() or None
                 user_agent = (request.headers.get("User-Agent") or "").strip()[:512] or None
+            if redact_audit_payload:
+                old_values = redact_audit_payload(old_values)
+                new_values = redact_audit_payload(new_values)
+                meta = redact_audit_payload(meta)
             conn = get_db()
             conn.execute(
                 """
