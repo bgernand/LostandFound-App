@@ -33,48 +33,52 @@
     {% if item['kind'] == 'lost' %}
       <hr>
       <h6>Lost details (internal)</h6>
-      <dl class="row">
-        <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9">{{ item['lost_last_name'] or "—" }}</dd>
-        <dt class="col-sm-3">First Name</dt><dd class="col-sm-9">{{ item['lost_first_name'] or "—" }}</dd>
-        <dt class="col-sm-3">Street</dt><dd class="col-sm-9">{{ item['lost_street'] or "—" }}</dd>
-        <dt class="col-sm-3">Number</dt><dd class="col-sm-9">{{ item['lost_number'] or "—" }}</dd>
-        <dt class="col-sm-3">Additional (floor, etc.)</dt><dd class="col-sm-9">{{ item['lost_additional'] or "—" }}</dd>
-        <dt class="col-sm-3">Postcode</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "—" }}</dd>
-        <dt class="col-sm-3">Town</dt><dd class="col-sm-9">{{ item['lost_town'] or "—" }}</dd>
-        <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
+      {% if can_view_pii %}
+        <dl class="row">
+          <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9">{{ item['lost_last_name'] or "—" }}</dd>
+          <dt class="col-sm-3">First Name</dt><dd class="col-sm-9">{{ item['lost_first_name'] or "—" }}</dd>
+          <dt class="col-sm-3">Street</dt><dd class="col-sm-9">{{ item['lost_street'] or "—" }}</dd>
+          <dt class="col-sm-3">Number</dt><dd class="col-sm-9">{{ item['lost_number'] or "—" }}</dd>
+          <dt class="col-sm-3">Additional (floor, etc.)</dt><dd class="col-sm-9">{{ item['lost_additional'] or "—" }}</dd>
+          <dt class="col-sm-3">Postcode</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "—" }}</dd>
+          <dt class="col-sm-3">Town</dt><dd class="col-sm-9">{{ item['lost_town'] or "—" }}</dd>
+          <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
 
-        <dt class="col-sm-3">E-Mail</dt>
-        <dd class="col-sm-9">
-          {% if item['lost_email'] %}
-            <a href="mailto:{{ item['lost_email'] }}">{{ item['lost_email'] }}</a>
-          {% else %}
-            —
-          {% endif %}
-        </dd>
-        <dt class="col-sm-3">Phone</dt>
-        <dd class="col-sm-9">
-          {% if item['lost_phone'] %}
-            <a href="tel:{{ item['lost_phone']|replace(' ', '') }}">{{ item['lost_phone'] }}</a>
-          {% else %}
-            —
-          {% endif %}
-        </dd>
+          <dt class="col-sm-3">E-Mail</dt>
+          <dd class="col-sm-9">
+            {% if item['lost_email'] %}
+              <a href="mailto:{{ item['lost_email'] }}">{{ item['lost_email'] }}</a>
+            {% else %}
+              —
+            {% endif %}
+          </dd>
+          <dt class="col-sm-3">Phone</dt>
+          <dd class="col-sm-9">
+            {% if item['lost_phone'] %}
+              <a href="tel:{{ item['lost_phone']|replace(' ', '') }}">{{ item['lost_phone'] }}</a>
+            {% else %}
+              —
+            {% endif %}
+          </dd>
 
-        <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
-        <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
-        <dt class="col-sm-3">Name of Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
+          <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
+          <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
+          <dt class="col-sm-3">Name of Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
 
-        <dt class="col-sm-3">Postage</dt>
-        <dd class="col-sm-9">
-          {{ item['postage_price'] if item['postage_price'] is not none else "—" }}
-          · Paid:
-          {% if item['postage_paid'] == 1 or item['postage_paid'] == '1' %}
-            <span class="badge text-bg-success">Yes</span>
-          {% else %}
-            <span class="badge text-bg-secondary">No</span>
-          {% endif %}
-        </dd>
-      </dl>
+          <dt class="col-sm-3">Postage</dt>
+          <dd class="col-sm-9">
+            {{ item['postage_price'] if item['postage_price'] is not none else "—" }}
+            · Paid:
+            {% if item['postage_paid'] == 1 or item['postage_paid'] == '1' %}
+              <span class="badge text-bg-success">Yes</span>
+            {% else %}
+              <span class="badge text-bg-secondary">No</span>
+            {% endif %}
+          </dd>
+        </dl>
+      {% else %}
+        <div class="alert alert-secondary mb-0">Personal data is hidden for your role.</div>
+      {% endif %}
     {% endif %}
 
     {% if photos and photos|length %}
@@ -104,7 +108,7 @@
     <hr>
 
     <div class="d-flex flex-column flex-sm-row flex-wrap gap-2">
-      {% if can_edit_items %}
+      {% if can_edit_this_item %}
         <a class="btn btn-primary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
       {% endif %}
       <a class="btn btn-outline-primary" href="{{ url_for('receipt', item_id=item['id']) }}">Receipt</a>
@@ -163,7 +167,7 @@
       <a class="btn btn-outline-secondary ms-sm-auto" href="{{ url_for('index') }}">Back</a>
     </div>
 
-    {% if can_send_email and item['kind'] == 'lost' %}
+    {% if can_send_email and can_view_pii and item['kind'] == 'lost' %}
       <hr>
       <div class="fw-bold mb-2">Send E-Mail</div>
       {% if not smtp_enabled %}

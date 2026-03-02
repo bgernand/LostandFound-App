@@ -6,7 +6,7 @@
 </div>
 
 <div class="row g-3 mb-3">
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-6">
     <a class="card text-decoration-none" href="{{ url_for('index') }}">
       <div class="card-body">
         <div class="text-muted small">Total items</div>
@@ -14,25 +14,11 @@
       </div>
     </a>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-6">
     <a class="card text-decoration-none" href="{{ url_for('index', status='Handed over / Sent') }}">
       <div class="card-body">
         <div class="text-muted small">Completed items (Handed over / Sent)</div>
         <div class="fs-4 fw-bold text-dark">{{ kpi['completed_items'] or 0 }}</div>
-      </div>
-    </a>
-  </div>
-  <div class="col-12 col-md-4">
-    <a class="card text-decoration-none" href="{{ url_for('index', status='In contact') }}">
-      <div class="card-body">
-        <div class="text-muted small">Avg. days to complete</div>
-        <div class="fs-4 fw-bold text-dark">
-          {% if kpi['avg_days_to_complete'] is not none %}
-            {{ "%.1f"|format(kpi['avg_days_to_complete']) }}
-          {% else %}
-            —
-          {% endif %}
-        </div>
       </div>
     </a>
   </div>
@@ -96,49 +82,17 @@
       {% endif %}
     </div>
 
-    <div class="row g-3">
-      <div class="col-12 col-lg-5">
-        {% for b in possible_matches_bins %}
-          <div class="mb-2">
-            <div class="d-flex justify-content-between small mb-1">
-              <span>{{ b['label'] }}</span>
-              <span class="fw-semibold">{{ b['count'] }}</span>
-            </div>
-            <div class="progress" role="img" aria-label="{{ b['label'] }}">
-              <div class="progress-bar {{ b['bar_class'] }}" style="width: {{ b['pct'] }}%">{{ b['pct'] }}%</div>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-      <div class="col-12 col-lg-7">
-        <div class="list-group">
-          {% for p in possible_matches_top %}
-            <a class="list-group-item list-group-item-action" href="{{ url_for('matches_overview', q=(p['source']['public_id'] or '')) }}">
-              <div class="d-flex justify-content-between align-items-start gap-2">
-                <div>
-                  <div class="fw-semibold">
-                    {{ p['source']['public_id'] or "—" }} ↔ {{ p['candidate']['public_id'] or "—" }}
-                  </div>
-                  <div class="small text-muted">
-                    {{ p['source']['title'] }} · {{ p['candidate']['title'] }}
-                  </div>
-                  <div class="small">
-                    <span>Source:</span>
-                    <span>{{ p['source']['status'] }}</span>
-                    <span class="mx-1">·</span>
-                    <span>Candidate:</span>
-                    <span>{{ p['candidate']['status'] }}</span>
-                  </div>
-                </div>
-                <span class="badge text-bg-dark">Score {{ p['score'] }}</span>
-              </div>
-            </a>
-          {% else %}
-            <div class="text-muted">No high-confidence pairs in snapshot.</div>
-          {% endfor %}
+    {% for b in possible_matches_bins %}
+      <a class="text-decoration-none text-body d-block mb-2" href="{{ b['url'] }}">
+        <div class="d-flex justify-content-between small mb-1">
+          <span>{{ b['label'] }}</span>
+          <span class="fw-semibold">{{ b['count'] }}</span>
         </div>
-      </div>
-    </div>
+        <div class="progress" role="img" aria-label="{{ b['label'] }}">
+          <div class="progress-bar {{ b['bar_class'] }}" style="width: {{ b['pct'] }}%">{{ b['pct'] }}%</div>
+        </div>
+      </a>
+    {% endfor %}
   </div>
 </div>
 

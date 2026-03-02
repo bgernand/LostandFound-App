@@ -11,9 +11,15 @@ _fts5_available = None
 
 RBAC_PERMISSION_KEYS = [
     "admin.access",
+    "admin.users",
+    "admin.settings",
+    "admin.audit",
+    "admin.categories",
     "items.create_lost",
     "items.create_found",
     "items.edit",
+    "items.edit_found",
+    "items.view_pii",
     "items.bulk_status",
     "items.link",
     "items.photo_delete",
@@ -30,6 +36,8 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.create_lost",
         "items.create_found",
         "items.edit",
+        "items.edit_found",
+        "items.view_pii",
         "items.bulk_status",
         "items.link",
         "items.photo_delete",
@@ -39,6 +47,7 @@ DEFAULT_ROLE_PERMISSIONS = {
     },
     "found-staff": {
         "items.create_found",
+        "items.edit_found",
     },
     "viewer": set(),
 }

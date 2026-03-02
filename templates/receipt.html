@@ -34,7 +34,7 @@
       <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
     </dl>
 
-    {% if item['kind'] == 'lost' %}
+    {% if item['kind'] == 'lost' and can_view_pii %}
       <hr>
       <h6>Shipping / Contact (internal)</h6>
       <div class="row g-3">

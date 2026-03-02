@@ -45,6 +45,15 @@ def register_item_routes(app, deps: dict):
     send_smtp_mail = deps["send_smtp_mail"]
     get_description_quality_result = deps["get_description_quality_result"]
 
+    def can_edit_item(user_obj, item_row) -> bool:
+        if not user_obj or not item_row:
+            return False
+        if has_permission("items.edit", user=user_obj):
+            return True
+        if item_row["kind"] == "found" and has_permission("items.edit_found", user=user_obj):
+            return True
+        return False
+
     @app.get("/items/new")
     @login_required
     def new_item():
@@ -268,6 +277,7 @@ def register_item_routes(app, deps: dict):
     @app.get("/items/<int:item_id>")
     @login_required
     def detail(item_id: int):
+        u = current_user()
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
@@ -311,13 +321,15 @@ def register_item_routes(app, deps: dict):
             timeline=timeline,
             link_q=link_q,
             link_candidates=link_candidates,
+            can_view_pii=bool(has_permission("items.view_pii", user=u)),
+            can_edit_this_item=can_edit_item(u, item),
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
-            user=current_user(),
+            user=u,
         )
 
     @app.post("/items/<int:item_id>/send-email")
-    @require_permission("items.send_email")
+    @require_permission("items.send_email", "items.view_pii")
     def send_item_email(item_id: int):
         conn = get_db()
         item = conn.execute(
@@ -358,13 +370,17 @@ def register_item_routes(app, deps: dict):
         return send_file(path)
 
     @app.get("/items/<int:item_id>/edit")
-    @require_permission("items.edit")
+    @login_required
     def edit_item(item_id: int):
+        u = current_user()
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
             conn.close()
             abort(404)
+        if not can_edit_item(u, item):
+            conn.close()
+            abort(403)
         matches = find_matches(
             conn, item["kind"], item["title"], item["category"], item["location"], event_date=item["event_date"], item_id=item_id
         )
@@ -372,7 +388,7 @@ def register_item_routes(app, deps: dict):
         return render_item_form(item=item, matches=matches, errors={})
 
     @app.post("/items/<int:item_id>/update")
-    @require_permission("items.edit")
+    @login_required
     def update_item(item_id: int):
         u = current_user()
         conn = get_db()
@@ -380,9 +396,15 @@ def register_item_routes(app, deps: dict):
         if not existing:
             conn.close()
             abort(404)
+        if not can_edit_item(u, existing):
+            conn.close()
+            abort(403)
 
         kind = (request.form.get("kind") or existing["kind"]).strip()
         if kind not in ["lost", "found"]:
+            kind = existing["kind"]
+        if not has_permission("items.edit", user=u):
+            # Limited editors may not change item type.
             kind = existing["kind"]
         title = (request.form.get("title") or existing["title"]).strip()
         description = (request.form.get("description") or "").strip()
@@ -769,6 +791,7 @@ def register_item_routes(app, deps: dict):
     @app.get("/items/<int:item_id>/receipt")
     @login_required
     def receipt(item_id: int):
+        u = current_user()
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
@@ -787,13 +810,15 @@ def register_item_routes(app, deps: dict):
             photos=photos,
             receipt_no=receipt_no,
             issued_at=issued_at,
-            user=current_user(),
+            can_view_pii=bool(has_permission("items.view_pii", user=u)),
+            user=u,
             qr_url=url_for("item_qr", item_id=item_id),
         )
 
     @app.get("/items/<int:item_id>/receipt.pdf")
     @login_required
     def receipt_pdf(item_id: int):
+        u = current_user()
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         conn.close()
@@ -850,7 +875,7 @@ def register_item_routes(app, deps: dict):
             c.drawString(40, y, pdf_safe(f"Status: {item['status'] or '—'}"))
             y -= 20
 
-            if item["kind"] == "lost":
+            if item["kind"] == "lost" and has_permission("items.view_pii", user=u):
                 c.setFont("Helvetica-Bold", 11)
                 c.drawString(40, y, "Shipping / Contact (internal)")
                 y -= 16

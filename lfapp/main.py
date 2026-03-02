@@ -483,6 +483,8 @@ def create_app(config: dict | None = None):
         can_create_lost = bool(has_permission("items.create_lost", user=u))
         can_create_found = bool(has_permission("items.create_found", user=u))
         can_edit_items = bool(has_permission("items.edit", user=u))
+        can_edit_found_items = bool(has_permission("items.edit_found", user=u))
+        can_view_pii = bool(has_permission("items.view_pii", user=u))
         can_bulk_status = bool(has_permission("items.bulk_status", user=u))
         can_manage_links = bool(has_permission("items.link", user=u))
         can_delete_photo = bool(has_permission("items.photo_delete", user=u))
@@ -492,11 +494,23 @@ def create_app(config: dict | None = None):
         can_send_email = bool(has_permission("items.send_email", user=u))
         can_manage_reminders = bool(has_permission("reminders.manage", user=u))
         can_admin_access = bool(has_permission("admin.access", user=u))
+        can_admin_users = bool(has_permission("admin.users", user=u))
+        can_admin_settings = bool(has_permission("admin.settings", user=u))
+        can_admin_audit = bool(has_permission("admin.audit", user=u))
+        can_admin_categories = bool(has_permission("admin.categories", user=u))
+        can_admin_menu = bool(
+            can_admin_access
+            or can_admin_users
+            or can_admin_settings
+            or can_admin_audit
+            or can_admin_categories
+        )
         can_write = any(
             [
                 can_create_lost,
                 can_create_found,
                 can_edit_items,
+                can_edit_found_items,
                 can_bulk_status,
                 can_manage_links,
                 can_delete_photo,
@@ -512,6 +526,8 @@ def create_app(config: dict | None = None):
             "can_create_lost": can_create_lost,
             "can_create_found": can_create_found,
             "can_edit_items": can_edit_items,
+            "can_edit_found_items": can_edit_found_items,
+            "can_view_pii": can_view_pii,
             "can_bulk_status": can_bulk_status,
             "can_manage_links": can_manage_links,
             "can_delete_photo": can_delete_photo,
@@ -521,6 +537,11 @@ def create_app(config: dict | None = None):
             "can_send_email": can_send_email,
             "can_manage_reminders": can_manage_reminders,
             "can_admin_access": can_admin_access,
+            "can_admin_users": can_admin_users,
+            "can_admin_settings": can_admin_settings,
+            "can_admin_audit": can_admin_audit,
+            "can_admin_categories": can_admin_categories,
+            "can_admin_menu": can_admin_menu,
             "can_write": can_write,
             "rbac_permission_keys": RBAC_PERMISSION_KEYS,
         }

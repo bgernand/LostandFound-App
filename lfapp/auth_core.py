@@ -58,8 +58,23 @@ def build_auth_helpers(app, get_db, now_utc):
             """,
             (u["role"], permission_key),
         ).fetchone()
+        if row and int(row["allowed"] or 0) == 1:
+            conn.close()
+            return True
+        # Backward compatibility: legacy 'admin.access' remains a global admin umbrella.
+        if permission_key.startswith("admin.") and permission_key != "admin.access":
+            legacy = conn.execute(
+                """
+                SELECT allowed
+                FROM role_permissions
+                WHERE role_name=? AND permission_key='admin.access'
+                """,
+                (u["role"],),
+            ).fetchone()
+            conn.close()
+            return bool(legacy and int(legacy["allowed"] or 0) == 1)
         conn.close()
-        return bool(row and int(row["allowed"] or 0) == 1)
+        return False
 
     def require_permission(*permission_keys):
         def deco(fn):

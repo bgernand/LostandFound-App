@@ -65,10 +65,7 @@ def register_overview_routes(app, deps: dict):
             """
             SELECT
                 COUNT(*) AS total_items,
-                SUM(CASE WHEN status IN ('Handed over / Sent') THEN 1 ELSE 0 END) AS completed_items,
-                AVG(CASE WHEN status IN ('Handed over / Sent') AND updated_at IS NOT NULL
-                         THEN (julianday(updated_at) - julianday(created_at))
-                         ELSE NULL END) AS avg_days_to_complete
+                SUM(CASE WHEN status IN ('Handed over / Sent') THEN 1 ELSE 0 END) AS completed_items
             FROM items
             """
         ).fetchone()
@@ -94,7 +91,6 @@ def register_overview_routes(app, deps: dict):
             """
         ).fetchall()
         score_bins = {"high": 0, "medium": 0, "low": 0}
-        top_pairs = []
         seen_pairs = set()
         for src in source_rows:
             candidates = find_matches(
@@ -122,23 +118,6 @@ def register_overview_routes(app, deps: dict):
                 else:
                     score_bins["low"] += 1
 
-                top_pairs.append(
-                    {
-                        "source": src,
-                        "candidate": cand,
-                        "score": score,
-                        "reasons": cand.get("match_reasons") or [],
-                    }
-                )
-        top_pairs.sort(
-            key=lambda p: (
-                p["score"],
-                p["source"]["created_at"] or "",
-                p["candidate"]["created_at"] or "",
-            ),
-            reverse=True,
-        )
-        top_pairs = top_pairs[:10]
         matches_total = score_bins["high"] + score_bins["medium"] + score_bins["low"]
         bins_with_pct = [
             {
@@ -147,6 +126,7 @@ def register_overview_routes(app, deps: dict):
                 "count": score_bins["high"],
                 "pct": int(round((score_bins["high"] / matches_total) * 100)) if matches_total else 0,
                 "bar_class": "bg-success",
+                "url": url_for("matches_overview", min_score=80, max_score=200),
             },
             {
                 "key": "medium",
@@ -154,6 +134,7 @@ def register_overview_routes(app, deps: dict):
                 "count": score_bins["medium"],
                 "pct": int(round((score_bins["medium"] / matches_total) * 100)) if matches_total else 0,
                 "bar_class": "bg-warning",
+                "url": url_for("matches_overview", min_score=55, max_score=79),
             },
             {
                 "key": "low",
@@ -161,6 +142,7 @@ def register_overview_routes(app, deps: dict):
                 "count": score_bins["low"],
                 "pct": int(round((score_bins["low"] / matches_total) * 100)) if matches_total else 0,
                 "bar_class": "bg-info",
+                "url": url_for("matches_overview", min_score=35, max_score=54),
             },
         ]
         u = current_user()
@@ -173,7 +155,6 @@ def register_overview_routes(app, deps: dict):
             kpi=kpi,
             possible_matches_total=matches_total,
             possible_matches_bins=bins_with_pct,
-            possible_matches_top=top_pairs,
             user=u,
         )
 
@@ -263,6 +244,9 @@ def register_overview_routes(app, deps: dict):
         date_from = (request.args.get("date_from") or "").strip()
         date_to = (request.args.get("date_to") or "").strip()
         min_score = _safe_int_arg(request.args, "min_score", 35, 0, 200)
+        max_score = _safe_int_arg(request.args, "max_score", 200, 0, 200)
+        if max_score < min_score:
+            max_score = min_score
         source_limit = _safe_int_arg(request.args, "source_limit", 60, 5, 200)
         if date_from and not parse_iso_date(date_from):
             date_from = ""
@@ -336,6 +320,8 @@ def register_overview_routes(app, deps: dict):
                     continue
                 if int(cand.get("match_score") or 0) < min_score:
                     continue
+                if int(cand.get("match_score") or 0) > max_score:
+                    continue
 
                 pair_key = tuple(sorted((int(src["id"]), int(cand["id"]))))
                 if pair_key in seen:
@@ -374,6 +360,7 @@ def register_overview_routes(app, deps: dict):
             date_from=date_from,
             date_to=date_to,
             min_score=min_score,
+            max_score=max_score,
             source_limit=source_limit,
             categories=category_names(active_only=True),
             statuses=STATUSES,

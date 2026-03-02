@@ -41,12 +41,12 @@
             <ul class="dropdown-menu dropdown-menu-end">
               <li><a class="dropdown-item" href="{{ url_for('account_password') }}">Change password</a></li>
               <li><a class="dropdown-item" href="{{ url_for('account_totp') }}">Two-factor authentication</a></li>
-              {% if can_admin_access %}
+              {% if can_admin_menu %}
                 <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="{{ url_for('admin_settings') }}">System Settings</a></li>
-                <li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>
-                <li><a class="dropdown-item" href="{{ url_for('audit_view') }}">Audit</a></li>
-                <li><a class="dropdown-item" href="{{ url_for('admin_categories') }}">Categories</a></li>
+                {% if can_admin_settings %}<li><a class="dropdown-item" href="{{ url_for('admin_settings') }}">System Settings</a></li>{% endif %}
+                {% if can_admin_users %}<li><a class="dropdown-item" href="{{ url_for('users') }}">Users</a></li>{% endif %}
+                {% if can_admin_audit %}<li><a class="dropdown-item" href="{{ url_for('audit_view') }}">Audit</a></li>{% endif %}
+                {% if can_admin_categories %}<li><a class="dropdown-item" href="{{ url_for('admin_categories') }}">Categories</a></li>{% endif %}
               {% endif %}
             </ul>
           </div>

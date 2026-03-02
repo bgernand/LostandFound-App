@@ -24,9 +24,15 @@ def register_admin_routes(app, deps: dict):
 
     permission_labels = {
         "admin.access": "Admin access",
+        "admin.users": "Manage users",
+        "admin.settings": "System settings",
+        "admin.audit": "View audit",
+        "admin.categories": "Manage categories",
         "items.create_lost": "Create Lost",
         "items.create_found": "Create Found",
         "items.edit": "Edit items",
+        "items.edit_found": "Edit Found only",
+        "items.view_pii": "View personal data",
         "items.bulk_status": "Bulk status",
         "items.link": "Manage links",
         "items.photo_delete": "Delete photos",
@@ -43,10 +49,12 @@ def register_admin_routes(app, deps: dict):
     def _admin_capable_users_count(conn):
         row = conn.execute(
             """
-            SELECT COUNT(*) AS c
+            SELECT COUNT(DISTINCT u.id) AS c
             FROM users u
             JOIN role_permissions rp ON rp.role_name = u.role
-            WHERE rp.permission_key='admin.access' AND rp.allowed=1 AND u.is_active=1
+            WHERE rp.permission_key IN ('admin.users', 'admin.access')
+              AND rp.allowed=1
+              AND u.is_active=1
             """
         ).fetchone()
         return int(row["c"] if row else 0)
@@ -54,16 +62,17 @@ def register_admin_routes(app, deps: dict):
     def _role_has_admin_access(conn, role_name: str) -> bool:
         row = conn.execute(
             """
-            SELECT allowed
+            SELECT MAX(allowed) AS allowed
             FROM role_permissions
-            WHERE role_name=? AND permission_key='admin.access'
+            WHERE role_name=?
+              AND permission_key IN ('admin.users', 'admin.access')
             """,
             (role_name,),
         ).fetchone()
         return bool(row and int(row["allowed"] or 0) == 1)
 
     @app.get("/admin/users")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users():
         conn = get_db()
         users = conn.execute(
@@ -91,7 +100,7 @@ def register_admin_routes(app, deps: dict):
         )
 
     @app.get("/admin/settings")
-    @require_permission("admin.access")
+    @require_permission("admin.settings")
     def admin_settings():
         conn = get_db()
         description_quality_settings = get_description_quality_settings(conn)
@@ -109,7 +118,7 @@ def register_admin_routes(app, deps: dict):
         )
 
     @app.post("/admin/users")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_create():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
@@ -149,7 +158,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/settings/totp-mandatory")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def admin_set_totp_mandatory():
         enabled = (request.form.get("totp_mandatory") or "") == "1"
         conn = get_db()
@@ -161,7 +170,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/settings/description-quality")
-    @require_permission("admin.access")
+    @require_permission("admin.settings")
     def admin_set_description_quality():
         min_chars_raw = (request.form.get("description_min_chars") or "").strip()
         min_words_raw = (request.form.get("description_min_words") or "").strip()
@@ -209,7 +218,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp")
-    @require_permission("admin.access")
+    @require_permission("admin.settings")
     def admin_set_smtp_settings():
         enabled = (request.form.get("smtp_enabled") or "") == "1"
         host = (request.form.get("smtp_host") or "").strip()
@@ -275,7 +284,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/legal-privacy")
-    @require_permission("admin.access")
+    @require_permission("admin.settings")
     def admin_set_legal_privacy_settings():
         legal_notice_text = (request.form.get("legal_notice_text") or "").strip()
         privacy_policy_text = (request.form.get("privacy_policy_text") or "").strip()
@@ -294,7 +303,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/users/<int:user_id>/reset-password")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_reset_password(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -325,7 +334,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/reset-totp")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_reset_totp(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -348,7 +357,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/role")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_change_role(user_id: int):
         new_role = (request.form.get("role") or "").strip()
         conn = get_db()
@@ -386,7 +395,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/delete")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_delete(user_id: int):
         me = current_user()
         if me and int(me["id"]) == int(user_id):
@@ -419,7 +428,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/users/<int:user_id>/active")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def users_set_active(user_id: int):
         me = current_user()
         me_id = int(me["id"]) if me else None
@@ -463,7 +472,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/roles")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def roles_create():
         role_name = (request.form.get("role_name") or "").strip().lower()
         if not role_name:
@@ -503,7 +512,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/roles/<role_name>/permissions")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def roles_permissions_update(role_name: str):
         role_name = (role_name or "").strip()
         conn = get_db()
@@ -529,7 +538,7 @@ def register_admin_routes(app, deps: dict):
         if _admin_capable_users_count(conn) <= 0:
             conn.rollback()
             conn.close()
-            flash("At least one user must retain admin access.", "danger")
+            flash("At least one user must retain permission to manage users.", "danger")
             return redirect(url_for("users"))
 
         conn.commit()
@@ -539,7 +548,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.post("/admin/roles/<role_name>/delete")
-    @require_permission("admin.access")
+    @require_permission("admin.users")
     def roles_delete(role_name: str):
         role_name = (role_name or "").strip()
         if role_name == "admin":
@@ -571,7 +580,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("users"))
 
     @app.get("/admin/audit")
-    @require_permission("admin.access")
+    @require_permission("admin.audit")
     def audit_view():
         conn = get_db()
         logs = conn.execute(
@@ -587,13 +596,13 @@ def register_admin_routes(app, deps: dict):
         return render_template("audit.html", logs=logs, user=current_user())
 
     @app.get("/admin/categories")
-    @require_permission("admin.access")
+    @require_permission("admin.categories")
     def admin_categories():
         cats = get_categories(active_only=False)
         return render_template("categories.html", categories=cats, user=current_user())
 
     @app.post("/admin/categories")
-    @require_permission("admin.access")
+    @require_permission("admin.categories")
     def admin_categories_create():
         name = (request.form.get("name") or "").strip()
         sort_order_raw = request.form.get("sort_order") or "100"
@@ -623,7 +632,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/toggle")
-    @require_permission("admin.access")
+    @require_permission("admin.categories")
     def admin_categories_toggle(cat_id: int):
         conn = get_db()
         c = conn.execute("SELECT id, is_active, name FROM categories WHERE id=?", (cat_id,)).fetchone()
@@ -641,7 +650,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/update")
-    @require_permission("admin.access")
+    @require_permission("admin.categories")
     def admin_categories_update(cat_id: int):
         name = (request.form.get("name") or "").strip()
         sort_order_raw = request.form.get("sort_order") or "100"
@@ -668,7 +677,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("admin_categories"))
 
     @app.post("/admin/categories/<int:cat_id>/delete")
-    @require_permission("admin.access")
+    @require_permission("admin.categories")
     def admin_categories_delete(cat_id: int):
         conn = get_db()
 
