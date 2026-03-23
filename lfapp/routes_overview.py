@@ -41,54 +41,61 @@ def register_overview_routes(app, deps: dict):
     SAVED_SEARCH_ALLOWED_KEYS = deps["SAVED_SEARCH_ALLOWED_KEYS"]
     SAVED_SEARCH_MULTI_KEYS = deps["SAVED_SEARCH_MULTI_KEYS"]
 
-    BACKOFFICE_READ_PERMISSIONS = (
-        "admin.access",
-        "admin.users",
-        "admin.settings",
-        "admin.audit",
-        "admin.categories",
-        "items.create_lost",
-        "items.edit",
-        "items.view_pii",
-        "items.review",
-        "items.bulk_status",
-        "items.link",
-        "items.public_manage",
-        "items.public_regenerate",
-        "items.send_email",
-        "items.delete",
-        "reminders.manage",
-    )
-
     def ensure_backoffice_read_access():
         u = current_user()
         if not u:
             abort(403)
-        if any(has_permission(key, user=u) for key in BACKOFFICE_READ_PERMISSIONS):
+        if allowed_item_kinds_for_user(u):
             return u
         abort(403)
+
+    def allowed_item_kinds_for_user(user_obj):
+        if not user_obj:
+            return set()
+        if has_permission("items.edit", user=user_obj) or has_permission("items.view_pii", user=user_obj):
+            return {"lost", "found"}
+        kinds = set()
+        if (
+            has_permission("items.view_lost", user=user_obj)
+            or has_permission("items.edit_lost", user=user_obj)
+            or has_permission("items.review", user=user_obj)
+        ):
+            kinds.add("lost")
+        if (
+            has_permission("items.view_found", user=user_obj)
+            or has_permission("items.edit_found", user=user_obj)
+        ):
+            kinds.add("found")
+        return kinds
 
     @app.get("/dashboard")
     @login_required
     def dashboard():
-        ensure_backoffice_read_access()
+        u = ensure_backoffice_read_access()
+        allowed_kinds = allowed_item_kinds_for_user(u)
+        if not allowed_kinds:
+            abort(403)
         conn = get_db()
         status_rows = conn.execute(
             """
             SELECT status, COUNT(*) AS c
             FROM items
+            WHERE kind IN ({})
             GROUP BY status
             ORDER BY c DESC
-            """
+            """.format(",".join(["?"] * len(allowed_kinds))),
+            tuple(sorted(allowed_kinds)),
         ).fetchall()
         top_categories = conn.execute(
             """
             SELECT category, COUNT(*) AS c
             FROM items
+            WHERE kind IN ({})
             GROUP BY category
             ORDER BY c DESC, category ASC
             LIMIT 8
-            """
+            """.format(",".join(["?"] * len(allowed_kinds))),
+            tuple(sorted(allowed_kinds)),
         ).fetchall()
         kpi = conn.execute(
             """
@@ -96,7 +103,9 @@ def register_overview_routes(app, deps: dict):
                 COUNT(*) AS total_items,
                 SUM(CASE WHEN status IN ('Handed over / Sent') THEN 1 ELSE 0 END) AS completed_items
             FROM items
-            """
+            WHERE kind IN ({})
+            """.format(",".join(["?"] * len(allowed_kinds))),
+            tuple(sorted(allowed_kinds)),
         ).fetchone()
         reminders = conn.execute(
             """
@@ -104,9 +113,11 @@ def register_overview_routes(app, deps: dict):
             FROM reminders r
             JOIN items i ON i.id = r.item_id
             WHERE r.is_done=0
+              AND i.kind IN ({})
             ORDER BY r.due_at ASC
             LIMIT 100
-            """
+            """.format(",".join(["?"] * len(allowed_kinds))),
+            tuple(sorted(allowed_kinds)),
         ).fetchall()
 
         # Compact "Possible Matches" snapshot for dashboard widgets.
@@ -115,9 +126,11 @@ def register_overview_routes(app, deps: dict):
             SELECT *
             FROM items
             WHERE status NOT IN ('Handed over / Sent', 'Lost forever')
+              AND kind IN ({})
             ORDER BY created_at DESC
             LIMIT 40
-            """
+            """.format(",".join(["?"] * len(allowed_kinds))),
+            tuple(sorted(allowed_kinds)),
         ).fetchall()
         score_bins = {"high": 0, "medium": 0, "low": 0}
         seen_pairs = set()
@@ -174,7 +187,6 @@ def register_overview_routes(app, deps: dict):
                 "url": url_for("matches_overview", min_score=35, max_score=54),
             },
         ]
-        u = current_user()
         conn.close()
         return render_template(
             "dashboard.html",
@@ -210,6 +222,9 @@ def register_overview_routes(app, deps: dict):
     @login_required
     def index():
         u = ensure_backoffice_read_access()
+        allowed_kinds = allowed_item_kinds_for_user(u)
+        if not allowed_kinds:
+            abort(403)
         sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,
@@ -219,6 +234,7 @@ def register_overview_routes(app, deps: dict):
         conn = get_db()
         ensure_item_links_schema(conn)
         items = conn.execute(sql, params).fetchall()
+        items = [r for r in items if r["kind"] in allowed_kinds]
         photo_counts = {
             r["item_id"]: r["c"]
             for r in conn.execute("SELECT item_id, COUNT(*) AS c FROM photos GROUP BY item_id").fetchall()
@@ -265,8 +281,11 @@ def register_overview_routes(app, deps: dict):
     @login_required
     def matches_overview():
         u = ensure_backoffice_read_access()
+        allowed_kinds = allowed_item_kinds_for_user(u)
+        if not allowed_kinds:
+            abort(403)
         q = (request.args.get("q") or "").strip()
-        kinds_selected = get_multi_values(request.args, "kind", {"lost", "found"})
+        kinds_selected = [k for k in get_multi_values(request.args, "kind", {"lost", "found"}) if k in allowed_kinds]
         source_statuses_selected = get_multi_values(request.args, "source_status", set(STATUSES))
         candidate_statuses_selected = get_multi_values(request.args, "candidate_status", set(STATUSES))
         categories_selected = get_multi_values(request.args, "category", set(category_names(active_only=True)))
@@ -330,7 +349,7 @@ def register_overview_routes(app, deps: dict):
         source_params.append(source_limit)
 
         conn = get_db()
-        sources = conn.execute(source_sql, tuple(source_params)).fetchall()
+        sources = [r for r in conn.execute(source_sql, tuple(source_params)).fetchall() if r["kind"] in allowed_kinds]
 
         pairs = []
         seen = set()

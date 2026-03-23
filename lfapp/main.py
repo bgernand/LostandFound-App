@@ -655,7 +655,10 @@ def create_app(config: dict | None = None):
         u = current_user()
         can_create_lost = bool(has_permission("items.create_lost", user=u))
         can_create_found = bool(has_permission("items.create_found", user=u))
+        can_view_lost_items = bool(has_permission("items.view_lost", user=u))
+        can_view_found_items = bool(has_permission("items.view_found", user=u))
         can_edit_items = bool(has_permission("items.edit", user=u))
+        can_edit_lost_items = bool(has_permission("items.edit_lost", user=u))
         can_edit_found_items = bool(has_permission("items.edit_found", user=u))
         can_view_pii = bool(has_permission("items.view_pii", user=u))
         can_review_items = bool(has_permission("items.review", user=u))
@@ -684,6 +687,7 @@ def create_app(config: dict | None = None):
                 can_create_lost,
                 can_create_found,
                 can_edit_items,
+                can_edit_lost_items,
                 can_edit_found_items,
                 can_bulk_status,
                 can_review_items,
@@ -693,6 +697,16 @@ def create_app(config: dict | None = None):
                 can_send_email,
             ]
         )
+        can_access_item_area = any(
+            [
+                can_view_lost_items,
+                can_view_found_items,
+                can_edit_items,
+                can_edit_lost_items,
+                can_edit_found_items,
+                can_review_items,
+            ]
+        )
         return {
             "STATUS_COLORS": STATUS_COLORS,
             "CONTACT_WAYS": CONTACT_WAYS,
@@ -700,7 +714,10 @@ def create_app(config: dict | None = None):
             "has_permission": lambda permission_key: bool(has_permission(permission_key, user=u)),
             "can_create_lost": can_create_lost,
             "can_create_found": can_create_found,
+            "can_view_lost_items": can_view_lost_items,
+            "can_view_found_items": can_view_found_items,
             "can_edit_items": can_edit_items,
+            "can_edit_lost_items": can_edit_lost_items,
             "can_edit_found_items": can_edit_found_items,
             "can_view_pii": can_view_pii,
             "can_review_items": can_review_items,
@@ -719,6 +736,7 @@ def create_app(config: dict | None = None):
             "can_admin_categories": can_admin_categories,
             "can_admin_menu": can_admin_menu,
             "can_write": can_write,
+            "can_access_item_area": can_access_item_area,
             "rbac_permission_keys": RBAC_PERMISSION_KEYS,
         }
 

@@ -15,9 +15,12 @@ RBAC_PERMISSION_KEYS = [
     "admin.settings",
     "admin.audit",
     "admin.categories",
+    "items.view_lost",
+    "items.view_found",
     "items.create_lost",
     "items.create_found",
     "items.edit",
+    "items.edit_lost",
     "items.edit_found",
     "items.view_pii",
     "items.review",
@@ -34,9 +37,12 @@ RBAC_PERMISSION_KEYS = [
 DEFAULT_ROLE_PERMISSIONS = {
     "admin": set(RBAC_PERMISSION_KEYS),
     "staff": {
+        "items.view_lost",
+        "items.view_found",
         "items.create_lost",
         "items.create_found",
         "items.edit",
+        "items.edit_lost",
         "items.edit_found",
         "items.view_pii",
         "items.review",
@@ -48,13 +54,22 @@ DEFAULT_ROLE_PERMISSIONS = {
         "reminders.manage",
     },
     "found-staff": {
+        "items.view_found",
         "items.create_found",
         "items.edit_found",
     },
-    "viewer": set(),
+    "lost-staff": {
+        "items.view_lost",
+        "items.create_lost",
+        "items.edit_lost",
+    },
+    "viewer": {
+        "items.view_lost",
+        "items.view_found",
+    },
 }
 
-SYSTEM_ROLES = ("admin", "staff", "found-staff", "viewer")
+SYSTEM_ROLES = ("admin", "staff", "found-staff", "lost-staff", "viewer")
 
 
 def get_db(db_path: str):

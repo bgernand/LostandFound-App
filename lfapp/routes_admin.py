@@ -41,9 +41,12 @@ def register_admin_routes(app, deps: dict):
         "admin.settings": "System settings",
         "admin.audit": "View audit",
         "admin.categories": "Manage categories",
+        "items.view_lost": "View Lost",
+        "items.view_found": "View Found",
         "items.create_lost": "Create Lost",
         "items.create_found": "Create Found",
         "items.edit": "Edit items",
+        "items.edit_lost": "Edit Lost only",
         "items.edit_found": "Edit Found only",
         "items.view_pii": "View personal data",
         "items.review": "Review public Lost",
@@ -56,6 +59,59 @@ def register_admin_routes(app, deps: dict):
         "items.send_email": "Send mail",
         "reminders.manage": "Manage reminders",
     }
+    permission_groups = [
+        {
+            "label": "Admin",
+            "keys": [
+                "admin.access",
+                "admin.users",
+                "admin.settings",
+                "admin.audit",
+                "admin.categories",
+            ],
+        },
+        {
+            "label": "Read",
+            "keys": [
+                "items.view_lost",
+                "items.view_found",
+                "items.view_pii",
+            ],
+        },
+        {
+            "label": "Create / Edit",
+            "keys": [
+                "items.create_lost",
+                "items.create_found",
+                "items.edit",
+                "items.edit_lost",
+                "items.edit_found",
+            ],
+        },
+        {
+            "label": "Workflow",
+            "keys": [
+                "items.review",
+                "items.bulk_status",
+                "items.link",
+                "items.photo_delete",
+                "items.delete",
+                "items.send_email",
+                "reminders.manage",
+            ],
+        },
+        {
+            "label": "Public",
+            "keys": [
+                "items.public_manage",
+                "items.public_regenerate",
+            ],
+        },
+    ]
+    grouped_permission_keys = [key for group in permission_groups for key in group["keys"] if key in rbac_permission_keys]
+    for key in rbac_permission_keys:
+        if key not in grouped_permission_keys:
+            grouped_permission_keys.append(key)
 
     def _role_names(conn):
         return [r["name"] for r in get_roles(conn)]
@@ -106,7 +162,8 @@ def register_admin_routes(app, deps: dict):
             users=users,
             roles=[r["name"] for r in role_rows],
             role_rows=role_rows,
-            permission_keys=rbac_permission_keys,
+            permission_keys=grouped_permission_keys,
+            permission_groups=permission_groups,
             permission_labels=permission_labels,
             role_permissions=role_permissions,
             user=current_user(),

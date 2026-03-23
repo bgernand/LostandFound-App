@@ -58,29 +58,12 @@ def register_item_routes(app, deps: dict):
     PUBLIC_LOST_MAX_FILES = deps["PUBLIC_LOST_MAX_FILES"]
     PUBLIC_LOST_CAPTCHA_ENABLED = deps["PUBLIC_LOST_CAPTCHA_ENABLED"]
 
-    BACKOFFICE_READ_PERMISSIONS = (
-        "admin.access",
-        "admin.users",
-        "admin.settings",
-        "admin.audit",
-        "admin.categories",
-        "items.create_lost",
-        "items.edit",
-        "items.view_pii",
-        "items.review",
-        "items.bulk_status",
-        "items.link",
-        "items.public_manage",
-        "items.public_regenerate",
-        "items.send_email",
-        "items.delete",
-        "reminders.manage",
-    )
-
     def can_edit_item(user_obj, item_row) -> bool:
         if not user_obj or not item_row:
             return False
         if has_permission("items.edit", user=user_obj):
+            return True
+        if item_row["kind"] == "lost" and has_permission("items.edit_lost", user=user_obj):
             return True
         if item_row["kind"] == "found" and has_permission("items.edit_found", user=user_obj):
             return True
@@ -89,7 +72,31 @@ def register_item_routes(app, deps: dict):
     def can_access_backoffice_read(user_obj) -> bool:
         if not user_obj:
             return False
-        return any(has_permission(key, user=user_obj) for key in BACKOFFICE_READ_PERMISSIONS)
+        return bool(allowed_item_kinds_for_user(user_obj))
+
+    def allowed_item_kinds_for_user(user_obj):
+        if not user_obj:
+            return set()
+        if has_permission("items.edit", user=user_obj) or has_permission("items.view_pii", user=user_obj):
+            return {"lost", "found"}
+        kinds = set()
+        if (
+            has_permission("items.view_lost", user=user_obj)
+            or has_permission("items.edit_lost", user=user_obj)
+            or has_permission("items.review", user=user_obj)
+        ):
+            kinds.add("lost")
+        if (
+            has_permission("items.view_found", user=user_obj)
+            or has_permission("items.edit_found", user=user_obj)
+        ):
+            kinds.add("found")
+        return kinds
+
+    def can_access_item_read(user_obj, item_row) -> bool:
+        if not item_row or not can_access_backoffice_read(user_obj):
+            return False
+        return item_row["kind"] in allowed_item_kinds_for_user(user_obj)
 
     def row_to_dict(row):
         if not row:
@@ -759,13 +766,14 @@ def register_item_routes(app, deps: dict):
     @login_required
     def detail(item_id: int):
         u = current_user()
-        if not can_access_backoffice_read(u):
-            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
             conn.close()
             abort(404)
+        if not can_access_item_read(u, item):
+            conn.close()
+            abort(403)
 
         photos = conn.execute("SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC", (item_id,)).fetchall()
         matches = find_matches(
@@ -846,13 +854,23 @@ def register_item_routes(app, deps: dict):
     @login_required
     def uploaded_file(filename):
         u = current_user()
-        if not can_access_backoffice_read(u):
-            abort(403)
         conn = get_db()
-        photo = conn.execute("SELECT item_id FROM photos WHERE filename=? LIMIT 1", (filename,)).fetchone()
-        conn.close()
+        photo = conn.execute(
+            """
+            SELECT p.item_id, i.kind
+            FROM photos p
+            JOIN items i ON i.id = p.item_id
+            WHERE p.filename=? LIMIT 1
+            """,
+            (filename,),
+        ).fetchone()
         if not photo:
+            conn.close()
             abort(404)
+        if not can_access_item_read(u, photo):
+            conn.close()
+            abort(403)
+        conn.close()
         path = (UPLOAD_DIR / filename).resolve()
         if UPLOAD_DIR.resolve() not in path.parents:
             abort(403)
@@ -1395,10 +1413,11 @@ def register_item_routes(app, deps: dict):
     @login_required
     def item_qr(item_id: int):
         u = current_user()
-        if not can_access_backoffice_read(u):
-            abort(403)
         conn = get_db()
-        item = conn.execute("SELECT id, public_token, public_enabled FROM items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute("SELECT id, kind, public_token, public_enabled FROM items WHERE id=?", (item_id,)).fetchone()
+        if not can_access_item_read(u, item):
+            conn.close()
+            abort(403)
         conn.close()
         if not item or not item["public_token"]:
             abort(404)
@@ -1416,13 +1435,14 @@ def register_item_routes(app, deps: dict):
     @login_required
     def receipt(item_id: int):
         u = current_user()
-        if not can_access_backoffice_read(u):
-            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
             conn.close()
             abort(404)
+        if not can_access_item_read(u, item):
+            conn.close()
+            abort(403)
         photos = conn.execute("SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC", (item_id,)).fetchall()
         conn.close()
 
@@ -1445,13 +1465,13 @@ def register_item_routes(app, deps: dict):
     @login_required
     def receipt_pdf(item_id: int):
         u = current_user()
-        if not can_access_backoffice_read(u):
-            abort(403)
         conn = get_db()
         item = conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         conn.close()
         if not item:
             abort(404)
+        if not can_access_item_read(u, item):
+            abort(403)
 
         item_code = (item["public_id"] or f"ID{item_id}").strip()
         receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
@@ -1586,6 +1606,9 @@ def register_item_routes(app, deps: dict):
         u = current_user()
         if not can_access_backoffice_read(u):
             abort(403)
+        allowed_kinds = allowed_item_kinds_for_user(u)
+        if not allowed_kinds:
+            abort(403)
         sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,
@@ -1594,6 +1617,7 @@ def register_item_routes(app, deps: dict):
         conn = get_db()
         rows = conn.execute(sql, params).fetchall()
         conn.close()
+        rows = [r for r in rows if r["kind"] in allowed_kinds]
 
         out = io.StringIO()
         writer = csv.writer(out)

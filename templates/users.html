@@ -205,11 +205,24 @@
       <table class="table table-sm align-middle">
         <thead>
           <tr>
-            <th>Role</th>
-            {% for p in permission_keys %}
-              <th class="text-nowrap">{{ permission_labels.get(p, p) }}</th>
+            <th rowspan="2">Role</th>
+            {% for group in permission_groups %}
+              {% set visible_keys = [] %}
+              {% for key in group['keys'] %}
+                {% if key in permission_keys %}
+                  {% set _ = visible_keys.append(key) %}
+                {% endif %}
+              {% endfor %}
+              {% if visible_keys %}
+                <th class="text-center text-nowrap" colspan="{{ visible_keys|length }}">{{ group['label'] }}</th>
+              {% endif %}
             {% endfor %}
-            <th class="text-end">Actions</th>
+            <th class="text-end" rowspan="2">Actions</th>
+          </tr>
+          <tr>
+            {% for p in permission_keys %}
+              <th class="text-nowrap small">{{ permission_labels.get(p, p) }}</th>
+            {% endfor %}
           </tr>
         </thead>
         <tbody>

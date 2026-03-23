@@ -93,6 +93,8 @@ def register_auth_routes(app, deps: dict):
         audit("login", "user", u["id"], f"username={u['username']}")
         if u["role"] == "found-staff" and nxt in {url_for("dashboard"), url_for("index")}:
             nxt = url_for("new_found_item")
+        if u["role"] == "lost-staff" and nxt in {url_for("dashboard"), url_for("index")}:
+            nxt = url_for("new_lost_item")
         return redirect(nxt)
 
     @app.get("/login/2fa")
@@ -150,6 +152,8 @@ def register_auth_routes(app, deps: dict):
         audit("login", "user", u["id"], f"username={u['username']} 2fa=totp")
         if u["role"] == "found-staff" and nxt in {url_for("dashboard"), url_for("index")}:
             nxt = url_for("new_found_item")
+        if u["role"] == "lost-staff" and nxt in {url_for("dashboard"), url_for("index")}:
+            nxt = url_for("new_lost_item")
         return redirect(nxt)
 
     @app.post("/logout")
