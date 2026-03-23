@@ -62,6 +62,74 @@ def register_item_routes(app, deps: dict):
     PUBLIC_LOST_MAX_FILES = deps["PUBLIC_LOST_MAX_FILES"]
     PUBLIC_LOST_CAPTCHA_ENABLED = deps["PUBLIC_LOST_CAPTCHA_ENABLED"]
 
+    def _pop_unassigned_mail_draft(expected_kind=None, keep=False):
+        payload = session.get("unassigned_mail_item_draft")
+        if not isinstance(payload, dict):
+            return None
+        kind = (payload.get("kind") or "").strip()
+        if expected_kind and kind != expected_kind:
+            return None
+        if not keep:
+            session.pop("unassigned_mail_item_draft", None)
+        return payload
+
+    def _link_unassigned_mail_to_new_item(conn, item_id: int):
+        payload = _pop_unassigned_mail_draft(keep=True)
+        if not isinstance(payload, dict):
+            return None
+        message_id = payload.get("message_id")
+        if not message_id:
+            session.pop("unassigned_mail_item_draft", None)
+            return None
+        row = conn.execute(
+            """
+            SELECT id, sender, recipient, subject, body, message_id, in_reply_to, mailbox_folder
+            FROM mail_unassigned_messages
+            WHERE id=? AND assigned_at IS NULL
+            """,
+            (int(message_id),),
+        ).fetchone()
+        if not row:
+            session.pop("unassigned_mail_item_draft", None)
+            return None
+        item = conn.execute("SELECT id, public_id FROM items WHERE id=?", (item_id,)).fetchone()
+        if not item:
+            return None
+        ticket_ref = build_ticket_reference(item)
+        conn.execute(
+            """
+            INSERT INTO item_mail_messages (
+                item_id, actor_user_id, direction, sender, recipient, subject, body,
+                ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                mailbox_folder, created_at
+            )
+            VALUES (?, ?, 'incoming', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                int(item_id),
+                current_user()["id"] if current_user() else None,
+                row["sender"],
+                row["recipient"],
+                row["subject"],
+                row["body"],
+                ticket_ref,
+                row["message_id"],
+                row["in_reply_to"],
+                row["mailbox_folder"],
+                now_utc(),
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE mail_unassigned_messages
+            SET assigned_item_id=?, assigned_by_user_id=?, assigned_at=?
+            WHERE id=?
+            """,
+            (int(item_id), current_user()["id"] if current_user() else None, now_utc(), int(message_id)),
+        )
+        session.pop("unassigned_mail_item_draft", None)
+        return {"message_id": int(message_id), "ticket_ref": ticket_ref}
+
     def can_edit_item(user_obj, item_row) -> bool:
         if not user_obj or not item_row:
             return False
@@ -328,23 +396,27 @@ def register_item_routes(app, deps: dict):
     @app.get("/items/new/lost")
     @require_permission("items.create_lost")
     def new_lost_item():
+        draft_payload = _pop_unassigned_mail_draft(expected_kind="lost", keep=True)
         return render_item_form(
-            item=None,
+            item=(draft_payload.get("draft") if draft_payload else None),
             matches=[],
             errors={},
             forced_kind="lost",
             form_action=url_for("create_lost_item"),
+            unassigned_mail_origin=(draft_payload.get("meta") if draft_payload else None),
         )
 
     @app.get("/items/new/found")
     @require_permission("items.create_found")
     def new_found_item():
+        draft_payload = _pop_unassigned_mail_draft(expected_kind="found", keep=True)
         return render_item_form(
-            item=None,
+            item=(draft_payload.get("draft") if draft_payload else None),
             matches=[],
             errors={},
             forced_kind="found",
             form_action=url_for("create_found_item"),
+            unassigned_mail_origin=(draft_payload.get("meta") if draft_payload else None),
         )
 
     @app.get("/report/lost")
@@ -811,6 +883,7 @@ def register_item_routes(app, deps: dict):
             )
             item_id = cur.lastrowid
             saved = save_uploaded_photos(conn, item_id, max_files=PUBLIC_LOST_MAX_FILES)
+            unassigned_mail_link = _link_unassigned_mail_to_new_item(conn, int(item_id))
             matches = find_matches(conn, kind, title, category, location, event_date=event_date, item_id=item_id)
             conn.commit()
         except ValueError as exc:
@@ -857,6 +930,15 @@ def register_item_routes(app, deps: dict):
             new_values=row_to_dict(created_item),
             meta={"photos_added": saved},
         )
+        if unassigned_mail_link:
+            audit(
+                "mail_unassigned_assign",
+                "item",
+                item_id,
+                f"mail_unassigned_id={unassigned_mail_link['message_id']} ticket_ref={unassigned_mail_link['ticket_ref']}",
+                meta=unassigned_mail_link,
+            )
+            flash("Inbound mail was linked to the new item.", "info")
         if save_and_new:
             flash("Item created. Ready for the next one.", "success")
             if matches:

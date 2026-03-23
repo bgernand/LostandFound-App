@@ -1,6 +1,8 @@
 import sqlite3
+import re
+from email.utils import parseaddr
 
-from flask import abort, flash, redirect, render_template, request, url_for
+from flask import abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import generate_password_hash
 
 
@@ -37,6 +39,53 @@ def register_admin_routes(app, deps: dict):
     PUBLIC_LOST_CONFIRM_ALLOWED_VARS = deps["PUBLIC_LOST_CONFIRM_ALLOWED_VARS"]
     ITEM_EMAIL_ALLOWED_VARS = deps["ITEM_EMAIL_ALLOWED_VARS"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
+
+    def _mail_subject_summary(subject: str):
+        clean = re.sub(r"\s+", " ", (subject or "").strip())
+        return clean[:140]
+
+    def _build_unassigned_mail_item_draft(row, kind: str):
+        sender_name, sender_email = parseaddr((row["sender"] or "").strip())
+        name_parts = [part for part in re.split(r"\s+", sender_name.strip()) if part] if sender_name else []
+        first_name = name_parts[0] if name_parts else ""
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+        title = _mail_subject_summary(row["subject"] or "") or ("Inbound mail" if kind == "found" else "Mail request")
+        description = (row["body"] or "").strip()
+        if len(description) > 8000:
+            description = description[:8000].rstrip() + "\n\n[Message truncated]"
+        base = {
+            "kind": kind,
+            "title": title,
+            "description": description,
+            "category": "Other",
+            "location": "",
+            "event_date": "",
+            "status": "Lost" if kind == "lost" else "Found",
+            "lost_what": title,
+            "lost_last_name": last_name,
+            "lost_first_name": first_name,
+            "lost_group_leader": "",
+            "lost_street": "",
+            "lost_number": "",
+            "lost_additional": "",
+            "lost_postcode": "",
+            "lost_town": "",
+            "lost_country": "",
+            "lost_email": sender_email,
+            "lost_phone": "",
+            "lost_leaving_date": "",
+            "lost_contact_way": "E-Mail",
+            "lost_notes": f"Inbound unassigned mail imported.\n\nFrom: {row['sender'] or '—'}\nTo: {row['recipient'] or '—'}\nSubject: {row['subject'] or '—'}",
+            "postage_price": "",
+            "postage_paid": 0,
+        }
+        if kind == "found":
+            for key in list(base.keys()):
+                if key.startswith("lost_"):
+                    if key == "lost_notes":
+                        continue
+                    base[key] = ""
+        return base
 
     def row_to_dict(row):
         if not row:
@@ -247,18 +296,68 @@ def register_admin_routes(app, deps: dict):
     @app.get("/admin/mail-ticket/unassigned")
     @require_permission("admin.settings")
     def admin_mail_ticket_unassigned():
+        selected_id_raw = (request.args.get("message_id") or "").strip()
+        mail_query = (request.args.get("q") or "").strip()
+        item_query = (request.args.get("item_q") or "").strip()
         conn = get_db()
+        params = []
+        where = ["assigned_at IS NULL"]
+        if mail_query:
+            like = f"%{mail_query}%"
+            where.append("(coalesce(sender,'') LIKE ? OR coalesce(subject,'') LIKE ? OR coalesce(body,'') LIKE ?)")
+            params.extend([like, like, like])
         rows = conn.execute(
-            """
+            f"""
             SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
                    references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
             FROM mail_unassigned_messages
-            WHERE assigned_at IS NULL
+            WHERE {' AND '.join(where)}
             ORDER BY created_at DESC, id DESC
-            """
+            """,
+            tuple(params),
         ).fetchall()
+        selected_row = None
+        if rows:
+            if selected_id_raw:
+                try:
+                    selected_id = int(selected_id_raw)
+                except ValueError:
+                    selected_id = 0
+                selected_row = next((row for row in rows if int(row["id"]) == selected_id), None)
+            if not selected_row:
+                selected_row = rows[0]
+        item_candidates = []
+        if selected_row:
+            search_term = item_query
+            if not search_term:
+                search_term = (selected_row["ticket_ref_guess"] or "").strip()
+            if not search_term:
+                search_term = _mail_subject_summary(selected_row["subject"] or "")
+            if search_term:
+                like = f"%{search_term[:80]}%"
+                item_candidates = conn.execute(
+                    """
+                    SELECT id, public_id, kind, title, status, category, location, event_date
+                    FROM items
+                    WHERE upper(public_id)=upper(?)
+                       OR CAST(id AS TEXT)=?
+                       OR coalesce(title,'') LIKE ?
+                       OR coalesce(description,'') LIKE ?
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 20
+                    """,
+                    (search_term, search_term, like, like),
+                ).fetchall()
         conn.close()
-        return render_template("admin_mail_unassigned.html", user=current_user(), rows=rows)
+        return render_template(
+            "admin_mail_unassigned.html",
+            user=current_user(),
+            rows=rows,
+            selected_row=selected_row,
+            mail_query=mail_query,
+            item_query=item_query,
+            item_candidates=item_candidates,
+        )
 
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/assign")
     @require_permission("admin.settings")
@@ -346,6 +445,43 @@ def register_admin_routes(app, deps: dict):
         )
         flash(f"Unassigned mail linked to item {item['public_id'] or item['id']}.", "success")
         return redirect(url_for("detail", item_id=int(item["id"])))
+
+    @app.post("/admin/mail-ticket/unassigned/<int:message_id>/start-create/<kind>")
+    @require_permission("admin.settings")
+    def admin_mail_ticket_start_create(message_id: int, kind: str):
+        if kind not in {"lost", "found"}:
+            abort(404)
+        if kind == "lost" and not has_permission("items.create_lost", user=current_user()):
+            abort(403)
+        if kind == "found" and not has_permission("items.create_found", user=current_user()):
+            abort(403)
+        conn = get_db()
+        row = conn.execute(
+            """
+            SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
+                   references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+            FROM mail_unassigned_messages
+            WHERE id=? AND assigned_at IS NULL
+            """,
+            (message_id,),
+        ).fetchone()
+        conn.close()
+        if not row:
+            abort(404)
+        session["unassigned_mail_item_draft"] = {
+            "kind": kind,
+            "message_id": int(message_id),
+            "draft": _build_unassigned_mail_item_draft(row, kind),
+            "meta": {
+                "message_id": int(message_id),
+                "sender": row["sender"],
+                "recipient": row["recipient"],
+                "subject": row["subject"],
+                "received_at": row["received_at"] or row["created_at"],
+            },
+        }
+        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
 
     @app.post("/admin/settings/mail-templates")
     @require_permission("admin.access")

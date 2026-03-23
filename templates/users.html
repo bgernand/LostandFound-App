@@ -29,27 +29,41 @@
     .roles-matrix-table .actions-cell,
     .roles-matrix-table .actions-head {
       position: sticky;
-      background: #fff;
+      background: var(--bs-body-bg, #fff);
       z-index: 2;
+      background-clip: padding-box;
     }
     .roles-matrix-table .role-cell,
     .roles-matrix-table .role-head {
       left: 0;
       min-width: 180px;
-      box-shadow: 1px 0 0 var(--bs-border-color);
+      box-shadow: 1px 0 0 var(--bs-border-color), 8px 0 14px rgba(15, 23, 42, 0.08);
       z-index: 3;
     }
     .roles-matrix-table .actions-cell,
     .roles-matrix-table .actions-head {
       right: 0;
       min-width: 150px;
-      box-shadow: -1px 0 0 var(--bs-border-color);
+      box-shadow: -1px 0 0 var(--bs-border-color), -8px 0 14px rgba(15, 23, 42, 0.08);
+      z-index: 3;
+    }
+    .roles-matrix-table .role-head,
+    .roles-matrix-table .actions-head {
+      z-index: 4;
     }
     .roles-matrix-table tbody tr:nth-child(odd) td {
       background: rgba(0, 0, 0, 0.015);
     }
     .roles-matrix-table tbody tr:hover td {
       background: rgba(13, 110, 253, 0.05);
+    }
+    .roles-matrix-table tbody tr:nth-child(odd) .role-cell,
+    .roles-matrix-table tbody tr:nth-child(odd) .actions-cell {
+      background: var(--bs-body-bg, #fff);
+    }
+    .roles-matrix-table tbody tr:hover .role-cell,
+    .roles-matrix-table tbody tr:hover .actions-cell {
+      background: var(--bs-body-bg, #fff);
     }
     .roles-matrix-table td.group-divider,
     .roles-matrix-table th.group-divider {
