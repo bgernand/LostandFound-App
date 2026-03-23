@@ -914,6 +914,7 @@ def register_admin_routes(app, deps: dict):
 
         sample_ctx = {
             "item_id": "202610A",
+            "ticket_ref": "LFT-202610A",
             "title": "Black leather wallet",
             "status": "Lost",
             "submitted_at": "2026-03-02T18:45:00",

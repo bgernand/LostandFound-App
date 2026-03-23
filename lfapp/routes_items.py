@@ -620,8 +620,10 @@ def register_item_routes(app, deps: dict):
         smtp_cfg = get_smtp_settings()
         recipient = (lost.get("lost_email") or "").strip()
         if public_mail_cfg.get("enabled") and smtp_cfg.get("enabled") and recipient:
+            ticket_ref = build_ticket_reference(created_item) if created_item else f"LFT-{public_id}"
             context = {
                 "item_id": created_item["public_id"] if created_item else "",
+                "ticket_ref": ticket_ref,
                 "title": created_item["title"] if created_item else title,
                 "status": created_item["status"] if created_item else status,
                 "submitted_at": created_item["created_at"] if created_item else now_utc(),

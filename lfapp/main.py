@@ -152,6 +152,7 @@ Lost & Found Team
 MAIL_TEMPLATE_VAR_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
     "item_id",
+    "ticket_ref",
     "title",
     "status",
     "submitted_at",
@@ -686,19 +687,6 @@ def create_app(config: dict | None = None):
                 filename=filename,
             )
 
-        def _imap_connect(cfg):
-            if not cfg["imap_use_ssl"]:
-                raise RuntimeError("Only IMAP SSL is supported.")
-            conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
-            conn.login(cfg["imap_username"], cfg["imap_password"])
-            return conn
-
-        def _ensure_mailbox(imap_conn, mailbox_name):
-            status, _ = imap_conn.select(f'"{mailbox_name}"')
-            if status == "OK":
-                return
-            imap_conn.create(mailbox_name)
-
         try:
             smtp_cls = smtplib.SMTP_SSL if smtp_cfg["use_ssl"] else smtplib.SMTP
             with smtp_cls(smtp_cfg["host"], smtp_cfg["port"], timeout=smtp_cfg["timeout"]) as smtp:
@@ -714,7 +702,7 @@ def create_app(config: dict | None = None):
                     imap_conn = _imap_connect(ticket_cfg)
                     _ensure_mailbox(imap_conn, mailbox_append_folder)
                     imap_conn.append(
-                        mailbox_append_folder,
+                        _quote_imap_mailbox(mailbox_append_folder),
                         "\\Seen",
                         imaplib.Time2Internaldate(time.time()),
                         msg.as_bytes(),
@@ -736,6 +724,55 @@ def create_app(config: dict | None = None):
             if return_metadata:
                 return False, str(exc), {}
             return False, str(exc)
+
+    def _quote_imap_mailbox(mailbox_name: str) -> str:
+        return f'"{str(mailbox_name or "").replace(chr(34), "")}"'
+
+    def _imap_connect(cfg):
+        if not cfg["imap_use_ssl"]:
+            raise RuntimeError("Only IMAP SSL is supported.")
+        conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
+        conn.login(cfg["imap_username"], cfg["imap_password"])
+        return conn
+
+    def _imap_mailbox_exists(imap_conn, mailbox_name: str) -> bool:
+        status, data = imap_conn.list("", _quote_imap_mailbox(mailbox_name))
+        if status != "OK":
+            return False
+        return bool(data and any(row not in (None, b"") for row in data))
+
+    def _ensure_mailbox(imap_conn, mailbox_name: str):
+        mailbox_name = (mailbox_name or "").strip()
+        if not mailbox_name:
+            return
+        if _imap_mailbox_exists(imap_conn, mailbox_name):
+            return
+        delimiter = "/" if "/" in mailbox_name else "."
+        parts = [part.strip() for part in mailbox_name.split(delimiter) if part.strip()]
+        current = []
+        for part in parts:
+            current.append(part)
+            partial_name = delimiter.join(current)
+            if _imap_mailbox_exists(imap_conn, partial_name):
+                continue
+            create_status, _ = imap_conn.create(_quote_imap_mailbox(partial_name))
+            if create_status != "OK" and not _imap_mailbox_exists(imap_conn, partial_name):
+                raise RuntimeError(f"Could not create IMAP mailbox {partial_name}.")
+
+    def _select_mailbox(imap_conn, mailbox_name: str):
+        status, data = imap_conn.select(_quote_imap_mailbox(mailbox_name))
+        if status != "OK":
+            raise RuntimeError(f"Could not open IMAP mailbox {mailbox_name}.")
+        return data
+
+    def _move_message(imap_conn, msg_num, source_folder: str, target_folder: str) -> bool:
+        _ensure_mailbox(imap_conn, target_folder)
+        _select_mailbox(imap_conn, source_folder)
+        copy_status, _ = imap_conn.copy(msg_num, _quote_imap_mailbox(target_folder))
+        if copy_status != "OK":
+            return False
+        store_status, _ = imap_conn.store(msg_num, "+FLAGS", "\\Deleted")
+        return store_status == "OK"
 
     def csrf_token():
         token = session.get("_csrf_token")
@@ -806,20 +843,6 @@ def create_app(config: dict | None = None):
         lock_token = secrets.token_hex(16)
         now_ts = int(time.time())
 
-        def _ensure_mailbox(imap_conn_obj, mailbox_name):
-            status, _ = imap_conn_obj.select(f'"{mailbox_name}"')
-            if status == "OK":
-                return
-            imap_conn_obj.create(mailbox_name)
-
-        def _move_message(imap_conn_obj, num, folder_name):
-            _ensure_mailbox(imap_conn_obj, folder_name)
-            copy_status, _ = imap_conn_obj.copy(num, folder_name)
-            if copy_status == "OK":
-                imap_conn_obj.store(num, "+FLAGS", "\\Deleted")
-                return True
-            return False
-
         try:
             conn = get_db()
             conn.execute("BEGIN IMMEDIATE")
@@ -839,9 +862,8 @@ def create_app(config: dict | None = None):
             set_setting(conn, "mail_ticket_poll_lock_token", lock_token)
             conn.commit()
 
-            imap_conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
-            imap_conn.login(cfg["imap_username"], cfg["imap_password"])
-            imap_conn.select(f'"{cfg["imap_inbox_folder"]}"')
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, cfg["imap_inbox_folder"])
             status, data = imap_conn.search(None, "ALL")
             if status != "OK":
                 result["ok"] = False
@@ -894,7 +916,7 @@ def create_app(config: dict | None = None):
                     str(message.get("X-LostFound-Ticket-Ref") or "").strip(),
                 )
                 if not ticket_ref:
-                    if _move_message(imap_conn, num, cfg["imap_unassigned_folder"]):
+                    if _move_message(imap_conn, num, cfg["imap_inbox_folder"], cfg["imap_unassigned_folder"]):
                         conn.execute(
                             """
                             INSERT INTO mail_unassigned_messages (
@@ -941,7 +963,7 @@ def create_app(config: dict | None = None):
                     (item_ref,),
                 ).fetchone()
                 if not item:
-                    if _move_message(imap_conn, num, cfg["imap_unassigned_folder"]):
+                    if _move_message(imap_conn, num, cfg["imap_inbox_folder"], cfg["imap_unassigned_folder"]):
                         conn.execute(
                             """
                             INSERT INTO mail_unassigned_messages (
@@ -1003,7 +1025,7 @@ def create_app(config: dict | None = None):
                     ).fetchone()
                 if exists:
                     result["duplicates"] += 1
-                    _move_message(imap_conn, num, cfg["imap_processed_folder"])
+                    _move_message(imap_conn, num, cfg["imap_inbox_folder"], cfg["imap_processed_folder"])
                     continue
                 conn.execute(
                     """
@@ -1037,7 +1059,7 @@ def create_app(config: dict | None = None):
                 )
                 conn.commit()
                 try:
-                    _move_message(imap_conn, num, cfg["imap_processed_folder"])
+                    _move_message(imap_conn, num, cfg["imap_inbox_folder"], cfg["imap_processed_folder"])
                 except Exception:
                     result["errors"] += 1
                 result["processed"] += 1
@@ -1097,12 +1119,15 @@ def create_app(config: dict | None = None):
             return False, "Only IMAP SSL is supported."
         imap_conn = None
         try:
-            imap_conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
-            imap_conn.login(cfg["imap_username"], cfg["imap_password"])
-            status, _ = imap_conn.select(f'"{cfg["imap_inbox_folder"]}"')
-            if status != "OK":
-                return False, f"Could not open inbox folder {cfg['imap_inbox_folder']}."
-            return True, f"IMAP connection successful. Inbox {cfg['imap_inbox_folder']} is reachable."
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, cfg["imap_inbox_folder"])
+            _ensure_mailbox(imap_conn, cfg["imap_sent_folder"])
+            _ensure_mailbox(imap_conn, cfg["imap_processed_folder"])
+            _ensure_mailbox(imap_conn, cfg["imap_unassigned_folder"])
+            return (
+                True,
+                "IMAP connection successful. Inbox is reachable and ticket folders are ready.",
+            )
         except Exception as exc:
             app.logger.exception("IMAP connection test failed")
             return False, str(exc)
