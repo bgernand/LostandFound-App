@@ -120,6 +120,17 @@ def register_admin_routes(app, deps: dict):
     for key in rbac_permission_keys:
         if key not in grouped_permission_keys:
             grouped_permission_keys.append(key)
+    permission_groups_view = []
+    for index, group in enumerate(permission_groups):
+        visible_keys = [key for key in group["keys"] if key in grouped_permission_keys]
+        if visible_keys:
+            permission_groups_view.append(
+                {
+                    "label": group["label"],
+                    "visible_keys": visible_keys,
+                    "is_last": index == len(permission_groups) - 1,
+                }
+            )
 
     def _role_names(conn):
         return [r["name"] for r in get_roles(conn)]
@@ -221,7 +232,7 @@ def register_admin_routes(app, deps: dict):
             roles=[r["name"] for r in role_rows],
             role_rows=role_rows,
             permission_keys=grouped_permission_keys,
-            permission_groups=permission_groups,
+            permission_groups=permission_groups_view,
             permission_labels=permission_labels,
             role_permissions=role_permissions,
             user=current_user(),

@@ -950,14 +950,18 @@ def register_item_routes(app, deps: dict):
         receipt_meta = build_receipt_meta(item, item_id)
         mail_ctx = build_item_mail_context(item, item_id, receipt_meta["receipt_no"], receipt_meta["public_url"])
         mail_ctx["ticket_ref"] = build_ticket_reference(item)
+        ticket_subject_tag = f"[{mail_ctx['ticket_ref']}]" if mail_ticket_cfg["enabled"] else ""
         email_templates = []
         if item["kind"] == "lost":
             for template in get_item_email_templates(conn, active_only=True):
+                rendered_subject = render_mail_template(template["subject_template"], mail_ctx).strip()
+                if ticket_subject_tag and ticket_subject_tag.lower() not in rendered_subject.lower():
+                    rendered_subject = f"{ticket_subject_tag} {rendered_subject}".strip()
                 email_templates.append(
                     {
                         "id": template["id"],
                         "name": template["name"],
-                        "subject": render_mail_template(template["subject_template"], mail_ctx),
+                        "subject": rendered_subject,
                         "body": render_mail_template(template["body_template"], mail_ctx),
                     }
                 )
@@ -978,6 +982,7 @@ def register_item_routes(app, deps: dict):
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
             mail_ticketing_enabled=mail_ticket_cfg["enabled"],
+            ticket_ref=mail_ctx["ticket_ref"],
             email_templates=email_templates,
             item_email_allowed_vars=ITEM_EMAIL_ALLOWED_VARS,
             user=u,

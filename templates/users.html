@@ -271,28 +271,14 @@
           <tr>
             <th class="role-head align-middle" rowspan="2">Role</th>
             {% for group in permission_groups %}
-              {% set visible_keys = [] %}
-              {% for key in group['keys'] %}
-                {% if key in permission_keys %}
-                  {% set _ = visible_keys.append(key) %}
-                {% endif %}
-              {% endfor %}
-              {% if visible_keys %}
-                <th class="text-center text-nowrap group-head{% if loop.last %}{% else %} group-divider{% endif %}" colspan="{{ visible_keys|length }}">{{ group['label'] }}</th>
-              {% endif %}
+              <th class="text-center text-nowrap group-head{% if not group['is_last'] %} group-divider{% endif %}" colspan="{{ group['visible_keys']|length }}">{{ group['label'] }}</th>
             {% endfor %}
             <th class="text-end actions-head align-middle" rowspan="2">Actions</th>
           </tr>
           <tr>
             {% for group in permission_groups %}
-              {% set visible_keys = [] %}
-              {% for key in group['keys'] %}
-                {% if key in permission_keys %}
-                  {% set _ = visible_keys.append(key) %}
-                {% endif %}
-              {% endfor %}
-              {% for p in visible_keys %}
-                <th class="perm-head small text-center{% if loop.last %}{% if not loop.parent.last %} group-divider{% endif %}{% endif %}">
+              {% for p in group['visible_keys'] %}
+                <th class="perm-head small text-center{% if loop.last and not group['is_last'] %} group-divider{% endif %}">
                   {{ permission_labels.get(p, p) }}
                 </th>
               {% endfor %}
@@ -313,14 +299,8 @@
                 {% endif %}
               </td>
               {% for group in permission_groups %}
-                {% set visible_keys = [] %}
-                {% for key in group['keys'] %}
-                  {% if key in permission_keys %}
-                    {% set _ = visible_keys.append(key) %}
-                  {% endif %}
-                {% endfor %}
-                {% for p in visible_keys %}
-                  <td class="text-center{% if loop.last %}{% if not loop.parent.last %} group-divider{% endif %}{% endif %}">
+                {% for p in group['visible_keys'] %}
+                  <td class="text-center{% if loop.last and not group['is_last'] %} group-divider{% endif %}">
                     <input class="form-check-input" type="checkbox" name="permissions" value="{{ p }}" form="{{ perm_form_id }}"
                            {% if role_permissions.get(role_name, {}).get(p) %}checked{% endif %}>
                   </td>

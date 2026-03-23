@@ -229,8 +229,13 @@
               </div>
               <div class="col-12">
                 <label class="form-label">Subject</label>
-                <input class="form-control" id="mailSubjectInput" name="subject" value="{{ email_templates[0]['subject'] if email_templates else 'Lost & Found update for Item ID ' ~ (item['public_id'] or '—') }}" required>
+                <input class="form-control" id="mailSubjectInput" name="subject" value="{{ email_templates[0]['subject'] if email_templates else (( '[' ~ ticket_ref ~ '] ' ) if mail_ticketing_enabled and ticket_ref else '') ~ 'Lost & Found update for Item ID ' ~ (item['public_id'] or '—') }}" required>
               </div>
+              {% if mail_ticketing_enabled and ticket_ref %}
+              <div class="col-12">
+                <div class="small text-muted">Mail reference: <code>{{ ticket_ref }}</code></div>
+              </div>
+              {% endif %}
               <div class="col-12">
                 <label class="form-label">Message</label>
                 <textarea class="form-control" id="mailBodyInput" name="body" rows="10" required>{% if email_templates %}{{ email_templates[0]['body'] }}{% else %}Hello,
