@@ -19,11 +19,13 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Item timeline in detail view (audit-based event history)
 - Dashboard with KPIs, status distribution, top categories, and open follow-up reminders
 - Bulk status update for selected items in the main overview
-- Role model: `admin`, `staff`, `viewer` (viewer is read-only)
+- Role model with granular permissions: `admin`, `staff`, `found-staff`, `lost-staff`, `viewer`
 - Improved search with token expansion, synonym support, and phonetic (`soundex`) matching
 - Optional per-user 2FA with TOTP (authenticator app)
 - Admin controls for TOTP mandatory mode and per-user 2FA reset
 - Manual SMTP e-mail sending from Lost Request detail view to requester address
+- Mail composer popup with admin-managed templates, variable rendering, and optional receipt PDF attachment
+- Sent e-mails are stored per item and shown on the detail page as mail history
 - Description quality validation with live form feedback and admin-managed blacklist extension
 - Public Lost submission page (`/report/lost`) without login
 - Dedicated Lost Review Queue with mass-processing flow (`Reviewed & Next`)
@@ -37,10 +39,12 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Daily automatic maintenance sets `Lost` items to `Lost forever` when `event_date` is older than 90 days
 
 ## Roles and Permissions
-- `admin`: full access, including user/category admin and destructive actions
-- `staff`: operational write access (create/edit/link/update items, reminders, bulk actions)
-- `staff`: includes review of public lost submissions (`items.review`)
-- `viewer`: read-only access to overviews/details/dashboard (no write actions)
+- `admin`: full access, including user/category admin, mail template management, and destructive actions
+- `staff`: operational write access across Lost and Found items, reminders, bulk actions, links, and public review
+- `found-staff`: create and edit Found items only
+- `lost-staff`: create and edit Lost items, view personal data, and send mail
+- `viewer`: read-only access based on explicit `items.view_lost` / `items.view_found` permissions
+- Mail template management is restricted to admins. Mail usage itself is available to all roles with `items.send_email`.
 
 ## Two-Factor Authentication (TOTP)
 - Each user can enable/disable 2FA in `Settings -> Two-factor authentication`.
@@ -207,6 +211,8 @@ chmod +x deploy.sh
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
 - Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
 - Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
+- Item mail templates are managed in `Settings -> System Settings` and support variables such as `{{ item_id }}`, `{{ title }}`, `{{ status }}`, `{{ full_name }}`, `{{ receipt_no }}`, and `{{ public_url }}`.
+- The mail composer popup on Lost Request detail pages can optionally attach the current Receipt PDF to the outgoing mail.
 - Description quality defaults and blacklist extension are managed in `Settings -> System Settings`.
 - Audit log stores action context plus structured before/after snapshots for critical changes (items/users/roles/settings/categories).
 - Audit snapshot redaction is enabled by default for sensitive keys (contact/address/token/secret fields).

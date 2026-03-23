@@ -45,8 +45,10 @@ def register_item_routes(app, deps: dict):
     STATUSES = deps["STATUSES"]
     get_smtp_settings = deps["get_smtp_settings"]
     send_smtp_mail = deps["send_smtp_mail"]
+    get_item_email_templates = deps["get_item_email_templates"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
     render_mail_template = deps["render_mail_template"]
+    ITEM_EMAIL_ALLOWED_VARS = deps["ITEM_EMAIL_ALLOWED_VARS"]
     get_description_quality_result = deps["get_description_quality_result"]
     build_address_suggestion = deps["build_address_suggestion"]
     resolve_client_ip = deps["resolve_client_ip"]
@@ -102,6 +104,121 @@ def register_item_routes(app, deps: dict):
         if not row:
             return None
         return {k: row[k] for k in row.keys()}
+
+    def build_receipt_meta(item_row, item_id: int):
+        item_code = (item_row["public_id"] or f"ID{item_id}").strip()
+        receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        if item_row["public_token"]:
+            public_url = public_base_url().rstrip("/") + url_for("public_view", token=item_row["public_token"])
+        else:
+            public_url = public_base_url().rstrip("/") + url_for("detail", item_id=item_id)
+        return {
+            "item_code": item_code,
+            "receipt_no": receipt_no,
+            "issued_at": issued_at,
+            "public_url": public_url,
+        }
+
+    def build_item_mail_context(item_row, item_id: int, receipt_no: str, public_url: str):
+        first_name = (item_row["lost_first_name"] or "").strip()
+        last_name = (item_row["lost_last_name"] or "").strip()
+        full_name = " ".join(part for part in [first_name, last_name] if part).strip() or "Customer"
+        return {
+            "item_id": item_row["public_id"] or f"ID{item_id}",
+            "title": item_row["title"] or "",
+            "status": item_row["status"] or "",
+            "category": item_row["category"] or "",
+            "location": item_row["location"] or "",
+            "event_date": item_row["event_date"] or "",
+            "kind": item_row["kind"] or "",
+            "first_name": first_name,
+            "last_name": last_name,
+            "full_name": full_name,
+            "email": item_row["lost_email"] or "",
+            "phone": item_row["lost_phone"] or "",
+            "receipt_no": receipt_no,
+            "public_url": public_url,
+        }
+
+    def build_receipt_pdf_payload(item_row, user_obj):
+        item_id = int(item_row["id"])
+        receipt_meta = build_receipt_meta(item_row, item_id)
+
+        def pdf_safe(value):
+            text = (value or "").strip()
+            return text.encode("latin-1", "replace").decode("latin-1")
+
+        qr_img = qrcode.make(receipt_meta["public_url"])
+        qr_buf = BytesIO()
+        qr_img.save(qr_buf, format="PNG")
+        qr_buf.seek(0)
+        qr_reader = ImageReader(qr_buf)
+
+        buf = BytesIO()
+        c = canvas.Canvas(buf, pagesize=A4)
+        page_w, page_h = A4
+        y = page_h - 50
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(40, y, "Receipt")
+        y -= 25
+        c.setFont("Helvetica", 10)
+        c.drawString(40, y, pdf_safe(f"Receipt No: {receipt_meta['receipt_no']}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Issued: {receipt_meta['issued_at']}"))
+        y -= 20
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(40, y, "Item")
+        y -= 16
+        c.setFont("Helvetica", 10)
+        c.drawString(40, y, pdf_safe(f"Item ID: {receipt_meta['item_code']}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Type: {'Lost Request' if item_row['kind'] == 'lost' else 'Found Item'}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Title: {item_row['title'] or '—'}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Category: {item_row['category'] or '—'}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Location: {item_row['location'] or '—'}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Date: {item_row['event_date'] or '—'}"))
+        y -= 14
+        c.drawString(40, y, pdf_safe(f"Status: {item_row['status'] or '—'}"))
+        y -= 20
+
+        if item_row["kind"] == "lost" and has_permission("items.view_pii", user=user_obj):
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(40, y, "Shipping / Contact (internal)")
+            y -= 16
+            c.setFont("Helvetica", 10)
+            c.drawString(40, y, pdf_safe(f"Name: {(item_row['lost_first_name'] or '').strip()} {(item_row['lost_last_name'] or '').strip()}".strip()))
+            y -= 14
+            c.drawString(40, y, pdf_safe(f"Address: {(item_row['lost_street'] or '').strip()} {(item_row['lost_number'] or '').strip()}".strip() or "Address: —"))
+            y -= 14
+            c.drawString(40, y, pdf_safe(f"Town: {(item_row['lost_postcode'] or '').strip()} {(item_row['lost_town'] or '').strip()}".strip() or "Town: —"))
+            y -= 14
+            c.drawString(40, y, pdf_safe(f"Country: {item_row['lost_country'] or '—'}"))
+            y -= 14
+            c.drawString(40, y, pdf_safe(f"E-Mail: {item_row['lost_email'] or '—'}"))
+            y -= 14
+            c.drawString(40, y, pdf_safe(f"Phone: {item_row['lost_phone'] or '—'}"))
+            y -= 20
+
+        qr_size = 130
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(page_w - qr_size - 40, page_h - 50, "Public link (QR)")
+        c.drawImage(qr_reader, page_w - qr_size - 40, page_h - qr_size - 75, qr_size, qr_size)
+        c.showPage()
+        c.save()
+        buf.seek(0)
+        return {
+            "bytes": buf.getvalue(),
+            "filename": f"{receipt_meta['receipt_no']}.pdf",
+            "receipt_no": receipt_meta["receipt_no"],
+            "issued_at": receipt_meta["issued_at"],
+            "item_code": receipt_meta["item_code"],
+            "public_url": receipt_meta["public_url"],
+        }
 
     def _is_safe_uploaded_image(file_storage) -> bool:
         if not file_storage:
@@ -797,10 +914,33 @@ def register_item_routes(app, deps: dict):
             """,
             (item_id, f"%found_item_id={item_id}%", f"%lost_item_id={item_id}%"),
         ).fetchall()
+        email_history = conn.execute(
+            """
+            SELECT e.id, e.recipient, e.subject, e.body, e.template_name, e.receipt_filename, e.created_at, u.username
+            FROM sent_item_emails e
+            LEFT JOIN users u ON u.id = e.actor_user_id
+            WHERE e.item_id=?
+            ORDER BY e.created_at DESC, e.id DESC
+            """,
+            (item_id,),
+        ).fetchall()
         linked_ids = {r["id"] for r in linked_items}
         if link_candidates:
             link_candidates = [r for r in link_candidates if int(r["id"]) not in linked_ids]
         smtp_cfg = get_smtp_settings(conn)
+        receipt_meta = build_receipt_meta(item, item_id)
+        mail_ctx = build_item_mail_context(item, item_id, receipt_meta["receipt_no"], receipt_meta["public_url"])
+        email_templates = []
+        if item["kind"] == "lost":
+            for template in get_item_email_templates(conn, active_only=True):
+                email_templates.append(
+                    {
+                        "id": template["id"],
+                        "name": template["name"],
+                        "subject": render_mail_template(template["subject_template"], mail_ctx),
+                        "body": render_mail_template(template["body_template"], mail_ctx),
+                    }
+                )
         conn.close()
 
         return render_template(
@@ -810,12 +950,15 @@ def register_item_routes(app, deps: dict):
             matches=matches,
             linked_items=linked_items,
             timeline=timeline,
+            email_history=email_history,
             link_q=link_q,
             link_candidates=link_candidates,
             can_view_pii=bool(has_permission("items.view_pii", user=u)),
             can_edit_this_item=can_edit_item(u, item),
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
+            email_templates=email_templates,
+            item_email_allowed_vars=ITEM_EMAIL_ALLOWED_VARS,
             user=u,
         )
 
@@ -824,27 +967,102 @@ def register_item_routes(app, deps: dict):
     def send_item_email(item_id: int):
         conn = get_db()
         item = conn.execute(
-            "SELECT id, public_id, kind, title, lost_email FROM items WHERE id=?",
+            """
+            SELECT id, public_id, public_token, kind, title, status, category, location, event_date,
+                   lost_email, lost_phone, lost_first_name, lost_last_name,
+                   lost_street, lost_number, lost_postcode, lost_town, lost_country
+            FROM items
+            WHERE id=?
+            """,
             (item_id,),
         ).fetchone()
-        conn.close()
         if not item:
+            conn.close()
             abort(404)
 
         if item["kind"] != "lost":
+            conn.close()
             flash("E-mail sending is only available for Lost Requests.", "warning")
             return redirect(url_for("detail", item_id=item_id))
 
         recipient = (item["lost_email"] or "").strip()
         if not recipient:
+            conn.close()
             flash("No recipient e-mail is available on this item.", "danger")
             return redirect(url_for("detail", item_id=item_id))
 
+        template_id_raw = (request.form.get("template_id") or "").strip()
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
-        ok, msg = send_smtp_mail(recipient, subject, body)
+        attach_receipt = (request.form.get("attach_receipt_pdf") or "") == "1"
+        template_name = ""
+        if template_id_raw:
+            try:
+                template_id = int(template_id_raw)
+            except ValueError:
+                conn.close()
+                flash("Invalid mail template selected.", "danger")
+                return redirect(url_for("detail", item_id=item_id))
+            template = conn.execute(
+                "SELECT id, name, is_active FROM mail_templates WHERE id=?",
+                (template_id,),
+            ).fetchone()
+            if not template or int(template["is_active"] or 0) != 1:
+                conn.close()
+                flash("Selected mail template is not available.", "danger")
+                return redirect(url_for("detail", item_id=item_id))
+            template_name = template["name"]
+
+        attachments = []
+        receipt_no = None
+        if attach_receipt:
+            try:
+                receipt_payload = build_receipt_pdf_payload(item, current_user())
+            except Exception:
+                conn.close()
+                app.logger.exception("receipt attachment generation failed for item_id=%s", item_id)
+                flash("Receipt PDF could not be generated for the e-mail attachment.", "danger")
+                return redirect(url_for("detail", item_id=item_id))
+            attachments.append(
+                {
+                    "filename": receipt_payload["filename"],
+                    "mimetype": "application/pdf",
+                    "data": receipt_payload["bytes"],
+                }
+            )
+            receipt_no = receipt_payload["receipt_no"]
+        conn.close()
+
+        ok, msg = send_smtp_mail(recipient, subject, body, attachments=attachments)
         if ok:
-            audit("email_send", "item", item_id, f"to={recipient} subject={subject[:120]}")
+            conn = get_db()
+            conn.execute(
+                """
+                INSERT INTO sent_item_emails (
+                    item_id, actor_user_id, recipient, subject, body,
+                    template_name, receipt_filename, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    current_user()["id"] if current_user() else None,
+                    recipient,
+                    subject,
+                    body,
+                    template_name or None,
+                    attachments[0]["filename"] if attachments else None,
+                    now_utc(),
+                ),
+            )
+            conn.commit()
+            conn.close()
+            details = f"to={recipient} subject={subject[:120]}"
+            if template_name:
+                details += f" template={template_name}"
+            if receipt_no:
+                details += f" receipt={receipt_no}"
+            audit("email_send", "item", item_id, details, meta={"template_name": template_name or None, "receipt_attached": attach_receipt})
             flash("E-mail sent.", "success")
         else:
             flash(f"E-mail could not be sent: {msg}", "danger")
@@ -1446,16 +1664,14 @@ def register_item_routes(app, deps: dict):
         photos = conn.execute("SELECT * FROM photos WHERE item_id=? ORDER BY uploaded_at DESC", (item_id,)).fetchall()
         conn.close()
 
-        item_code = (item["public_id"] or f"ID{item_id}").strip()
-        receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-        issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        audit("receipt_view", "item", item_id, f"receipt_no={receipt_no}")
+        receipt_meta = build_receipt_meta(item, item_id)
+        audit("receipt_view", "item", item_id, f"receipt_no={receipt_meta['receipt_no']}")
         return render_template(
             "receipt.html",
             item=item,
             photos=photos,
-            receipt_no=receipt_no,
-            issued_at=issued_at,
+            receipt_no=receipt_meta["receipt_no"],
+            issued_at=receipt_meta["issued_at"],
             can_view_pii=bool(has_permission("items.view_pii", user=u)),
             user=u,
             qr_url=url_for("item_qr", item_id=item_id),
@@ -1473,88 +1689,20 @@ def register_item_routes(app, deps: dict):
         if not can_access_item_read(u, item):
             abort(403)
 
-        item_code = (item["public_id"] or f"ID{item_id}").strip()
-        receipt_no = f"LF-{item_code}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-        issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-        def pdf_safe(value):
-            text = (value or "").strip()
-            return text.encode("latin-1", "replace").decode("latin-1")
-
-        if item["public_token"]:
-            target_url = public_base_url().rstrip("/") + url_for("public_view", token=item["public_token"])
-        else:
-            target_url = public_base_url().rstrip("/") + url_for("detail", item_id=item_id)
-        qr_img = qrcode.make(target_url)
-        qr_buf = BytesIO()
-        qr_img.save(qr_buf, format="PNG")
-        qr_buf.seek(0)
-        qr_reader = ImageReader(qr_buf)
-
-        buf = BytesIO()
         try:
-            c = canvas.Canvas(buf, pagesize=A4)
-            page_w, page_h = A4
-            y = page_h - 50
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(40, y, "Receipt")
-            y -= 25
-            c.setFont("Helvetica", 10)
-            c.drawString(40, y, pdf_safe(f"Receipt No: {receipt_no}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Issued: {issued_at}"))
-            y -= 20
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(40, y, "Item")
-            y -= 16
-            c.setFont("Helvetica", 10)
-            c.drawString(40, y, pdf_safe(f"Item ID: {item_code}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Type: {'Lost Request' if item['kind'] == 'lost' else 'Found Item'}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Title: {item['title'] or '—'}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Category: {item['category'] or '—'}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Location: {item['location'] or '—'}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Date: {item['event_date'] or '—'}"))
-            y -= 14
-            c.drawString(40, y, pdf_safe(f"Status: {item['status'] or '—'}"))
-            y -= 20
-
-            if item["kind"] == "lost" and has_permission("items.view_pii", user=u):
-                c.setFont("Helvetica-Bold", 11)
-                c.drawString(40, y, "Shipping / Contact (internal)")
-                y -= 16
-                c.setFont("Helvetica", 10)
-                c.drawString(40, y, pdf_safe(f"Name: {(item['lost_first_name'] or '').strip()} {(item['lost_last_name'] or '').strip()}".strip()))
-                y -= 14
-                c.drawString(40, y, pdf_safe(f"Address: {(item['lost_street'] or '').strip()} {(item['lost_number'] or '').strip()}".strip() or "Address: —"))
-                y -= 14
-                c.drawString(40, y, pdf_safe(f"Town: {(item['lost_postcode'] or '').strip()} {(item['lost_town'] or '').strip()}".strip() or "Town: —"))
-                y -= 14
-                c.drawString(40, y, pdf_safe(f"Country: {item['lost_country'] or '—'}"))
-                y -= 14
-                c.drawString(40, y, pdf_safe(f"E-Mail: {item['lost_email'] or '—'}"))
-                y -= 14
-                c.drawString(40, y, pdf_safe(f"Phone: {item['lost_phone'] or '—'}"))
-                y -= 20
-
-            qr_size = 130
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(page_w - qr_size - 40, page_h - 50, "Public link (QR)")
-            c.drawImage(qr_reader, page_w - qr_size - 40, page_h - qr_size - 75, qr_size, qr_size)
-            c.showPage()
-            c.save()
-            buf.seek(0)
+            receipt_payload = build_receipt_pdf_payload(item, u)
         except Exception:
             app.logger.exception("receipt_pdf generation failed for item_id=%s", item_id)
             flash("Could not generate receipt PDF.", "danger")
             return redirect(url_for("receipt", item_id=item_id))
 
-        audit("receipt_pdf", "item", item_id, f"receipt_no={receipt_no}")
-        return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=f"{receipt_no}.pdf")
+        audit("receipt_pdf", "item", item_id, f"receipt_no={receipt_payload['receipt_no']}")
+        return send_file(
+            BytesIO(receipt_payload["bytes"]),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=receipt_payload["filename"],
+        )
 
     @app.get("/p/<token>")
     def public_view(token: str):

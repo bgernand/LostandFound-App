@@ -1,4 +1,68 @@
 {% extends "base.html" %}
+{% block extra_head %}
+  {{ super() }}
+  <style>
+    .roles-matrix-table {
+      min-width: 1100px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .roles-matrix-table thead tr:first-child th {
+      border-bottom: 0;
+    }
+    .roles-matrix-table .group-head {
+      background: var(--bs-light);
+      border-bottom: 1px solid var(--bs-border-color);
+      font-size: .8rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .roles-matrix-table .perm-head {
+      min-width: 94px;
+      font-size: .78rem;
+      line-height: 1.15;
+      white-space: normal;
+      vertical-align: bottom;
+    }
+    .roles-matrix-table .role-cell,
+    .roles-matrix-table .role-head,
+    .roles-matrix-table .actions-cell,
+    .roles-matrix-table .actions-head {
+      position: sticky;
+      background: #fff;
+      z-index: 2;
+    }
+    .roles-matrix-table .role-cell,
+    .roles-matrix-table .role-head {
+      left: 0;
+      min-width: 180px;
+      box-shadow: 1px 0 0 var(--bs-border-color);
+      z-index: 3;
+    }
+    .roles-matrix-table .actions-cell,
+    .roles-matrix-table .actions-head {
+      right: 0;
+      min-width: 150px;
+      box-shadow: -1px 0 0 var(--bs-border-color);
+    }
+    .roles-matrix-table tbody tr:nth-child(odd) td {
+      background: rgba(0, 0, 0, 0.015);
+    }
+    .roles-matrix-table tbody tr:hover td {
+      background: rgba(13, 110, 253, 0.05);
+    }
+    .roles-matrix-table td.group-divider,
+    .roles-matrix-table th.group-divider {
+      border-right: 3px solid rgba(13, 110, 253, 0.16);
+    }
+    .roles-matrix-table .form-check-input {
+      float: none;
+      margin: 0;
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+  </style>
+{% endblock %}
 {% block content %}
 
 <div class="row g-3">
@@ -202,10 +266,10 @@
     </div>
 
     <div class="table-responsive">
-      <table class="table table-sm align-middle">
+      <table class="table table-sm align-middle roles-matrix-table">
         <thead>
           <tr>
-            <th rowspan="2">Role</th>
+            <th class="role-head align-middle" rowspan="2">Role</th>
             {% for group in permission_groups %}
               {% set visible_keys = [] %}
               {% for key in group['keys'] %}
@@ -214,14 +278,24 @@
                 {% endif %}
               {% endfor %}
               {% if visible_keys %}
-                <th class="text-center text-nowrap" colspan="{{ visible_keys|length }}">{{ group['label'] }}</th>
+                <th class="text-center text-nowrap group-head{% if loop.last %}{% else %} group-divider{% endif %}" colspan="{{ visible_keys|length }}">{{ group['label'] }}</th>
               {% endif %}
             {% endfor %}
-            <th class="text-end" rowspan="2">Actions</th>
+            <th class="text-end actions-head align-middle" rowspan="2">Actions</th>
           </tr>
           <tr>
-            {% for p in permission_keys %}
-              <th class="text-nowrap small">{{ permission_labels.get(p, p) }}</th>
+            {% for group in permission_groups %}
+              {% set visible_keys = [] %}
+              {% for key in group['keys'] %}
+                {% if key in permission_keys %}
+                  {% set _ = visible_keys.append(key) %}
+                {% endif %}
+              {% endfor %}
+              {% for p in visible_keys %}
+                <th class="perm-head small text-center{% if loop.last %}{% if not loop.parent.last %} group-divider{% endif %}{% endif %}">
+                  {{ permission_labels.get(p, p) }}
+                </th>
+              {% endfor %}
             {% endfor %}
           </tr>
         </thead>
@@ -230,7 +304,7 @@
             {% set role_name = rr['name'] %}
             {% set perm_form_id = 'rolePermForm' ~ loop.index %}
             <tr>
-              <td class="text-nowrap">
+              <td class="text-nowrap role-cell">
                 <form id="{{ perm_form_id }}" method="post" action="{{ url_for('roles_permissions_update', role_name=role_name) }}"></form>
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" form="{{ perm_form_id }}">
                 <span class="fw-semibold">{{ role_name }}</span>
@@ -238,13 +312,21 @@
                   <span class="badge text-bg-secondary ms-1">system</span>
                 {% endif %}
               </td>
-              {% for p in permission_keys %}
-                <td class="text-center">
-                  <input class="form-check-input" type="checkbox" name="permissions" value="{{ p }}" form="{{ perm_form_id }}"
-                         {% if role_permissions.get(role_name, {}).get(p) %}checked{% endif %}>
-                </td>
+              {% for group in permission_groups %}
+                {% set visible_keys = [] %}
+                {% for key in group['keys'] %}
+                  {% if key in permission_keys %}
+                    {% set _ = visible_keys.append(key) %}
+                  {% endif %}
+                {% endfor %}
+                {% for p in visible_keys %}
+                  <td class="text-center{% if loop.last %}{% if not loop.parent.last %} group-divider{% endif %}{% endif %}">
+                    <input class="form-check-input" type="checkbox" name="permissions" value="{{ p }}" form="{{ perm_form_id }}"
+                           {% if role_permissions.get(role_name, {}).get(p) %}checked{% endif %}>
+                  </td>
+                {% endfor %}
               {% endfor %}
-              <td class="text-end text-nowrap">
+              <td class="text-end text-nowrap actions-cell">
                 <button class="btn btn-sm btn-outline-primary" type="submit" form="{{ perm_form_id }}">Save</button>
                 {% if not (rr['is_system'] == 1 or rr['is_system'] == '1') %}
                   <form method="post" action="{{ url_for('roles_delete', role_name=role_name) }}" class="d-inline ms-1"

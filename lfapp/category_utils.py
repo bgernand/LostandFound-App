@@ -30,9 +30,6 @@ def category_names(db_path: str, active_only: bool = True):
 
 
 def safe_default_category(active_cats: set[str]) -> str:
-    if "General" in active_cats:
-        return "General"
     if "Other" in active_cats:
         return "Other"
-    return next(iter(active_cats), "General")
-
+    return next(iter(active_cats), "Other")

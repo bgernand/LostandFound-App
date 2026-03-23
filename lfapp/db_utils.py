@@ -62,6 +62,8 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.view_lost",
         "items.create_lost",
         "items.edit_lost",
+        "items.view_pii",
+        "items.send_email",
     },
     "viewer": {
         "items.view_lost",
@@ -110,6 +112,19 @@ def ensure_rbac_defaults(conn):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mail_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            subject_template TEXT NOT NULL,
+            body_template TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
     stamp = now_utc()
     for role_name in SYSTEM_ROLES:
@@ -148,6 +163,40 @@ def ensure_rbac_defaults(conn):
                 VALUES (?, ?, ?, ?)
                 """,
                 (role_name, permission_key, allowed, stamp),
+            )
+
+    # Keep system-role baseline permissions aligned for existing databases.
+    for permission_key in ("items.view_pii", "items.send_email"):
+        conn.execute(
+            """
+            UPDATE role_permissions
+            SET allowed=1, updated_at=?
+            WHERE role_name='lost-staff' AND permission_key=?
+            """,
+            (stamp, permission_key),
+        )
+
+    template_count = conn.execute("SELECT COUNT(*) AS c FROM mail_templates").fetchone()["c"]
+    if int(template_count or 0) == 0:
+        default_templates = [
+            (
+                "General update",
+                "Lost & Found update for Item ID {{ item_id }}",
+                "Hello {{ full_name }},\n\nwe have an update regarding your lost request.\n\nItem details:\n- Item ID: {{ item_id }}\n- Title: {{ title }}\n- Status: {{ status }}\n\nBest regards\nLost & Found Team",
+            ),
+            (
+                "Shipment update",
+                "Shipment update for Item ID {{ item_id }}",
+                "Hello {{ full_name }},\n\nwe have prepared the shipment for your item.\n\nReference:\n- Item ID: {{ item_id }}\n- Receipt No: {{ receipt_no }}\n\nBest regards\nLost & Found Team",
+            ),
+        ]
+        for name, subject_template, body_template in default_templates:
+            conn.execute(
+                """
+                INSERT INTO mail_templates (name, subject_template, body_template, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, 1, ?, ?)
+                """,
+                (name, subject_template, body_template, stamp, stamp),
             )
 
 
@@ -527,6 +576,29 @@ def init_db(db_path: str):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS sent_item_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            actor_user_id INTEGER,
+            recipient TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            template_name TEXT,
+            receipt_filename TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sent_item_emails_item_created
+        ON sent_item_emails(item_id, created_at DESC)
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
@@ -542,11 +614,11 @@ def init_db(db_path: str):
     ensure_rbac_defaults(conn)
     # System settings defaults (overridable in Admin UI).
     conn.execute(
-        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_chars', '30', ?)",
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_chars', '10', ?)",
         (now_utc(),),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_words', '5', ?)",
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('description_min_words', '3', ?)",
         (now_utc(),),
     )
     conn.execute(
@@ -677,21 +749,27 @@ def init_db(db_path: str):
                     (int(root_candidate["id"]),),
                 )
 
-    cat_count = conn.execute("SELECT COUNT(*) AS c FROM categories").fetchone()["c"]
-    if cat_count == 0:
-        defaults = [
-            ("General", 1, 10),
-            ("Electronics", 1, 20),
-            ("Clothing", 1, 30),
-            ("Documents", 1, 40),
-            ("Keys", 1, 50),
-            ("Other", 1, 60),
-        ]
-        for name, active, order in defaults:
-            conn.execute(
-                "INSERT INTO categories (name, is_active, sort_order, created_at) VALUES (?, ?, ?, ?)",
-                (name, active, order, now_utc()),
-            )
+    defaults = [
+        ("Jewellery", 1, 10),
+        ("Glasses", 1, 20),
+        ("Wallet", 1, 30),
+        ("Documents", 1, 40),
+        ("Keys", 1, 50),
+        ("Electronics", 1, 60),
+        ("Books", 1, 70),
+        ("Other", 1, 80),
+    ]
+    allowed_category_names = {name for name, _active, _order in defaults}
+    conn.execute(
+        f"UPDATE items SET category='Other' WHERE category IS NULL OR trim(category)='' OR category NOT IN ({','.join('?' for _ in allowed_category_names)})",
+        tuple(sorted(allowed_category_names)),
+    )
+    conn.execute("DELETE FROM categories")
+    for name, active, order in defaults:
+        conn.execute(
+            "INSERT INTO categories (name, is_active, sort_order, created_at) VALUES (?, ?, ?, ?)",
+            (name, active, order, now_utc()),
+        )
 
     rows = conn.execute("SELECT id, public_token FROM items").fetchall()
     for r in rows:

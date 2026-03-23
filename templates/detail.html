@@ -178,26 +178,126 @@
         <div class="small text-muted mb-2">
           To: {{ item['lost_email'] }}{% if smtp_from %} · From: {{ smtp_from }}{% endif %}
         </div>
-        <form method="post" action="{{ url_for('send_item_email', item_id=item['id']) }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="mb-2">
-            <label class="form-label">Subject</label>
-            <input class="form-control" name="subject" value="Lost & Found update for item {{ item['public_id'] or "—" }}" required>
-          </div>
-          <div class="mb-2">
-            <label class="form-label">Message</label>
-            <textarea class="form-control" name="body" rows="5" required>Hello,
-
-we have an update regarding your Lost & Found request (Item ID {{ item['public_id'] or "—" }}).
-
-Best regards</textarea>
-          </div>
-          <button class="btn btn-outline-primary" type="submit">Send e-mail</button>
-        </form>
+        <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#sendMailModal">
+          Open mail composer
+        </button>
       {% endif %}
     {% endif %}
   </div>
 </div>
+
+{% if can_send_email and can_view_pii and item['kind'] == 'lost' and smtp_enabled and item['lost_email'] %}
+  <div class="modal fade" id="sendMailModal" tabindex="-1" aria-labelledby="sendMailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form method="post" action="{{ url_for('send_item_email', item_id=item['id']) }}">
+          <div class="modal-header">
+            <h5 class="modal-title" id="sendMailModalLabel">Send E-Mail</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label">Template</label>
+                <select class="form-select" name="template_id" id="mailTemplateSelect">
+                  {% if email_templates %}
+                    {% for tpl in email_templates %}
+                      <option value="{{ tpl['id'] }}" {% if loop.first %}selected{% endif %}>{{ tpl['name'] }}</option>
+                    {% endfor %}
+                  {% else %}
+                    <option value="">Custom</option>
+                  {% endif %}
+                </select>
+                {% if email_templates %}
+                  <div class="form-text">Selecting a template replaces subject and message with the rendered template for this item.</div>
+                {% endif %}
+              </div>
+              <div class="col-12">
+                <label class="form-label">Subject</label>
+                <input class="form-control" id="mailSubjectInput" name="subject" value="{{ email_templates[0]['subject'] if email_templates else 'Lost & Found update for Item ID ' ~ (item['public_id'] or '—') }}" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Message</label>
+                <textarea class="form-control" id="mailBodyInput" name="body" rows="10" required>{% if email_templates %}{{ email_templates[0]['body'] }}{% else %}Hello,
+
+we have an update regarding your lost request (Item ID {{ item['public_id'] or "—" }}).
+
+Best regards{% endif %}</textarea>
+              </div>
+              <div class="col-12">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="attachReceiptPdf" name="attach_receipt_pdf" value="1">
+                  <label class="form-check-label" for="attachReceiptPdf">Attach Receipt PDF</label>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="border rounded bg-light p-3">
+                  <div class="fw-semibold mb-2">Read-only preview</div>
+                  <div class="small text-muted mb-1">Subject</div>
+                  <div class="border rounded bg-white px-2 py-2 small mb-3" id="mailSubjectPreview">{{ email_templates[0]['subject'] if email_templates else 'Lost & Found update for Item ID ' ~ (item['public_id'] or '—') }}</div>
+                  <div class="small text-muted mb-1">Message</div>
+                  <pre class="border rounded bg-white px-2 py-2 small mb-0" id="mailBodyPreview" style="white-space: pre-wrap;">{% if email_templates %}{{ email_templates[0]['body'] }}{% else %}Hello,
+
+we have an update regarding your lost request (Item ID {{ item['public_id'] or "—" }}).
+
+Best regards{% endif %}</pre>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="small text-muted">
+                  Available template variables:
+                  {% for v in item_email_allowed_vars %}
+                    <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-primary" type="submit">Send e-mail</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script type="application/json" id="itemMailTemplatesData">{{ email_templates|tojson }}</script>
+{% endif %}
+
+{% if email_history and email_history|length %}
+  <div class="card mt-3">
+    <div class="card-body">
+      <div class="fw-bold mb-2">Mail History</div>
+      <div class="list-group list-group-flush">
+        {% for mail in email_history %}
+          <div class="list-group-item px-0{% if loop.index > 3 %} d-none js-mail-history-extra{% endif %}">
+            <div class="d-flex justify-content-between gap-3 align-items-start">
+              <div class="flex-grow-1">
+                <div class="fw-semibold">{{ mail['subject'] }}</div>
+                <div class="small text-muted mb-2">
+                  To: {{ mail['recipient'] }}
+                  {% if mail['template_name'] %} · Template: {{ mail['template_name'] }}{% endif %}
+                  {% if mail['receipt_filename'] %} · Attachment: {{ mail['receipt_filename'] }}{% endif %}
+                </div>
+                <pre class="small bg-light border rounded p-2 mb-0" style="white-space: pre-wrap;">{{ mail['body'] }}</pre>
+              </div>
+              <div class="small text-muted text-end text-nowrap">
+                {{ mail['username'] or "system" }}<br>
+                {{ mail['created_at'] }}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      {% if email_history|length > 3 %}
+        <div class="mt-2">
+          <button id="mail-history-more-btn" type="button" class="btn btn-sm btn-outline-secondary">More</button>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
 
 <div class="card mt-3">
   <div class="card-body">
@@ -368,27 +468,69 @@ Best regards</textarea>
   </div>
 {% endif %}
 
-{% if timeline and timeline|length > 3 %}
-<script>
-  (function () {
-    var btn = document.getElementById("timeline-more-btn");
-    if (!btn) return;
-    btn.addEventListener("click", function () {
-      document.querySelectorAll(".js-timeline-extra").forEach(function (el) {
-        el.classList.remove("d-none");
-      });
-      btn.remove();
-    });
-  })();
-</script>
-{% endif %}
-
 {% endblock %}
+{% block extra_scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      var btn = document.getElementById("timeline-more-btn");
+      if (btn) {
+        btn.addEventListener("click", function () {
+          document.querySelectorAll(".js-timeline-extra").forEach(function (el) {
+            el.classList.remove("d-none");
+          });
+          btn.remove();
+        });
+      }
 
+      var mailBtn = document.getElementById("mail-history-more-btn");
+      if (mailBtn) {
+        mailBtn.addEventListener("click", function () {
+          document.querySelectorAll(".js-mail-history-extra").forEach(function (el) {
+            el.classList.remove("d-none");
+          });
+          mailBtn.remove();
+        });
+      }
 
+      var dataNode = document.getElementById("itemMailTemplatesData");
+      var templateSelect = document.getElementById("mailTemplateSelect");
+      var subjectInput = document.getElementById("mailSubjectInput");
+      var bodyInput = document.getElementById("mailBodyInput");
+      var subjectPreview = document.getElementById("mailSubjectPreview");
+      var bodyPreview = document.getElementById("mailBodyPreview");
+      if (!dataNode || !templateSelect || !subjectInput || !bodyInput || !subjectPreview || !bodyPreview) {
+        return;
+      }
 
+      var templates = [];
+      try {
+        templates = JSON.parse(dataNode.textContent || "[]");
+      } catch (err) {
+        templates = [];
+      }
 
+      var syncPreview = function () {
+        subjectPreview.textContent = subjectInput.value || "";
+        bodyPreview.textContent = bodyInput.value || "";
+      };
 
+      templateSelect.addEventListener("change", function () {
+        var selected = templates.find(function (tpl) {
+          return String(tpl.id) === String(templateSelect.value);
+        });
+        if (!selected) {
+          return;
+        }
+        subjectInput.value = selected.subject || "";
+        bodyInput.value = selected.body || "";
+        syncPreview();
+      });
 
-
+      subjectInput.addEventListener("input", syncPreview);
+      bodyInput.addEventListener("input", syncPreview);
+      syncPreview();
+    })();
+  </script>
+{% endblock %}
 

@@ -160,6 +160,22 @@ PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
     "phone",
     "base_url",
 }
+ITEM_EMAIL_ALLOWED_VARS = {
+    "item_id",
+    "title",
+    "status",
+    "category",
+    "location",
+    "event_date",
+    "kind",
+    "first_name",
+    "last_name",
+    "full_name",
+    "email",
+    "phone",
+    "receipt_no",
+    "public_url",
+}
 
 STATUSES = [
     "Lost",
@@ -275,8 +291,8 @@ def create_app(config: dict | None = None):
     settings_encryption_key = str(
         app.config.get("SETTINGS_ENCRYPTION_KEY", os.environ.get("SETTINGS_ENCRYPTION_KEY", ""))
     ).strip()
-    description_min_chars_default = int(app.config.get("DESCRIPTION_MIN_CHARS", "30"))
-    description_min_words_default = int(app.config.get("DESCRIPTION_MIN_WORDS", "5"))
+    description_min_chars_default = int(app.config.get("DESCRIPTION_MIN_CHARS", "10"))
+    description_min_words_default = int(app.config.get("DESCRIPTION_MIN_WORDS", "3"))
     description_score_threshold_default = int(
         app.config.get("DESCRIPTION_SCORE_THRESHOLD", "25")
     )
@@ -474,6 +490,37 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
+    def get_item_email_templates(conn=None, active_only=False):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            query = """
+                SELECT id, name, subject_template, body_template, is_active, created_at, updated_at
+                FROM mail_templates
+            """
+            params = []
+            if active_only:
+                query += " WHERE is_active=1"
+            query += " ORDER BY lower(name) ASC, id ASC"
+            rows = conn.execute(query, params).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "subject_template": row["subject_template"],
+                    "body_template": row["body_template"],
+                    "is_active": bool(int(row["is_active"] or 0) == 1),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in rows
+            ]
+        finally:
+            if own_conn:
+                conn.close()
+
     def get_legal_privacy_settings(conn=None):
         own_conn = False
         if conn is None:
@@ -490,7 +537,13 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
-    def send_smtp_mail(to_address: str, subject: str, body: str, reply_to: str | None = None):
+    def send_smtp_mail(
+        to_address: str,
+        subject: str,
+        body: str,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+    ):
         smtp_cfg = get_smtp_settings()
         if not smtp_cfg["enabled"]:
             return False, "SMTP is disabled."
@@ -514,6 +567,19 @@ def create_app(config: dict | None = None):
         if reply_to:
             msg["Reply-To"] = reply_to
         msg.set_content(body)
+        for attachment in attachments or []:
+            data = attachment.get("data")
+            filename = (attachment.get("filename") or "attachment.bin").strip() or "attachment.bin"
+            mimetype = (attachment.get("mimetype") or "application/octet-stream").strip() or "application/octet-stream"
+            maintype, _, subtype = mimetype.partition("/")
+            if not data:
+                continue
+            msg.add_attachment(
+                data,
+                maintype=(maintype or "application"),
+                subtype=(subtype or "octet-stream"),
+                filename=filename,
+            )
 
         try:
             smtp_cls = smtplib.SMTP_SSL if smtp_cfg["use_ssl"] else smtplib.SMTP
@@ -673,6 +739,7 @@ def create_app(config: dict | None = None):
         can_admin_access = bool(has_permission("admin.access", user=u))
         can_admin_users = bool(has_permission("admin.users", user=u))
         can_admin_settings = bool(has_permission("admin.settings", user=u))
+        can_admin_mail_templates = bool(has_permission("admin.access", user=u))
         can_admin_audit = bool(has_permission("admin.audit", user=u))
         can_admin_categories = bool(has_permission("admin.categories", user=u))
         can_admin_menu = bool(
@@ -732,6 +799,7 @@ def create_app(config: dict | None = None):
             "can_admin_access": can_admin_access,
             "can_admin_users": can_admin_users,
             "can_admin_settings": can_admin_settings,
+            "can_admin_mail_templates": can_admin_mail_templates,
             "can_admin_audit": can_admin_audit,
             "can_admin_categories": can_admin_categories,
             "can_admin_menu": can_admin_menu,
@@ -903,6 +971,8 @@ def create_app(config: dict | None = None):
             "send_smtp_mail": send_smtp_mail,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
             "render_mail_template": render_mail_template,
+            "get_item_email_templates": get_item_email_templates,
+            "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
             "get_description_quality_result": get_description_quality_result,
         },
     )
@@ -923,6 +993,7 @@ def create_app(config: dict | None = None):
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
+            "get_item_email_templates": get_item_email_templates,
             "validate_mail_template_variables": validate_mail_template_variables,
             "render_mail_template": render_mail_template,
             "get_description_quality_settings": get_description_quality_settings,
@@ -936,6 +1007,7 @@ def create_app(config: dict | None = None):
             "DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT": DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT,
             "DEFAULT_PUBLIC_LOST_CONFIRM_BODY": DEFAULT_PUBLIC_LOST_CONFIRM_BODY,
             "PUBLIC_LOST_CONFIRM_ALLOWED_VARS": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
+            "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
             "MIN_PASSWORD_LENGTH": min_password_length,
         },
     )

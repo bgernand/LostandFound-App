@@ -8,6 +8,7 @@ def register_admin_routes(app, deps: dict):
     get_db = deps["get_db"]
     current_user = deps["current_user"]
     require_permission = deps["require_permission"]
+    has_permission = deps["has_permission"]
     is_totp_mandatory = deps["is_totp_mandatory"]
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
@@ -16,6 +17,7 @@ def register_admin_routes(app, deps: dict):
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
+    get_item_email_templates = deps["get_item_email_templates"]
     validate_mail_template_variables = deps["validate_mail_template_variables"]
     render_mail_template = deps["render_mail_template"]
     get_description_quality_settings = deps["get_description_quality_settings"]
@@ -29,6 +31,7 @@ def register_admin_routes(app, deps: dict):
     DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = deps["DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT"]
     DEFAULT_PUBLIC_LOST_CONFIRM_BODY = deps["DEFAULT_PUBLIC_LOST_CONFIRM_BODY"]
     PUBLIC_LOST_CONFIRM_ALLOWED_VARS = deps["PUBLIC_LOST_CONFIRM_ALLOWED_VARS"]
+    ITEM_EMAIL_ALLOWED_VARS = deps["ITEM_EMAIL_ALLOWED_VARS"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
 
     def row_to_dict(row):
@@ -142,6 +145,48 @@ def register_admin_routes(app, deps: dict):
         ).fetchone()
         return bool(row and int(row["allowed"] or 0) == 1)
 
+    def _render_admin_settings(
+        *,
+        description_quality_settings=None,
+        smtp_settings=None,
+        public_lost_confirm_settings=None,
+        public_lost_confirm_preview_subject=None,
+        public_lost_confirm_preview_body=None,
+        legal_notice_text=None,
+        privacy_policy_text=None,
+        item_mail_templates=None,
+        item_mail_template_allowed_vars=None,
+    ):
+        conn = get_db()
+        if description_quality_settings is None:
+            description_quality_settings = get_description_quality_settings(conn)
+        if smtp_settings is None:
+            smtp_settings = get_smtp_settings(conn)
+        if public_lost_confirm_settings is None:
+            public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
+        if legal_notice_text is None:
+            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
+        if privacy_policy_text is None:
+            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
+        if item_mail_templates is None:
+            item_mail_templates = get_item_email_templates(conn, active_only=False)
+        conn.close()
+        return render_template(
+            "admin_settings.html",
+            user=current_user(),
+            description_quality_settings=description_quality_settings,
+            smtp_settings=smtp_settings,
+            public_lost_confirm_settings=public_lost_confirm_settings,
+            public_lost_confirm_preview_subject=public_lost_confirm_preview_subject,
+            public_lost_confirm_preview_body=public_lost_confirm_preview_body,
+            public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+            legal_notice_text=legal_notice_text,
+            privacy_policy_text=privacy_policy_text,
+            item_mail_templates=item_mail_templates,
+            item_mail_template_allowed_vars=item_mail_template_allowed_vars or ITEM_EMAIL_ALLOWED_VARS,
+            can_manage_mail_templates=bool(has_permission("admin.access", user=current_user())),
+        )
+
     @app.get("/admin/users")
     @require_permission("admin.users")
     def users():
@@ -174,25 +219,157 @@ def register_admin_routes(app, deps: dict):
     @app.get("/admin/settings")
     @require_permission("admin.settings")
     def admin_settings():
-        conn = get_db()
-        description_quality_settings = get_description_quality_settings(conn)
-        smtp_settings = get_smtp_settings(conn)
-        public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
-        legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
-        privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
-        conn.close()
-        return render_template(
-            "admin_settings.html",
-            user=current_user(),
-            description_quality_settings=description_quality_settings,
-            smtp_settings=smtp_settings,
-            public_lost_confirm_settings=public_lost_confirm_settings,
-            public_lost_confirm_preview_subject=None,
-            public_lost_confirm_preview_body=None,
-            public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
-            legal_notice_text=legal_notice_text,
-            privacy_policy_text=privacy_policy_text,
+        return _render_admin_settings()
+
+    @app.post("/admin/settings/mail-templates")
+    @require_permission("admin.access")
+    def admin_create_mail_template():
+        name = (request.form.get("name") or "").strip()
+        subject_template = (request.form.get("subject_template") or "").strip()
+        body_template = (request.form.get("body_template") or "").strip()
+        is_active = (request.form.get("is_active") or "") == "1"
+
+        if not name:
+            flash("Template name is required.", "danger")
+            return redirect(url_for("admin_settings"))
+        if not subject_template:
+            flash("Subject template is required.", "danger")
+            return redirect(url_for("admin_settings"))
+        if not body_template:
+            flash("Body template is required.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        unknown = sorted(
+            set(validate_mail_template_variables(subject_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
+            | set(validate_mail_template_variables(body_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
         )
+        if unknown:
+            flash("Unknown mail template variable(s): " + ", ".join(unknown), "danger")
+            return redirect(url_for("admin_settings"))
+
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                INSERT INTO mail_templates (name, subject_template, body_template, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (name, subject_template, body_template, 1 if is_active else 0, now_utc(), now_utc()),
+            )
+            conn.commit()
+            template_id = conn.execute("SELECT id FROM mail_templates WHERE name=?", (name,)).fetchone()
+        except sqlite3.IntegrityError:
+            conn.close()
+            flash("Template name already exists.", "danger")
+            return redirect(url_for("admin_settings"))
+        conn.close()
+        audit(
+            "mail_template_create",
+            "mail_template",
+            int(template_id["id"]) if template_id else None,
+            f"name={name} active={1 if is_active else 0}",
+            new_values={
+                "name": name,
+                "subject_template": subject_template,
+                "body_template": body_template,
+                "is_active": 1 if is_active else 0,
+            },
+        )
+        flash("Mail template created.", "success")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/mail-templates/<int:template_id>")
+    @require_permission("admin.access")
+    def admin_update_mail_template(template_id: int):
+        name = (request.form.get("name") or "").strip()
+        subject_template = (request.form.get("subject_template") or "").strip()
+        body_template = (request.form.get("body_template") or "").strip()
+        is_active = (request.form.get("is_active") or "") == "1"
+
+        if not name or not subject_template or not body_template:
+            flash("Template name, subject template and body template are required.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        unknown = sorted(
+            set(validate_mail_template_variables(subject_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
+            | set(validate_mail_template_variables(body_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
+        )
+        if unknown:
+            flash("Unknown mail template variable(s): " + ", ".join(unknown), "danger")
+            return redirect(url_for("admin_settings"))
+
+        conn = get_db()
+        existing = conn.execute(
+            "SELECT id, name, subject_template, body_template, is_active FROM mail_templates WHERE id=?",
+            (template_id,),
+        ).fetchone()
+        if not existing:
+            conn.close()
+            abort(404)
+        try:
+            conn.execute(
+                """
+                UPDATE mail_templates
+                SET name=?, subject_template=?, body_template=?, is_active=?, updated_at=?
+                WHERE id=?
+                """,
+                (name, subject_template, body_template, 1 if is_active else 0, now_utc(), template_id),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.close()
+            flash("Template name already exists.", "danger")
+            return redirect(url_for("admin_settings"))
+        conn.close()
+        audit(
+            "mail_template_update",
+            "mail_template",
+            template_id,
+            f"name={name} active={1 if is_active else 0}",
+            old_values={
+                "name": existing["name"],
+                "subject_template": existing["subject_template"],
+                "body_template": existing["body_template"],
+                "is_active": int(existing["is_active"] or 0),
+            },
+            new_values={
+                "name": name,
+                "subject_template": subject_template,
+                "body_template": body_template,
+                "is_active": 1 if is_active else 0,
+            },
+        )
+        flash("Mail template updated.", "success")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/mail-templates/<int:template_id>/delete")
+    @require_permission("admin.access")
+    def admin_delete_mail_template(template_id: int):
+        conn = get_db()
+        existing = conn.execute(
+            "SELECT id, name, subject_template, body_template, is_active FROM mail_templates WHERE id=?",
+            (template_id,),
+        ).fetchone()
+        if not existing:
+            conn.close()
+            abort(404)
+        conn.execute("DELETE FROM mail_templates WHERE id=?", (template_id,))
+        conn.commit()
+        conn.close()
+        audit(
+            "mail_template_delete",
+            "mail_template",
+            template_id,
+            f"name={existing['name']}",
+            old_values={
+                "name": existing["name"],
+                "subject_template": existing["subject_template"],
+                "body_template": existing["body_template"],
+                "is_active": int(existing["is_active"] or 0),
+            },
+        )
+        flash("Mail template deleted.", "success")
+        return redirect(url_for("admin_settings"))
 
     @app.post("/admin/users")
     @require_permission("admin.users")
@@ -471,17 +648,7 @@ def register_admin_routes(app, deps: dict):
         unknown_all = sorted(set(unknown_subject) | set(unknown_body))
         if unknown_all:
             flash("Unknown mail template variable(s): " + ", ".join(unknown_all), "danger")
-            conn = get_db()
-            description_quality_settings = get_description_quality_settings(conn)
-            smtp_settings = get_smtp_settings(conn)
-            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
-            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
-            conn.close()
-            return render_template(
-                "admin_settings.html",
-                user=current_user(),
-                description_quality_settings=description_quality_settings,
-                smtp_settings=smtp_settings,
+            return _render_admin_settings(
                 public_lost_confirm_settings={
                     "enabled": enabled,
                     "subject": subject,
@@ -490,9 +657,6 @@ def register_admin_routes(app, deps: dict):
                 },
                 public_lost_confirm_preview_subject=None,
                 public_lost_confirm_preview_body=None,
-                public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
-                legal_notice_text=legal_notice_text,
-                privacy_policy_text=privacy_policy_text,
             )
 
         if enabled and (not subject or not body):
@@ -504,7 +668,7 @@ def register_admin_routes(app, deps: dict):
             "title": "Black leather wallet",
             "status": "Lost",
             "submitted_at": "2026-03-02T18:45:00",
-            "category": "General",
+            "category": "Wallet",
             "location": "Hall A",
             "event_date": "2026-03-02",
             "first_name": "John",
@@ -517,18 +681,8 @@ def register_admin_routes(app, deps: dict):
         preview_body = render_mail_template(body, sample_ctx)
 
         if action == "preview":
-            conn = get_db()
-            description_quality_settings = get_description_quality_settings(conn)
-            smtp_settings = get_smtp_settings(conn)
-            legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
-            privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
-            conn.close()
             flash("Preview generated with sample values.", "info")
-            return render_template(
-                "admin_settings.html",
-                user=current_user(),
-                description_quality_settings=description_quality_settings,
-                smtp_settings=smtp_settings,
+            return _render_admin_settings(
                 public_lost_confirm_settings={
                     "enabled": enabled,
                     "subject": subject,
@@ -537,9 +691,6 @@ def register_admin_routes(app, deps: dict):
                 },
                 public_lost_confirm_preview_subject=preview_subject,
                 public_lost_confirm_preview_body=preview_body,
-                public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
-                legal_notice_text=legal_notice_text,
-                privacy_policy_text=privacy_policy_text,
             )
 
         conn = get_db()

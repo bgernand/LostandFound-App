@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if can_admin_settings %}
 <div class="row g-3">
   <div class="col-12 col-lg-6">
     <div class="card h-100">
@@ -144,14 +145,100 @@ If you received this message, SMTP settings are working.</textarea>
       </div>
     </div>
   </div>
-</div>
+ </div>
+{% endif %}
 
-<div class="row g-3 mt-1">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Public Lost Confirmation Mail</h5>
-        <form method="post" action="{{ url_for('admin_set_smtp_public_lost_confirmation') }}">
+<div class="row g-3{% if can_admin_settings %} mt-1{% endif %}">
+  {% if can_manage_mail_templates %}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Item Mail Templates</h5>
+          <p class="small text-muted mb-3">These templates are available in the item mail popup. Variables are rendered with the current item data before sending.</p>
+
+          <div class="small text-muted mb-3">
+            Allowed variables:
+            {% for v in item_mail_template_allowed_vars %}
+              <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </div>
+
+          <form method="post" action="{{ url_for('admin_create_mail_template') }}" class="border rounded p-3 mb-3 bg-light">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-2">
+              <div class="col-12 col-lg-4">
+                <label class="form-label small">Template name</label>
+                <input class="form-control form-control-sm" name="name" placeholder="General update" required>
+              </div>
+              <div class="col-12 col-lg-8">
+                <label class="form-label small">Subject template</label>
+                <input class="form-control form-control-sm" name="subject_template" placeholder="Lost &amp; Found update for Item ID &#123;&#123; item_id &#125;&#125;" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label small">Body template</label>
+                <textarea class="form-control form-control-sm" rows="6" name="body_template" required></textarea>
+              </div>
+              <div class="col-12">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="newMailTemplateActive" name="is_active" value="1" checked>
+                  <label class="form-check-label small" for="newMailTemplateActive">Active</label>
+                </div>
+              </div>
+            </div>
+            <div class="d-grid d-md-flex justify-content-md-end mt-3">
+              <button class="btn btn-sm btn-outline-primary" type="submit">Create mail template</button>
+            </div>
+          </form>
+
+          {% if item_mail_templates %}
+            <div class="vstack gap-3">
+              {% for tpl in item_mail_templates %}
+                <form method="post" action="{{ url_for('admin_update_mail_template', template_id=tpl['id']) }}" class="border rounded p-3">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                  <div class="row g-2">
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label small">Template name</label>
+                      <input class="form-control form-control-sm" name="name" value="{{ tpl['name'] }}" required>
+                    </div>
+                    <div class="col-12 col-lg-8">
+                      <label class="form-label small">Subject template</label>
+                      <input class="form-control form-control-sm" name="subject_template" value="{{ tpl['subject_template'] }}" required>
+                    </div>
+                    <div class="col-12">
+                      <label class="form-label small">Body template</label>
+                      <textarea class="form-control form-control-sm" rows="6" name="body_template" required>{{ tpl['body_template'] }}</textarea>
+                    </div>
+                    <div class="col-12 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="mailTemplateActive{{ tpl['id'] }}" name="is_active" value="1" {% if tpl['is_active'] %}checked{% endif %}>
+                        <label class="form-check-label small" for="mailTemplateActive{{ tpl['id'] }}">Active</label>
+                      </div>
+                      <div class="small text-muted ms-auto">
+                        Updated: {{ tpl['updated_at'] or tpl['created_at'] }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="d-grid d-md-flex justify-content-md-end gap-2 mt-3">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Save template</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" formmethod="post" formaction="{{ url_for('admin_delete_mail_template', template_id=tpl['id']) }}" onclick="return confirm('Delete this mail template?');">Delete</button>
+                  </div>
+                </form>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted small">No item mail templates configured yet.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if can_admin_settings %}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Public Lost Confirmation Mail</h5>
+          <form method="post" action="{{ url_for('admin_set_smtp_public_lost_confirmation') }}">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" id="smtpPublicLostConfirmEnabled" name="smtp_public_lost_confirm_enabled" value="1"
@@ -191,15 +278,17 @@ If you received this message, SMTP settings are working.</textarea>
           <div class="small"><strong>Body:</strong></div>
           <pre class="small bg-light border rounded p-2 mb-0">{{ public_lost_confirm_preview_body }}</pre>
         {% endif %}
+        </div>
       </div>
     </div>
-  </div>
+  {% endif %}
 
-  <div class="col-12">
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Legal Pages</h5>
-        <form method="post" action="{{ url_for('admin_set_legal_privacy_settings') }}">
+  {% if can_admin_settings %}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Legal Pages</h5>
+          <form method="post" action="{{ url_for('admin_set_legal_privacy_settings') }}">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <div class="row g-3">
             <div class="col-12 col-lg-6">
@@ -215,9 +304,10 @@ If you received this message, SMTP settings are working.</textarea>
             <button class="btn btn-sm btn-outline-primary" type="submit">Save legal pages</button>
           </div>
         </form>
+        </div>
       </div>
     </div>
-  </div>
+  {% endif %}
 </div>
 
 {% endblock %}

@@ -57,7 +57,7 @@ Recommended security settings:
 - `AUDIT_REDACT_ENABLED=true`
 - `SETTINGS_ENCRYPTION_KEY=<long-random-secret>` (required for encrypted SMTP password storage)
 
-After first login as admin, configure SMTP and description-quality settings in:
+After first login as admin, configure SMTP, item mail templates, and description-quality settings in:
 - `Settings -> System Settings`
 
 ## 3. One-Click Deploy
