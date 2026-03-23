@@ -736,10 +736,14 @@ def create_app(config: dict | None = None):
         return conn
 
     def _imap_mailbox_exists(imap_conn, mailbox_name: str) -> bool:
-        status, data = imap_conn.list("", _quote_imap_mailbox(mailbox_name))
-        if status != "OK":
+        mailbox_name = (mailbox_name or "").strip()
+        if not mailbox_name:
             return False
-        return bool(data and any(row not in (None, b"") for row in data))
+        try:
+            status, _ = imap_conn.status(_quote_imap_mailbox(mailbox_name), "(UIDNEXT)")
+            return status == "OK"
+        except Exception:
+            return False
 
     def _ensure_mailbox(imap_conn, mailbox_name: str):
         mailbox_name = (mailbox_name or "").strip()
