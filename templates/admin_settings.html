@@ -82,6 +82,15 @@
             <div class="col-12">
               <label class="form-label small">SMTP password</label>
               <input class="form-control form-control-sm" type="password" name="smtp_password" placeholder="Leave empty to keep current password">
+              <div class="form-text small">
+                {% if smtp_settings['password_encrypted'] %}
+                  Encrypted SMTP password is currently stored.
+                {% elif not smtp_settings['settings_encryption_ready'] %}
+                  No encrypted SMTP password can be stored until `SETTINGS_ENCRYPTION_KEY` is configured.
+                {% else %}
+                  No SMTP password is currently stored.
+                {% endif %}
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label small">From address</label>
@@ -102,6 +111,34 @@
 
           <div class="d-grid d-md-flex justify-content-md-end">
             <button class="btn btn-sm btn-outline-primary" type="submit">Save SMTP settings</button>
+          </div>
+        </form>
+
+        <hr>
+
+        <form method="post" action="{{ url_for('admin_send_smtp_test_mail') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label small">Test recipient</label>
+              <input class="form-control form-control-sm" type="email" name="smtp_test_recipient"
+                     placeholder="test@example.com" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Test subject</label>
+              <input class="form-control form-control-sm" name="smtp_test_subject"
+                     value="Lost & Found SMTP test">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Test message</label>
+              <textarea class="form-control form-control-sm" rows="4" name="smtp_test_body">This is a test e-mail from Lost & Found.
+
+If you received this message, SMTP settings are working.</textarea>
+            </div>
+          </div>
+
+          <div class="d-grid d-md-flex justify-content-md-end mt-3">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Send test e-mail</button>
           </div>
         </form>
       </div>

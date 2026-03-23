@@ -919,6 +919,7 @@ def create_app(config: dict | None = None):
             "set_setting": set_setting,
             "get_setting": get_setting,
             "get_smtp_settings": get_smtp_settings,
+            "send_smtp_mail": send_smtp_mail,
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,

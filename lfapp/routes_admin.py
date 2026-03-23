@@ -12,6 +12,7 @@ def register_admin_routes(app, deps: dict):
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
     get_smtp_settings = deps["get_smtp_settings"]
+    send_smtp_mail = deps["send_smtp_mail"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -423,6 +424,33 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("SMTP settings updated.", "success")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/smtp-test")
+    @require_permission("admin.settings")
+    def admin_send_smtp_test_mail():
+        recipient = (request.form.get("smtp_test_recipient") or "").strip()
+        subject = (request.form.get("smtp_test_subject") or "").strip() or "Lost & Found SMTP test"
+        body = (request.form.get("smtp_test_body") or "").strip() or (
+            "This is a test e-mail from Lost & Found.\n\n"
+            "If you received this message, SMTP settings are working."
+        )
+
+        if not recipient or "@" not in recipient:
+            flash("Please enter a valid test recipient e-mail address.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        ok, msg = send_smtp_mail(recipient, subject, body)
+        if ok:
+            audit(
+                "smtp_test_mail",
+                "settings",
+                None,
+                f"to={recipient} subject={subject[:120]}",
+            )
+            flash(f"Test e-mail sent to {recipient}.", "success")
+        else:
+            flash(f"Test e-mail could not be sent: {msg}", "danger")
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp-public-lost-confirmation")
