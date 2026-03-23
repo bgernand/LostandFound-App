@@ -57,7 +57,7 @@ Recommended security settings:
 - `AUDIT_REDACT_ENABLED=true`
 - `SETTINGS_ENCRYPTION_KEY=<long-random-secret>` (required for encrypted SMTP password storage)
 
-After first login as admin, configure SMTP, item mail templates, and description-quality settings in:
+After first login as admin, configure SMTP, mail ticket workflow, item mail templates, and description-quality settings in:
 - `Settings -> System Settings`
 
 ## 3. One-Click Deploy
@@ -95,9 +95,16 @@ Functional checks after deploy:
 - Lost review queue `/reviews/lost` opens for roles with `items.review`
 - Possible Matches page loads and score colors are visible
 - Saved searches can be saved/opened/deleted
-- Reminder workflow appears for stale In contact items
+- Reminder workflow appears for stale Waiting for answer items
 - Receipt PDF download works on item detail
 - Public token link /p/<token> is accessible only when public sharing is enabled
+- If mail ticket workflow is enabled:
+  - sending a Lost Request mail adds a `[LFT-<public_id>]` reference
+  - item status changes to `Waiting for answer`
+  - incoming replies are imported into the item thread and move status to `Answer received`
+  - inbound mails without a valid reference are moved to `LostFound/Unassigned`
+  - IMAP can be tested directly in the admin UI and a mailbox poll can be triggered manually
+  - unassigned mails can be linked manually from the admin UI
 
 If `docker compose` is unavailable on your server, use:
 ```bash

@@ -98,8 +98,16 @@
 
 <div class="card mt-3">
   <div class="card-body">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a class="btn btn-sm btn-outline-info" href="{{ url_for('index', status='Waiting for answer') }}">
+        Waiting for answer <span class="badge text-bg-info ms-1">{{ waiting_answer_count }}</span>
+      </a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('index', status='Answer received') }}">
+        Answer received <span class="badge text-bg-primary ms-1">{{ answer_received_count }}</span>
+      </a>
+    </div>
     <h6 class="card-title">Follow-up Reminders</h6>
-    <div class="small text-muted mb-2">Generated automatically for items in status "In contact" without updates for 7+ days.</div>
+    <div class="small text-muted mb-2">Generated automatically for items in status "Waiting for answer" without updates for 7+ days.</div>
     <div class="list-group">
       {% for r in reminders %}
         <div class="list-group-item d-flex justify-content-between align-items-start gap-2">

@@ -127,6 +127,11 @@
   </div>
 </div>
 
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <a class="btn btn-sm btn-outline-info" href="{{ url_for('index', status='Waiting for answer') }}">Waiting for answer <span class="badge text-bg-info ms-1">{{ waiting_answer_count }}</span></a>
+  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('index', status='Answer received') }}">Answer received <span class="badge text-bg-primary ms-1">{{ answer_received_count }}</span></a>
+</div>
+
 {% if open_reminders and open_reminders > 0 %}
   <div class="alert alert-warning py-2">
     {{ open_reminders }} follow-up reminder(s) are open.

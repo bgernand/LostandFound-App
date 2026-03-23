@@ -44,7 +44,9 @@ def register_item_routes(app, deps: dict):
     CONTACT_WAYS = deps["CONTACT_WAYS"]
     STATUSES = deps["STATUSES"]
     get_smtp_settings = deps["get_smtp_settings"]
+    get_mail_ticket_settings = deps["get_mail_ticket_settings"]
     send_smtp_mail = deps["send_smtp_mail"]
+    build_ticket_reference = deps["build_ticket_reference"]
     get_item_email_templates = deps["get_item_email_templates"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
     render_mail_template = deps["render_mail_template"]
@@ -79,7 +81,7 @@ def register_item_routes(app, deps: dict):
     def allowed_item_kinds_for_user(user_obj):
         if not user_obj:
             return set()
-        if has_permission("items.edit", user=user_obj) or has_permission("items.view_pii", user=user_obj):
+        if has_permission("items.edit", user=user_obj):
             return {"lost", "found"}
         kinds = set()
         if (
@@ -916,8 +918,22 @@ def register_item_routes(app, deps: dict):
         ).fetchall()
         email_history = conn.execute(
             """
-            SELECT e.id, e.recipient, e.subject, e.body, e.template_name, e.receipt_filename, e.created_at, u.username
-            FROM sent_item_emails e
+            SELECT
+                e.id,
+                e.direction,
+                e.sender,
+                e.recipient,
+                e.subject,
+                e.body,
+                e.ticket_ref,
+                e.template_name,
+                e.receipt_filename,
+                e.message_id,
+                e.in_reply_to,
+                e.mailbox_folder,
+                e.created_at,
+                u.username
+            FROM item_mail_messages e
             LEFT JOIN users u ON u.id = e.actor_user_id
             WHERE e.item_id=?
             ORDER BY e.created_at DESC, e.id DESC
@@ -928,8 +944,10 @@ def register_item_routes(app, deps: dict):
         if link_candidates:
             link_candidates = [r for r in link_candidates if int(r["id"]) not in linked_ids]
         smtp_cfg = get_smtp_settings(conn)
+        mail_ticket_cfg = get_mail_ticket_settings(conn)
         receipt_meta = build_receipt_meta(item, item_id)
         mail_ctx = build_item_mail_context(item, item_id, receipt_meta["receipt_no"], receipt_meta["public_url"])
+        mail_ctx["ticket_ref"] = build_ticket_reference(item)
         email_templates = []
         if item["kind"] == "lost":
             for template in get_item_email_templates(conn, active_only=True):
@@ -957,6 +975,7 @@ def register_item_routes(app, deps: dict):
             can_edit_this_item=can_edit_item(u, item),
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
+            mail_ticketing_enabled=mail_ticket_cfg["enabled"],
             email_templates=email_templates,
             item_email_allowed_vars=ITEM_EMAIL_ALLOWED_VARS,
             user=u,
@@ -996,6 +1015,8 @@ def register_item_routes(app, deps: dict):
         body = (request.form.get("body") or "").strip()
         attach_receipt = (request.form.get("attach_receipt_pdf") or "") == "1"
         template_name = ""
+        ticket_cfg = get_mail_ticket_settings(conn)
+        ticket_ref = build_ticket_reference(item)
         if template_id_raw:
             try:
                 template_id = int(template_id_raw)
@@ -1031,30 +1052,59 @@ def register_item_routes(app, deps: dict):
                 }
             )
             receipt_no = receipt_payload["receipt_no"]
+        if ticket_cfg["enabled"]:
+            tag = f"[{ticket_ref}]"
+            if tag.lower() not in subject.lower():
+                subject = f"{tag} {subject}".strip()
         conn.close()
 
-        ok, msg = send_smtp_mail(recipient, subject, body, attachments=attachments)
+        extra_headers = {}
+        if ticket_cfg["enabled"]:
+            extra_headers["X-LostFound-Ticket-Ref"] = ticket_ref
+        ok, msg, mail_meta = send_smtp_mail(
+            recipient,
+            subject,
+            body,
+            attachments=attachments,
+            extra_headers=extra_headers,
+            mailbox_append_folder=(ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None),
+            return_metadata=True,
+        )
         if ok:
             conn = get_db()
             conn.execute(
                 """
-                INSERT INTO sent_item_emails (
-                    item_id, actor_user_id, recipient, subject, body,
-                    template_name, receipt_filename, created_at
+                INSERT INTO item_mail_messages (
+                    item_id, actor_user_id, direction, sender, recipient, subject, body,
+                    ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                    mailbox_folder, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, 'outgoing', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                 """,
                 (
                     item_id,
                     current_user()["id"] if current_user() else None,
+                    get_smtp_settings(conn)["from"] or None,
                     recipient,
                     subject,
                     body,
+                    ticket_ref if ticket_cfg["enabled"] else None,
                     template_name or None,
                     attachments[0]["filename"] if attachments else None,
+                    (mail_meta or {}).get("message_id"),
+                    ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None,
                     now_utc(),
                 ),
             )
+            if ticket_cfg["enabled"]:
+                conn.execute(
+                    "UPDATE items SET status='Waiting for answer', updated_at=? WHERE id=?",
+                    (now_utc(), item_id),
+                )
+                conn.execute(
+                    "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
+                    (now_utc(), item_id),
+                )
             conn.commit()
             conn.close()
             details = f"to={recipient} subject={subject[:120]}"
@@ -1062,7 +1112,20 @@ def register_item_routes(app, deps: dict):
                 details += f" template={template_name}"
             if receipt_no:
                 details += f" receipt={receipt_no}"
-            audit("email_send", "item", item_id, details, meta={"template_name": template_name or None, "receipt_attached": attach_receipt})
+            if ticket_cfg["enabled"]:
+                details += f" ticket_ref={ticket_ref}"
+            audit(
+                "email_send",
+                "item",
+                item_id,
+                details,
+                meta={
+                    "template_name": template_name or None,
+                    "receipt_attached": attach_receipt,
+                    "ticket_ref": ticket_ref if ticket_cfg["enabled"] else None,
+                    "message_id": (mail_meta or {}).get("message_id"),
+                },
+            )
             flash("E-mail sent.", "success")
         else:
             flash(f"E-mail could not be sent: {msg}", "danger")

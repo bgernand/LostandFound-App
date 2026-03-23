@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-1">Unassigned Mail</h4>
+    <div class="text-muted small">Inbound messages that could not be matched to a ticket reference.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_settings') }}">Back to Settings</a>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    {% if rows %}
+      <div class="vstack gap-3">
+        {% for row in rows %}
+          <div class="border rounded p-3">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div class="flex-grow-1">
+                <div class="fw-semibold">{{ row['subject'] }}</div>
+                <div class="small text-muted mb-2">
+                  From: {{ row['sender'] or "—" }}
+                  {% if row['recipient'] %} · To: {{ row['recipient'] }}{% endif %}
+                  {% if row['ticket_ref_guess'] %} · Ref guess: {{ row['ticket_ref_guess'] }}{% endif %}
+                  {% if row['mailbox_folder'] %} · Folder: {{ row['mailbox_folder'] }}{% endif %}
+                </div>
+                <pre class="small bg-light border rounded p-2 mb-2" style="white-space: pre-wrap;">{{ row['body'] }}</pre>
+                <div class="small text-muted">
+                  Received: {{ row['received_at'] or row['created_at'] }}
+                  {% if row['message_id'] %} · Message-ID: {{ row['message_id'] }}{% endif %}
+                </div>
+              </div>
+              <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=row['id']) }}" class="ms-auto" style="min-width: 260px;">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <label class="form-label small">Assign to item</label>
+                <input class="form-control form-control-sm mb-2" name="target_item_ref" placeholder="Public ID or DB ID" required>
+                <button class="btn btn-sm btn-primary w-100" type="submit">Assign and create thread entry</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-muted">No unassigned inbound mail.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

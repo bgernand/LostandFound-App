@@ -52,7 +52,7 @@ def register_overview_routes(app, deps: dict):
     def allowed_item_kinds_for_user(user_obj):
         if not user_obj:
             return set()
-        if has_permission("items.edit", user=user_obj) or has_permission("items.view_pii", user=user_obj):
+        if has_permission("items.edit", user=user_obj):
             return {"lost", "found"}
         kinds = set()
         if (
@@ -119,6 +119,28 @@ def register_overview_routes(app, deps: dict):
             """.format(",".join(["?"] * len(allowed_kinds))),
             tuple(sorted(allowed_kinds)),
         ).fetchall()
+        waiting_answer_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM items
+                WHERE status='Waiting for answer'
+                  AND kind IN ({})
+                """.format(",".join(["?"] * len(allowed_kinds))),
+                tuple(sorted(allowed_kinds)),
+            ).fetchone()["c"]
+        )
+        answer_received_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM items
+                WHERE status='Answer received'
+                  AND kind IN ({})
+                """.format(",".join(["?"] * len(allowed_kinds))),
+                tuple(sorted(allowed_kinds)),
+            ).fetchone()["c"]
+        )
 
         # Compact "Possible Matches" snapshot for dashboard widgets.
         source_rows = conn.execute(
@@ -194,6 +216,8 @@ def register_overview_routes(app, deps: dict):
             top_categories=top_categories,
             reminders=reminders,
             kpi=kpi,
+            waiting_answer_count=waiting_answer_count,
+            answer_received_count=answer_received_count,
             possible_matches_total=matches_total,
             possible_matches_bins=bins_with_pct,
             user=u,
@@ -249,6 +273,28 @@ def register_overview_routes(app, deps: dict):
             ).fetchall()
         }
         open_reminders = conn.execute("SELECT COUNT(*) AS c FROM reminders WHERE is_done=0").fetchone()["c"]
+        waiting_answer_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM items
+                WHERE status='Waiting for answer'
+                  AND kind IN ({})
+                """.format(",".join(["?"] * len(allowed_kinds))),
+                tuple(sorted(allowed_kinds)),
+            ).fetchone()["c"]
+        )
+        answer_received_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM items
+                WHERE status='Answer received'
+                  AND kind IN ({})
+                """.format(",".join(["?"] * len(allowed_kinds))),
+                tuple(sorted(allowed_kinds)),
+            ).fetchone()["c"]
+        )
         saved_searches = filter_get_saved_searches(conn, int(u["id"]), "index", SAVED_SEARCH_SCOPES) if u else []
         conn.close()
         current_path = request.full_path if request.query_string else request.path
@@ -271,6 +317,8 @@ def register_overview_routes(app, deps: dict):
             photo_counts=photo_counts,
             linked_item_ids=linked_item_ids,
             open_reminders=open_reminders,
+            waiting_answer_count=waiting_answer_count,
+            answer_received_count=answer_received_count,
             saved_searches=saved_searches,
             current_query=(request.query_string.decode("utf-8") if request.query_string else ""),
             current_path=current_path,

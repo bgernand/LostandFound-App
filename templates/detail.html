@@ -1,4 +1,13 @@
 {% extends "base.html" %}
+{% block extra_head %}
+  {{ super() }}
+  <style>
+    #sendMailModal .modal-body {
+      max-height: calc(100vh - 210px);
+      overflow-y: auto;
+    }
+  </style>
+{% endblock %}
 {% block content %}
 
 <div class="card">
@@ -178,6 +187,11 @@
         <div class="small text-muted mb-2">
           To: {{ item['lost_email'] }}{% if smtp_from %} · From: {{ smtp_from }}{% endif %}
         </div>
+        {% if mail_ticketing_enabled %}
+          <div class="small text-muted mb-2">
+            Outgoing mails include a ticket reference and change the status to <code>Waiting for answer</code>. Incoming replies are added to the thread automatically.
+          </div>
+        {% endif %}
         <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#sendMailModal">
           Open mail composer
         </button>
@@ -232,19 +246,6 @@ Best regards{% endif %}</textarea>
                 </div>
               </div>
               <div class="col-12">
-                <div class="border rounded bg-light p-3">
-                  <div class="fw-semibold mb-2">Read-only preview</div>
-                  <div class="small text-muted mb-1">Subject</div>
-                  <div class="border rounded bg-white px-2 py-2 small mb-3" id="mailSubjectPreview">{{ email_templates[0]['subject'] if email_templates else 'Lost & Found update for Item ID ' ~ (item['public_id'] or '—') }}</div>
-                  <div class="small text-muted mb-1">Message</div>
-                  <pre class="border rounded bg-white px-2 py-2 small mb-0" id="mailBodyPreview" style="white-space: pre-wrap;">{% if email_templates %}{{ email_templates[0]['body'] }}{% else %}Hello,
-
-we have an update regarding your lost request (Item ID {{ item['public_id'] or "—" }}).
-
-Best regards{% endif %}</pre>
-                </div>
-              </div>
-              <div class="col-12">
                 <div class="small text-muted">
                   Available template variables:
                   {% for v in item_email_allowed_vars %}
@@ -268,17 +269,30 @@ Best regards{% endif %}</pre>
 {% if email_history and email_history|length %}
   <div class="card mt-3">
     <div class="card-body">
-      <div class="fw-bold mb-2">Mail History</div>
+      <div class="fw-bold mb-2">Mail Thread</div>
       <div class="list-group list-group-flush">
         {% for mail in email_history %}
           <div class="list-group-item px-0{% if loop.index > 3 %} d-none js-mail-history-extra{% endif %}">
             <div class="d-flex justify-content-between gap-3 align-items-start">
               <div class="flex-grow-1">
-                <div class="fw-semibold">{{ mail['subject'] }}</div>
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                  <span class="badge text-bg-{{ 'primary' if mail['direction'] == 'outgoing' else 'success' }}">
+                    {{ 'Outgoing' if mail['direction'] == 'outgoing' else 'Incoming' }}
+                  </span>
+                  <div class="fw-semibold">{{ mail['subject'] }}</div>
+                </div>
                 <div class="small text-muted mb-2">
-                  To: {{ mail['recipient'] }}
+                  {% if mail['direction'] == 'outgoing' %}
+                    To: {{ mail['recipient'] or "—" }}
+                    {% if mail['sender'] %} · From: {{ mail['sender'] }}{% endif %}
+                  {% else %}
+                    From: {{ mail['sender'] or "—" }}
+                    {% if mail['recipient'] %} · To: {{ mail['recipient'] }}{% endif %}
+                  {% endif %}
+                  {% if mail['ticket_ref'] %} · Ref: {{ mail['ticket_ref'] }}{% endif %}
                   {% if mail['template_name'] %} · Template: {{ mail['template_name'] }}{% endif %}
                   {% if mail['receipt_filename'] %} · Attachment: {{ mail['receipt_filename'] }}{% endif %}
+                  {% if mail['mailbox_folder'] %} · Folder: {{ mail['mailbox_folder'] }}{% endif %}
                 </div>
                 <pre class="small bg-light border rounded p-2 mb-0" style="white-space: pre-wrap;">{{ mail['body'] }}</pre>
               </div>
@@ -497,9 +511,7 @@ Best regards{% endif %}</pre>
       var templateSelect = document.getElementById("mailTemplateSelect");
       var subjectInput = document.getElementById("mailSubjectInput");
       var bodyInput = document.getElementById("mailBodyInput");
-      var subjectPreview = document.getElementById("mailSubjectPreview");
-      var bodyPreview = document.getElementById("mailBodyPreview");
-      if (!dataNode || !templateSelect || !subjectInput || !bodyInput || !subjectPreview || !bodyPreview) {
+      if (!dataNode || !templateSelect || !subjectInput || !bodyInput) {
         return;
       }
 
@@ -510,11 +522,6 @@ Best regards{% endif %}</pre>
         templates = [];
       }
 
-      var syncPreview = function () {
-        subjectPreview.textContent = subjectInput.value || "";
-        bodyPreview.textContent = bodyInput.value || "";
-      };
-
       templateSelect.addEventListener("change", function () {
         var selected = templates.find(function (tpl) {
           return String(tpl.id) === String(templateSelect.value);
@@ -524,12 +531,7 @@ Best regards{% endif %}</pre>
         }
         subjectInput.value = selected.subject || "";
         bodyInput.value = selected.body || "";
-        syncPreview();
       });
-
-      subjectInput.addEventListener("input", syncPreview);
-      bodyInput.addEventListener("input", syncPreview);
-      syncPreview();
     })();
   </script>
 {% endblock %}

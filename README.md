@@ -25,14 +25,14 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Admin controls for TOTP mandatory mode and per-user 2FA reset
 - Manual SMTP e-mail sending from Lost Request detail view to requester address
 - Mail composer popup with admin-managed templates, variable rendering, and optional receipt PDF attachment
-- Sent e-mails are stored per item and shown on the detail page as mail history
+- Ticket-style mail thread per item with outbound/inbound history, reference tagging, optional IMAP polling, and mailbox filing
 - Description quality validation with live form feedback and admin-managed blacklist extension
 - Public Lost submission page (`/report/lost`) without login
 - Dedicated Lost Review Queue with mass-processing flow (`Reviewed & Next`)
 - Optional confirmation e-mail to requester after public lost submission (configurable template with preview in `Settings -> System Settings`)
 
 ## Status Behavior
-- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `In contact`, `Ready to send`, `Handed over / Sent`, `Lost forever`
+- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `Waiting for answer`, `Answer received`, `Ready to send`, `Handed over / Sent`, `Lost forever`
 - New items are always created with default status `Lost` (independent of type)
 - When a link is created between items, all items in the linked graph are set to `Found`
 - Changing the status of one linked item synchronizes that status to all linked items
@@ -65,9 +65,22 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Score badge colors indicate confidence level (high score = stronger match).
 
 ## Follow-up Workflow
-- A follow-up reminder is generated automatically when an item stays in `In contact` for more than 7 days without updates.
+- A follow-up reminder is generated automatically when an item stays in `Waiting for answer` for more than 7 days without updates.
 - Open reminders are shown on the dashboard and as a warning on the items overview.
 - Staff/admin can mark reminders as done.
+
+## Mail Ticket Workflow
+- The workflow is configured in `Settings -> System Settings -> Mail Ticket Workflow`.
+- Outgoing Lost Request mails are tagged with a reference in the subject using the schema `[LFT-<public_id>]`.
+- When ticket workflow is enabled:
+  - sending a mail sets the item status to `Waiting for answer`
+  - incoming replies are fetched from IMAP, matched by reference, and added to the item thread
+  - received replies set the item status to `Answer received`
+  - outgoing messages are appended to the IMAP sent folder (default `LostFound/Send`)
+  - processed incoming messages are moved to the IMAP processed folder (default `LostFound/Proceeded`)
+  - incoming messages without a valid ticket reference are moved to the IMAP unassigned folder (default `LostFound/Unassigned`)
+  - unassigned messages can be reviewed and manually linked in `Settings -> Mail Ticket Workflow -> Unassigned mail`
+- The item detail page shows the complete mail thread (incoming and outgoing).
 
 ## Public Lost Submission + Review
 - Public users can submit a new `Lost Request` via `/report/lost`.
@@ -211,8 +224,11 @@ chmod +x deploy.sh
 - Session cookies are hardened (`Secure`, `HttpOnly`, `SameSite`).
 - Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
 - Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
+- Mail ticket workflow and IMAP polling are configured in `Settings -> System Settings`, not in `.env`.
 - Item mail templates are managed in `Settings -> System Settings` and support variables such as `{{ item_id }}`, `{{ title }}`, `{{ status }}`, `{{ full_name }}`, `{{ receipt_no }}`, and `{{ public_url }}`.
+- Item mail templates also support `{{ ticket_ref }}` when mail ticket workflow is enabled.
 - The mail composer popup on Lost Request detail pages can optionally attach the current Receipt PDF to the outgoing mail.
+- IMAP credentials can be stored encrypted in settings when `SETTINGS_ENCRYPTION_KEY` is configured.
 - Description quality defaults and blacklist extension are managed in `Settings -> System Settings`.
 - Audit log stores action context plus structured before/after snapshots for critical changes (items/users/roles/settings/categories).
 - Audit snapshot redaction is enabled by default for sensitive keys (contact/address/token/secret fields).

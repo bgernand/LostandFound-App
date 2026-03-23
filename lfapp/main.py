@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
+from email.utils import make_msgid
 from pathlib import Path
 import ipaddress
+import imaplib
 import os
 import re
 import secrets
@@ -162,6 +166,7 @@ PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
 }
 ITEM_EMAIL_ALLOWED_VARS = {
     "item_id",
+    "ticket_ref",
     "title",
     "status",
     "category",
@@ -181,7 +186,8 @@ STATUSES = [
     "Lost",
     "Maybe Found -> Check",
     "Found",
-    "In contact",
+    "Waiting for answer",
+    "Answer received",
     "Ready to send",
     "Handed over / Sent",
     "Lost forever",
@@ -191,7 +197,8 @@ STATUS_COLORS = {
     "Lost": "danger",
     "Maybe Found -> Check": "warning",
     "Found": "primary",
-    "In contact": "info",
+    "Waiting for answer": "info",
+    "Answer received": "primary",
     "Ready to send": "secondary",
     "Handed over / Sent": "success",
     "Lost forever": "dark",
@@ -288,6 +295,19 @@ def create_app(config: dict | None = None):
     smtp_use_tls = _is_truthy(app.config.get("SMTP_USE_TLS", "true"))
     smtp_use_ssl = _is_truthy(app.config.get("SMTP_USE_SSL", "false"))
     smtp_timeout = int(app.config.get("SMTP_TIMEOUT", "15"))
+    mail_ticketing_enabled_default = _is_truthy(app.config.get("MAIL_TICKETING_ENABLED", "false"))
+    imap_enabled_default = _is_truthy(app.config.get("IMAP_ENABLED", "false"))
+    imap_host_default = str(app.config.get("IMAP_HOST", "")).strip()
+    imap_port_default = int(app.config.get("IMAP_PORT", "993"))
+    imap_username_default = str(app.config.get("IMAP_USERNAME", "")).strip()
+    imap_password_default = str(app.config.get("IMAP_PASSWORD", ""))
+    imap_use_ssl_default = _is_truthy(app.config.get("IMAP_USE_SSL", "true"))
+    imap_timeout_default = int(app.config.get("IMAP_TIMEOUT", "15"))
+    imap_inbox_folder_default = str(app.config.get("IMAP_INBOX_FOLDER", "INBOX")).strip() or "INBOX"
+    imap_sent_folder_default = str(app.config.get("IMAP_SENT_FOLDER", "LostFound/Send")).strip() or "LostFound/Send"
+    imap_processed_folder_default = str(app.config.get("IMAP_PROCESSED_FOLDER", "LostFound/Proceeded")).strip() or "LostFound/Proceeded"
+    imap_unassigned_folder_default = str(app.config.get("IMAP_UNASSIGNED_FOLDER", "LostFound/Unassigned")).strip() or "LostFound/Unassigned"
+    mail_ticket_poll_interval_default = int(app.config.get("MAIL_TICKET_POLL_INTERVAL_SECONDS", "300"))
     settings_encryption_key = str(
         app.config.get("SETTINGS_ENCRYPTION_KEY", os.environ.get("SETTINGS_ENCRYPTION_KEY", ""))
     ).strip()
@@ -318,7 +338,7 @@ def create_app(config: dict | None = None):
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
     )
 
-    state = {"db_inited": False, "status_maintenance_day": None, "audit_maintenance_day": None}
+    state = {"db_inited": False, "status_maintenance_day": None, "audit_maintenance_day": None, "last_mail_poll_ts": 0}
 
     def encrypt_setting_secret(value: str) -> str | None:
         if not settings_encryption_key:
@@ -457,6 +477,83 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
+    def build_ticket_reference(item_row) -> str:
+        return f"LFT-{(item_row['public_id'] or item_row['id'])}"
+
+    def get_mail_ticket_settings(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            enabled_raw = get_setting(conn, "mail_ticketing_enabled", "1" if mail_ticketing_enabled_default else "0")
+            imap_enabled_raw = get_setting(conn, "imap_enabled", "1" if imap_enabled_default else "0")
+            host = (get_setting(conn, "imap_host", imap_host_default) or "").strip()
+            port_raw = get_setting(conn, "imap_port", str(imap_port_default))
+            username = (get_setting(conn, "imap_username", imap_username_default) or "").strip()
+            password = str(get_setting(conn, "imap_password", imap_password_default) or "")
+            password_enc = str(get_setting(conn, "imap_password_enc", "") or "")
+            use_ssl_raw = get_setting(conn, "imap_use_ssl", "1" if imap_use_ssl_default else "0")
+            timeout_raw = get_setting(conn, "imap_timeout", str(imap_timeout_default))
+            inbox_folder = (get_setting(conn, "imap_inbox_folder", imap_inbox_folder_default) or "").strip() or "INBOX"
+            sent_folder = (get_setting(conn, "imap_sent_folder", imap_sent_folder_default) or "").strip() or "LostFound/Send"
+            processed_folder = (get_setting(conn, "imap_processed_folder", imap_processed_folder_default) or "").strip() or "LostFound/Proceeded"
+            unassigned_folder = (get_setting(conn, "imap_unassigned_folder", imap_unassigned_folder_default) or "").strip() or "LostFound/Unassigned"
+            poll_interval_raw = get_setting(conn, "mail_ticket_poll_interval_seconds", str(mail_ticket_poll_interval_default))
+            last_poll_at = (get_setting(conn, "mail_ticket_last_poll_at", "") or "").strip()
+            last_poll_ok = (get_setting(conn, "mail_ticket_last_poll_ok", "") or "").strip()
+            last_poll_message = (get_setting(conn, "mail_ticket_last_poll_message", "") or "").strip()
+            try:
+                port = int(port_raw or imap_port_default)
+            except ValueError:
+                port = imap_port_default
+            try:
+                timeout = int(timeout_raw or imap_timeout_default)
+            except ValueError:
+                timeout = imap_timeout_default
+            try:
+                poll_interval = int(poll_interval_raw or mail_ticket_poll_interval_default)
+            except ValueError:
+                poll_interval = mail_ticket_poll_interval_default
+            port = max(1, min(65535, port))
+            timeout = max(3, min(120, timeout))
+            poll_interval = max(60, min(86400, poll_interval))
+            if password_enc and settings_encryption_ready():
+                decrypted = decrypt_setting_secret(password_enc)
+                password = decrypted if decrypted is not None else ""
+            return {
+                "enabled": _is_truthy(enabled_raw),
+                "imap_enabled": _is_truthy(imap_enabled_raw),
+                "imap_host": host,
+                "imap_port": port,
+                "imap_username": username,
+                "imap_password": password,
+                "imap_password_encrypted": bool(password_enc),
+                "imap_use_ssl": _is_truthy(use_ssl_raw),
+                "imap_timeout": timeout,
+                "imap_inbox_folder": inbox_folder,
+                "imap_sent_folder": sent_folder,
+                "imap_processed_folder": processed_folder,
+                "imap_unassigned_folder": unassigned_folder,
+                "poll_interval_seconds": poll_interval,
+                "last_poll_at": last_poll_at,
+                "last_poll_ok": last_poll_ok,
+                "last_poll_message": last_poll_message,
+                "settings_encryption_ready": settings_encryption_ready(),
+            }
+        finally:
+            if own_conn:
+                conn.close()
+
+    def extract_ticket_reference(*parts):
+        pattern = re.compile(r"\bLFT-([A-Z0-9]+)\b", re.IGNORECASE)
+        for part in parts:
+            text = str(part or "")
+            match = pattern.search(text)
+            if match:
+                return f"LFT-{match.group(1).upper()}"
+        return None
+
     def validate_mail_template_variables(text: str, allowed_vars: set[str]):
         found = set(MAIL_TEMPLATE_VAR_RE.findall(text or ""))
         unknown = sorted(v for v in found if v not in allowed_vars)
@@ -543,6 +640,9 @@ def create_app(config: dict | None = None):
         body: str,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
+        extra_headers: dict | None = None,
+        mailbox_append_folder: str | None = None,
+        return_metadata: bool = False,
     ):
         smtp_cfg = get_smtp_settings()
         if not smtp_cfg["enabled"]:
@@ -566,6 +666,11 @@ def create_app(config: dict | None = None):
         msg["Subject"] = subject.strip()
         if reply_to:
             msg["Reply-To"] = reply_to
+        for key, value in (extra_headers or {}).items():
+            if value:
+                msg[key] = str(value)
+        if "Message-ID" not in msg:
+            msg["Message-ID"] = make_msgid(domain=(smtp_cfg["from"].split("@", 1)[1] if "@" in smtp_cfg["from"] else None))
         msg.set_content(body)
         for attachment in attachments or []:
             data = attachment.get("data")
@@ -581,6 +686,19 @@ def create_app(config: dict | None = None):
                 filename=filename,
             )
 
+        def _imap_connect(cfg):
+            if not cfg["imap_use_ssl"]:
+                raise RuntimeError("Only IMAP SSL is supported.")
+            conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
+            conn.login(cfg["imap_username"], cfg["imap_password"])
+            return conn
+
+        def _ensure_mailbox(imap_conn, mailbox_name):
+            status, _ = imap_conn.select(f'"{mailbox_name}"')
+            if status == "OK":
+                return
+            imap_conn.create(mailbox_name)
+
         try:
             smtp_cls = smtplib.SMTP_SSL if smtp_cfg["use_ssl"] else smtplib.SMTP
             with smtp_cls(smtp_cfg["host"], smtp_cfg["port"], timeout=smtp_cfg["timeout"]) as smtp:
@@ -589,9 +707,34 @@ def create_app(config: dict | None = None):
                 if smtp_cfg["username"]:
                     smtp.login(smtp_cfg["username"], smtp_cfg["password"])
                 smtp.send_message(msg)
+            ticket_cfg = get_mail_ticket_settings()
+            if mailbox_append_folder and ticket_cfg["enabled"] and ticket_cfg["imap_host"] and ticket_cfg["imap_username"] and ticket_cfg["imap_password"]:
+                imap_conn = None
+                try:
+                    imap_conn = _imap_connect(ticket_cfg)
+                    _ensure_mailbox(imap_conn, mailbox_append_folder)
+                    imap_conn.append(
+                        mailbox_append_folder,
+                        "\\Seen",
+                        imaplib.Time2Internaldate(time.time()),
+                        msg.as_bytes(),
+                    )
+                except Exception:
+                    app.logger.exception("IMAP append failed for outgoing mail to=%s subject=%s", to_address, subject)
+                finally:
+                    if imap_conn is not None:
+                        try:
+                            imap_conn.logout()
+                        except Exception:
+                            pass
+            metadata = {"message_id": str(msg.get("Message-ID") or "").strip() or None}
+            if return_metadata:
+                return True, "Mail sent.", metadata
             return True, "Mail sent."
         except Exception as exc:
             app.logger.exception("SMTP send failed to=%s subject=%s", to_address, subject)
+            if return_metadata:
+                return False, str(exc), {}
             return False, str(exc)
 
     def csrf_token():
@@ -635,6 +778,340 @@ def create_app(config: dict | None = None):
 
     def resolve_client_ip_for_audit(req):
         return client_ip(req, trusted_proxy_networks)
+
+    def poll_ticket_mailbox_once():
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return {
+                "ok": False,
+                "processed": 0,
+                "unassigned": 0,
+                "duplicates": 0,
+                "errors": 0,
+                "message": "Mail ticket workflow or inbound IMAP polling is not configured.",
+                "locked": False,
+            }
+
+        result = {
+            "ok": True,
+            "processed": 0,
+            "unassigned": 0,
+            "duplicates": 0,
+            "errors": 0,
+            "message": "",
+            "locked": False,
+        }
+        imap_conn = None
+        conn = None
+        lock_token = secrets.token_hex(16)
+        now_ts = int(time.time())
+
+        def _ensure_mailbox(imap_conn_obj, mailbox_name):
+            status, _ = imap_conn_obj.select(f'"{mailbox_name}"')
+            if status == "OK":
+                return
+            imap_conn_obj.create(mailbox_name)
+
+        def _move_message(imap_conn_obj, num, folder_name):
+            _ensure_mailbox(imap_conn_obj, folder_name)
+            copy_status, _ = imap_conn_obj.copy(num, folder_name)
+            if copy_status == "OK":
+                imap_conn_obj.store(num, "+FLAGS", "\\Deleted")
+                return True
+            return False
+
+        try:
+            conn = get_db()
+            conn.execute("BEGIN IMMEDIATE")
+            locked_until_raw = get_setting(conn, "mail_ticket_poll_lock_until", "0") or "0"
+            current_token = get_setting(conn, "mail_ticket_poll_lock_token", "") or ""
+            try:
+                locked_until = int(locked_until_raw)
+            except ValueError:
+                locked_until = 0
+            if locked_until > now_ts and current_token:
+                conn.rollback()
+                result["ok"] = False
+                result["locked"] = True
+                result["message"] = "A mailbox poll is already running."
+                return result
+            set_setting(conn, "mail_ticket_poll_lock_until", str(now_ts + max(cfg["poll_interval_seconds"], 300)))
+            set_setting(conn, "mail_ticket_poll_lock_token", lock_token)
+            conn.commit()
+
+            imap_conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
+            imap_conn.login(cfg["imap_username"], cfg["imap_password"])
+            imap_conn.select(f'"{cfg["imap_inbox_folder"]}"')
+            status, data = imap_conn.search(None, "ALL")
+            if status != "OK":
+                result["ok"] = False
+                result["errors"] += 1
+                result["message"] = "Could not read inbox."
+                return result
+            message_numbers = [n for n in (data[0] or b"").split() if n]
+            if not message_numbers:
+                result["message"] = "No messages found."
+                return result
+            for num in message_numbers:
+                status, msg_data = imap_conn.fetch(num, "(RFC822)")
+                if status != "OK" or not msg_data:
+                    result["errors"] += 1
+                    continue
+                raw_message = None
+                for part in msg_data:
+                    if isinstance(part, tuple) and len(part) >= 2:
+                        raw_message = part[1]
+                        break
+                if not raw_message:
+                    continue
+                message = BytesParser(policy=policy.default).parsebytes(raw_message)
+                subject = str(message.get("Subject") or "").strip()
+                from_addr = str(message.get("From") or "").strip()
+                to_addr = str(message.get("To") or "").strip()
+                message_id = str(message.get("Message-ID") or "").strip() or None
+                in_reply_to = str(message.get("In-Reply-To") or "").strip() or None
+                body = ""
+                if message.is_multipart():
+                    for part in message.walk():
+                        if part.get_content_type() == "text/plain" and not part.get_filename():
+                            try:
+                                body = part.get_content().strip()
+                            except Exception:
+                                body = (part.get_payload(decode=True) or b"").decode(errors="replace").strip()
+                            if body:
+                                break
+                else:
+                    try:
+                        body = message.get_content().strip()
+                    except Exception:
+                        body = (message.get_payload(decode=True) or b"").decode(errors="replace").strip()
+                references = str(message.get("References") or "").strip()
+                ticket_ref = extract_ticket_reference(
+                    subject,
+                    body,
+                    in_reply_to,
+                    references,
+                    str(message.get("X-LostFound-Ticket-Ref") or "").strip(),
+                )
+                if not ticket_ref:
+                    if _move_message(imap_conn, num, cfg["imap_unassigned_folder"]):
+                        conn.execute(
+                            """
+                            INSERT INTO mail_unassigned_messages (
+                                sender, recipient, subject, body, message_id, in_reply_to,
+                                references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+                            )
+                            SELECT ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM mail_unassigned_messages
+                                WHERE (
+                                    message_id IS NOT NULL AND message_id=?
+                                ) OR (
+                                    message_id IS NULL
+                                    AND coalesce(sender,'')=coalesce(?, '')
+                                    AND subject=?
+                                    AND body=?
+                                    AND assigned_at IS NULL
+                                )
+                            )
+                            """,
+                            (
+                                from_addr,
+                                to_addr,
+                                subject or "(no subject)",
+                                body or "",
+                                message_id,
+                                in_reply_to,
+                                references,
+                                cfg["imap_unassigned_folder"],
+                                now_utc(),
+                                now_utc(),
+                                message_id,
+                                from_addr,
+                                subject or "(no subject)",
+                                body or "",
+                            ),
+                        )
+                        conn.commit()
+                        result["unassigned"] += 1
+                    continue
+                item_ref = ticket_ref.removeprefix("LFT-")
+                item = conn.execute(
+                    "SELECT id, status FROM items WHERE upper(public_id)=upper(?) LIMIT 1",
+                    (item_ref,),
+                ).fetchone()
+                if not item:
+                    if _move_message(imap_conn, num, cfg["imap_unassigned_folder"]):
+                        conn.execute(
+                            """
+                            INSERT INTO mail_unassigned_messages (
+                                sender, recipient, subject, body, message_id, in_reply_to,
+                                references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+                            )
+                            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM mail_unassigned_messages
+                                WHERE (
+                                    message_id IS NOT NULL AND message_id=?
+                                ) OR (
+                                    message_id IS NULL
+                                    AND coalesce(sender,'')=coalesce(?, '')
+                                    AND subject=?
+                                    AND body=?
+                                    AND assigned_at IS NULL
+                                )
+                            )
+                            """,
+                            (
+                                from_addr,
+                                to_addr,
+                                subject or f"Reply {ticket_ref}",
+                                body or "",
+                                message_id,
+                                in_reply_to,
+                                references,
+                                ticket_ref,
+                                cfg["imap_unassigned_folder"],
+                                now_utc(),
+                                now_utc(),
+                                message_id,
+                                from_addr,
+                                subject or f"Reply {ticket_ref}",
+                                body or "",
+                            ),
+                        )
+                        conn.commit()
+                        result["unassigned"] += 1
+                    continue
+                exists = conn.execute(
+                    "SELECT id FROM item_mail_messages WHERE message_id=? LIMIT 1",
+                    (message_id,),
+                ).fetchone() if message_id else None
+                if not exists:
+                    exists = conn.execute(
+                        """
+                        SELECT id FROM item_mail_messages
+                        WHERE item_id=?
+                          AND direction='incoming'
+                          AND coalesce(sender,'')=coalesce(?, '')
+                          AND subject=?
+                          AND body=?
+                          AND coalesce(ticket_ref,'')=coalesce(?, '')
+                        LIMIT 1
+                        """,
+                        (int(item["id"]), from_addr, subject or f"Reply {ticket_ref}", body or "", ticket_ref),
+                    ).fetchone()
+                if exists:
+                    result["duplicates"] += 1
+                    _move_message(imap_conn, num, cfg["imap_processed_folder"])
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO item_mail_messages (
+                        item_id, actor_user_id, direction, sender, recipient, subject, body,
+                        ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                        mailbox_folder, created_at
+                    )
+                    VALUES (?, NULL, 'incoming', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(item["id"]),
+                        from_addr,
+                        cfg["imap_username"],
+                        subject or f"Reply {ticket_ref}",
+                        body or "",
+                        ticket_ref,
+                        message_id,
+                        in_reply_to,
+                        cfg["imap_processed_folder"],
+                        now_utc(),
+                    ),
+                )
+                conn.execute(
+                    "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+                    (now_utc(), int(item["id"])),
+                )
+                conn.execute(
+                    "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
+                    (now_utc(), int(item["id"])),
+                )
+                conn.commit()
+                try:
+                    _move_message(imap_conn, num, cfg["imap_processed_folder"])
+                except Exception:
+                    result["errors"] += 1
+                result["processed"] += 1
+            if result["processed"] or result["unassigned"] or result["duplicates"]:
+                try:
+                    imap_conn.expunge()
+                except Exception:
+                    pass
+        except Exception:
+            app.logger.exception("Ticket mailbox polling failed")
+            result["ok"] = False
+            result["errors"] += 1
+            if not result["message"]:
+                result["message"] = "Mailbox poll failed."
+        finally:
+            if not result["message"]:
+                result["message"] = (
+                    f"Processed={result['processed']} "
+                    f"Unassigned={result['unassigned']} "
+                    f"Duplicates={result['duplicates']} "
+                    f"Errors={result['errors']}"
+                )
+            if conn is not None:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    set_setting(conn, "mail_ticket_last_poll_at", now_utc())
+                    set_setting(conn, "mail_ticket_last_poll_ok", "1" if result["ok"] else "0")
+                    set_setting(conn, "mail_ticket_last_poll_message", result["message"])
+                    token_in_db = get_setting(conn, "mail_ticket_poll_lock_token", "") or ""
+                    if token_in_db == lock_token:
+                        set_setting(conn, "mail_ticket_poll_lock_until", "0")
+                        set_setting(conn, "mail_ticket_poll_lock_token", "")
+                    conn.commit()
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+            if conn is not None:
+                conn.close()
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+        return result
+
+    def test_imap_connection_once():
+        cfg = get_mail_ticket_settings()
+        if not cfg["enabled"]:
+            return False, "Mail ticket workflow is disabled."
+        if not cfg["imap_enabled"]:
+            return False, "Inbound IMAP polling is disabled."
+        if not cfg["imap_host"] or not cfg["imap_username"] or not cfg["imap_password"]:
+            return False, "IMAP host, username and password are required."
+        if not cfg["imap_use_ssl"]:
+            return False, "Only IMAP SSL is supported."
+        imap_conn = None
+        try:
+            imap_conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=cfg["imap_timeout"])
+            imap_conn.login(cfg["imap_username"], cfg["imap_password"])
+            status, _ = imap_conn.select(f'"{cfg["imap_inbox_folder"]}"')
+            if status != "OK":
+                return False, f"Could not open inbox folder {cfg['imap_inbox_folder']}."
+            return True, f"IMAP connection successful. Inbox {cfg['imap_inbox_folder']} is reachable."
+        except Exception as exc:
+            app.logger.exception("IMAP connection test failed")
+            return False, str(exc)
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
 
     auth_helpers = build_auth_helpers(
         app=app,
@@ -715,6 +1192,21 @@ def create_app(config: dict | None = None):
                 deleted_by_age,
                 deleted_by_count,
             )
+
+    @app.before_request
+    def _auto_ticket_mail_poll():
+        now_ts = int(time.time())
+        cfg = get_mail_ticket_settings()
+        if not cfg["enabled"]:
+            return
+        if now_ts - int(state.get("last_mail_poll_ts") or 0) < cfg["poll_interval_seconds"]:
+            return
+        poll_result = poll_ticket_mailbox_once()
+        state["last_mail_poll_ts"] = now_ts
+        if poll_result["processed"] > 0 or poll_result["unassigned"] > 0 or poll_result["duplicates"] > 0:
+            app.logger.info("Ticket mail poll: %s", poll_result["message"])
+        elif not poll_result["ok"] and not poll_result["locked"]:
+            app.logger.warning("Ticket mail poll failed: %s", poll_result["message"])
 
     @app.context_processor
     def inject_globals():
@@ -968,7 +1460,11 @@ def create_app(config: dict | None = None):
             "PUBLIC_LOST_MAX_FILES": public_lost_max_files,
             "PUBLIC_LOST_CAPTCHA_ENABLED": public_lost_captcha_enabled,
             "get_smtp_settings": get_smtp_settings,
+            "get_mail_ticket_settings": get_mail_ticket_settings,
+            "build_ticket_reference": build_ticket_reference,
             "send_smtp_mail": send_smtp_mail,
+            "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
+            "test_imap_connection_once": test_imap_connection_once,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
             "render_mail_template": render_mail_template,
             "get_item_email_templates": get_item_email_templates,
@@ -989,7 +1485,11 @@ def create_app(config: dict | None = None):
             "set_setting": set_setting,
             "get_setting": get_setting,
             "get_smtp_settings": get_smtp_settings,
+            "get_mail_ticket_settings": get_mail_ticket_settings,
+            "build_ticket_reference": build_ticket_reference,
             "send_smtp_mail": send_smtp_mail,
+            "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
+            "test_imap_connection_once": test_imap_connection_once,
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,

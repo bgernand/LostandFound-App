@@ -103,7 +103,7 @@ def score_match(src, cand, fts_hit=False):
         reasons.append("Full-text")
 
     # More actionable statuses are often more relevant for operators.
-    if cand["status"] in {"Found", "In contact", "Ready to send"}:
+    if cand["status"] in {"Found", "Waiting for answer", "Answer received", "Ready to send"}:
         score += 5
 
     dedup_reasons = []

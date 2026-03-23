@@ -599,6 +599,70 @@ def init_db(db_path: str):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS item_mail_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            actor_user_id INTEGER,
+            direction TEXT NOT NULL,
+            sender TEXT,
+            recipient TEXT,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            ticket_ref TEXT,
+            template_name TEXT,
+            receipt_filename TEXT,
+            message_id TEXT,
+            in_reply_to TEXT,
+            mailbox_folder TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mail_unassigned_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT,
+            recipient TEXT,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            message_id TEXT,
+            in_reply_to TEXT,
+            references_raw TEXT,
+            ticket_ref_guess TEXT,
+            mailbox_folder TEXT,
+            received_at TEXT,
+            created_at TEXT NOT NULL,
+            assigned_item_id INTEGER,
+            assigned_by_user_id INTEGER,
+            assigned_at TEXT,
+            FOREIGN KEY(assigned_item_id) REFERENCES items(id) ON DELETE SET NULL,
+            FOREIGN KEY(assigned_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_mail_unassigned_messages_created
+        ON mail_unassigned_messages(created_at DESC, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_item_mail_messages_item_created
+        ON item_mail_messages(item_id, created_at DESC, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_item_mail_messages_ticket_ref
+        ON item_mail_messages(ticket_ref)
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
@@ -685,6 +749,30 @@ def init_db(db_path: str):
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_body', 'Hello {{ first_name }} {{ last_name }},\n\nwe received your lost request.\n\nImportant information:\n- Item ID: {{ item_id }}\n- Title: {{ title }}\n- Status: {{ status }}\n- Submitted at: {{ submitted_at }}\n- Category: {{ category }}\n- Location: {{ location }}\n- Date of loss: {{ event_date }}\n\nOur team will review your request as soon as possible.\n\nBest regards\nLost & Found Team', ?)",
         (now_utc(),),
     )
+    for key, value in [
+        ("mail_ticketing_enabled", "0"),
+        ("imap_enabled", "0"),
+        ("imap_host", ""),
+        ("imap_port", "993"),
+        ("imap_username", ""),
+        ("imap_password_enc", ""),
+        ("imap_use_ssl", "1"),
+        ("imap_timeout", "15"),
+        ("imap_inbox_folder", "INBOX"),
+        ("imap_sent_folder", "LostFound/Send"),
+        ("imap_processed_folder", "LostFound/Proceeded"),
+        ("imap_unassigned_folder", "LostFound/Unassigned"),
+        ("mail_ticket_poll_interval_seconds", "300"),
+        ("mail_ticket_poll_lock_until", "0"),
+        ("mail_ticket_poll_lock_token", ""),
+        ("mail_ticket_last_poll_at", ""),
+        ("mail_ticket_last_poll_ok", ""),
+        ("mail_ticket_last_poll_message", ""),
+    ]:
+        conn.execute(
+            "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, value, now_utc()),
+        )
 
     ensure_column(conn, "items", "public_token", "TEXT")
     ensure_column(conn, "items", "public_id", "TEXT")
@@ -714,6 +802,39 @@ def init_db(db_path: str):
     conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
     conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
     conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
+    conn.execute("UPDATE items SET status='Waiting for answer' WHERE status='In contact'")
+
+    conn.execute(
+        """
+        INSERT INTO item_mail_messages (
+            item_id, actor_user_id, direction, sender, recipient, subject, body,
+            ticket_ref, template_name, receipt_filename, created_at
+        )
+        SELECT
+            item_id,
+            actor_user_id,
+            'outgoing',
+            NULL,
+            recipient,
+            subject,
+            body,
+            NULL,
+            template_name,
+            receipt_filename,
+            created_at
+        FROM sent_item_emails s
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM item_mail_messages m
+            WHERE m.direction='outgoing'
+              AND m.item_id=s.item_id
+              AND coalesce(m.recipient,'')=coalesce(s.recipient,'')
+              AND m.subject=s.subject
+              AND m.body=s.body
+              AND m.created_at=s.created_at
+        )
+        """
+    )
 
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
@@ -842,7 +963,7 @@ def auto_create_followup_reminders(conn):
         """
         SELECT i.id, i.public_id, i.title, coalesce(i.updated_at, i.created_at) AS last_touch
         FROM items i
-        WHERE i.status='In contact'
+        WHERE i.status='Waiting for answer'
           AND coalesce(i.updated_at, i.created_at) IS NOT NULL
           AND coalesce(i.updated_at, i.created_at) <= ?
         """,
@@ -868,7 +989,7 @@ def auto_create_followup_reminders(conn):
             """,
             (
                 int(r["id"]),
-                f"Follow up pending contact for item {(r['public_id'] or int(r['id']))}: {r['title'] or 'Untitled'}",
+                f"Follow up pending answer for item {(r['public_id'] or int(r['id']))}: {r['title'] or 'Untitled'}",
                 now_utc(),
                 now_utc(),
             ),

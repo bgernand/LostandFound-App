@@ -13,7 +13,11 @@ def register_admin_routes(app, deps: dict):
     set_setting = deps["set_setting"]
     get_setting = deps["get_setting"]
     get_smtp_settings = deps["get_smtp_settings"]
+    get_mail_ticket_settings = deps["get_mail_ticket_settings"]
+    build_ticket_reference = deps["build_ticket_reference"]
     send_smtp_mail = deps["send_smtp_mail"]
+    poll_ticket_mailbox_once = deps["poll_ticket_mailbox_once"]
+    test_imap_connection_once = deps["test_imap_connection_once"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -156,12 +160,14 @@ def register_admin_routes(app, deps: dict):
         privacy_policy_text=None,
         item_mail_templates=None,
         item_mail_template_allowed_vars=None,
+        unassigned_mail_count=None,
     ):
         conn = get_db()
         if description_quality_settings is None:
             description_quality_settings = get_description_quality_settings(conn)
         if smtp_settings is None:
             smtp_settings = get_smtp_settings(conn)
+        mail_ticket_settings = get_mail_ticket_settings(conn)
         if public_lost_confirm_settings is None:
             public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
         if legal_notice_text is None:
@@ -170,12 +176,17 @@ def register_admin_routes(app, deps: dict):
             privacy_policy_text = get_setting(conn, "privacy_policy_text", DEFAULT_PRIVACY_POLICY_TEXT) or DEFAULT_PRIVACY_POLICY_TEXT
         if item_mail_templates is None:
             item_mail_templates = get_item_email_templates(conn, active_only=False)
+        if unassigned_mail_count is None:
+            unassigned_mail_count = int(
+                conn.execute("SELECT COUNT(*) AS c FROM mail_unassigned_messages WHERE assigned_at IS NULL").fetchone()["c"]
+            )
         conn.close()
         return render_template(
             "admin_settings.html",
             user=current_user(),
             description_quality_settings=description_quality_settings,
             smtp_settings=smtp_settings,
+            mail_ticket_settings=mail_ticket_settings,
             public_lost_confirm_settings=public_lost_confirm_settings,
             public_lost_confirm_preview_subject=public_lost_confirm_preview_subject,
             public_lost_confirm_preview_body=public_lost_confirm_preview_body,
@@ -185,6 +196,7 @@ def register_admin_routes(app, deps: dict):
             item_mail_templates=item_mail_templates,
             item_mail_template_allowed_vars=item_mail_template_allowed_vars or ITEM_EMAIL_ALLOWED_VARS,
             can_manage_mail_templates=bool(has_permission("admin.access", user=current_user())),
+            unassigned_mail_count=unassigned_mail_count,
         )
 
     @app.get("/admin/users")
@@ -220,6 +232,109 @@ def register_admin_routes(app, deps: dict):
     @require_permission("admin.settings")
     def admin_settings():
         return _render_admin_settings()
+
+    @app.get("/admin/mail-ticket/unassigned")
+    @require_permission("admin.settings")
+    def admin_mail_ticket_unassigned():
+        conn = get_db()
+        rows = conn.execute(
+            """
+            SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
+                   references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+            FROM mail_unassigned_messages
+            WHERE assigned_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            """
+        ).fetchall()
+        conn.close()
+        return render_template("admin_mail_unassigned.html", user=current_user(), rows=rows)
+
+    @app.post("/admin/mail-ticket/unassigned/<int:message_id>/assign")
+    @require_permission("admin.settings")
+    def admin_mail_ticket_assign(message_id: int):
+        target_ref = (request.form.get("target_item_ref") or "").strip()
+        if not target_ref:
+            flash("Target item reference is required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned"))
+
+        conn = get_db()
+        row = conn.execute(
+            """
+            SELECT id, sender, recipient, subject, body, message_id, in_reply_to, mailbox_folder
+            FROM mail_unassigned_messages
+            WHERE id=? AND assigned_at IS NULL
+            """,
+            (message_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            abort(404)
+
+        item = conn.execute(
+            """
+            SELECT id, public_id
+            FROM items
+            WHERE upper(public_id)=upper(?) OR CAST(id AS TEXT)=?
+            LIMIT 1
+            """,
+            (target_ref, target_ref),
+        ).fetchone()
+        if not item:
+            conn.close()
+            flash("Target item not found.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned"))
+
+        ticket_ref = build_ticket_reference(item)
+        conn.execute(
+            """
+            INSERT INTO item_mail_messages (
+                item_id, actor_user_id, direction, sender, recipient, subject, body,
+                ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                mailbox_folder, created_at
+            )
+            VALUES (?, ?, 'incoming', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                int(item["id"]),
+                current_user()["id"] if current_user() else None,
+                row["sender"],
+                row["recipient"],
+                row["subject"],
+                row["body"],
+                ticket_ref,
+                row["message_id"],
+                row["in_reply_to"],
+                row["mailbox_folder"],
+                now_utc(),
+            ),
+        )
+        conn.execute(
+            "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+            (now_utc(), int(item["id"])),
+        )
+        conn.execute(
+            "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
+            (now_utc(), int(item["id"])),
+        )
+        conn.execute(
+            """
+            UPDATE mail_unassigned_messages
+            SET assigned_item_id=?, assigned_by_user_id=?, assigned_at=?
+            WHERE id=?
+            """,
+            (int(item["id"]), current_user()["id"] if current_user() else None, now_utc(), message_id),
+        )
+        conn.commit()
+        conn.close()
+        audit(
+            "mail_unassigned_assign",
+            "item",
+            int(item["id"]),
+            f"mail_unassigned_id={message_id} ticket_ref={ticket_ref}",
+            meta={"mail_unassigned_id": message_id, "ticket_ref": ticket_ref},
+        )
+        flash(f"Unassigned mail linked to item {item['public_id'] or item['id']}.", "success")
+        return redirect(url_for("detail", item_id=int(item["id"])))
 
     @app.post("/admin/settings/mail-templates")
     @require_permission("admin.access")
@@ -603,6 +718,116 @@ def register_admin_routes(app, deps: dict):
         flash("SMTP settings updated.", "success")
         return redirect(url_for("admin_settings"))
 
+    @app.post("/admin/settings/mail-ticketing")
+    @require_permission("admin.settings")
+    def admin_set_mail_ticket_settings():
+        enabled = (request.form.get("mail_ticketing_enabled") or "") == "1"
+        imap_enabled = (request.form.get("imap_enabled") or "") == "1"
+        imap_host = (request.form.get("imap_host") or "").strip()
+        imap_port_raw = (request.form.get("imap_port") or "").strip()
+        imap_username = (request.form.get("imap_username") or "").strip()
+        imap_password = (request.form.get("imap_password") or "")
+        imap_use_ssl = (request.form.get("imap_use_ssl") or "") == "1"
+        imap_timeout_raw = (request.form.get("imap_timeout") or "").strip()
+        imap_inbox_folder = (request.form.get("imap_inbox_folder") or "").strip() or "INBOX"
+        imap_sent_folder = (request.form.get("imap_sent_folder") or "").strip() or "LostFound/Send"
+        imap_processed_folder = (request.form.get("imap_processed_folder") or "").strip() or "LostFound/Proceeded"
+        imap_unassigned_folder = (request.form.get("imap_unassigned_folder") or "").strip() or "LostFound/Unassigned"
+        poll_interval_raw = (request.form.get("mail_ticket_poll_interval_seconds") or "").strip()
+
+        try:
+            imap_port = int(imap_port_raw)
+            imap_timeout = int(imap_timeout_raw)
+            poll_interval = int(poll_interval_raw)
+        except ValueError:
+            flash("IMAP port, timeout and poll interval must be numeric.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        if imap_port < 1 or imap_port > 65535:
+            flash("IMAP port must be between 1 and 65535.", "danger")
+            return redirect(url_for("admin_settings"))
+        if imap_timeout < 3 or imap_timeout > 120:
+            flash("IMAP timeout must be between 3 and 120 seconds.", "danger")
+            return redirect(url_for("admin_settings"))
+        if poll_interval < 60 or poll_interval > 86400:
+            flash("Mail ticket poll interval must be between 60 and 86400 seconds.", "danger")
+            return redirect(url_for("admin_settings"))
+        if enabled and imap_enabled and not imap_host:
+            flash("IMAP host is required when inbound ticket mail is enabled.", "danger")
+            return redirect(url_for("admin_settings"))
+        if enabled and imap_enabled and not imap_username:
+            flash("IMAP username is required when inbound ticket mail is enabled.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        conn = get_db()
+        old_state = {
+            "mail_ticketing_enabled": get_setting(conn, "mail_ticketing_enabled", "0"),
+            "imap_enabled": get_setting(conn, "imap_enabled", "0"),
+            "imap_host": get_setting(conn, "imap_host", ""),
+            "imap_port": get_setting(conn, "imap_port", ""),
+            "imap_username": get_setting(conn, "imap_username", ""),
+            "imap_use_ssl": get_setting(conn, "imap_use_ssl", ""),
+            "imap_timeout": get_setting(conn, "imap_timeout", ""),
+            "imap_inbox_folder": get_setting(conn, "imap_inbox_folder", ""),
+            "imap_sent_folder": get_setting(conn, "imap_sent_folder", ""),
+            "imap_processed_folder": get_setting(conn, "imap_processed_folder", ""),
+            "imap_unassigned_folder": get_setting(conn, "imap_unassigned_folder", ""),
+            "mail_ticket_poll_interval_seconds": get_setting(conn, "mail_ticket_poll_interval_seconds", ""),
+            "imap_password_enc": "***set***" if (get_setting(conn, "imap_password_enc", "") or "").strip() else "",
+        }
+        set_setting(conn, "mail_ticketing_enabled", "1" if enabled else "0")
+        set_setting(conn, "imap_enabled", "1" if imap_enabled else "0")
+        set_setting(conn, "imap_host", imap_host)
+        set_setting(conn, "imap_port", str(imap_port))
+        set_setting(conn, "imap_username", imap_username)
+        if imap_password:
+            if not settings_encryption_ready():
+                conn.close()
+                flash("SETTINGS_ENCRYPTION_KEY is required to store IMAP password securely.", "danger")
+                return redirect(url_for("admin_settings"))
+            encrypted_password = encrypt_setting_secret(imap_password)
+            if not encrypted_password:
+                conn.close()
+                flash("Failed to encrypt IMAP password.", "danger")
+                return redirect(url_for("admin_settings"))
+            set_setting(conn, "imap_password_enc", encrypted_password)
+        else:
+            existing_pw_enc = get_setting(conn, "imap_password_enc", "")
+            set_setting(conn, "imap_password_enc", existing_pw_enc or "")
+        set_setting(conn, "imap_use_ssl", "1" if imap_use_ssl else "0")
+        set_setting(conn, "imap_timeout", str(imap_timeout))
+        set_setting(conn, "imap_inbox_folder", imap_inbox_folder)
+        set_setting(conn, "imap_sent_folder", imap_sent_folder)
+        set_setting(conn, "imap_processed_folder", imap_processed_folder)
+        set_setting(conn, "imap_unassigned_folder", imap_unassigned_folder)
+        set_setting(conn, "mail_ticket_poll_interval_seconds", str(poll_interval))
+        conn.commit()
+        conn.close()
+        audit(
+            "mail_ticket_settings",
+            "settings",
+            None,
+            f"enabled={1 if enabled else 0} imap_enabled={1 if imap_enabled else 0}",
+            old_values=old_state,
+            new_values={
+                "mail_ticketing_enabled": "1" if enabled else "0",
+                "imap_enabled": "1" if imap_enabled else "0",
+                "imap_host": imap_host,
+                "imap_port": str(imap_port),
+                "imap_username": imap_username,
+                "imap_use_ssl": "1" if imap_use_ssl else "0",
+                "imap_timeout": str(imap_timeout),
+                "imap_inbox_folder": imap_inbox_folder,
+                "imap_sent_folder": imap_sent_folder,
+                "imap_processed_folder": imap_processed_folder,
+                "imap_unassigned_folder": imap_unassigned_folder,
+                "mail_ticket_poll_interval_seconds": str(poll_interval),
+                "imap_password_enc": "***set***" if (imap_password or old_state.get("imap_password_enc")) else "",
+            },
+        )
+        flash("Mail ticket workflow settings updated.", "success")
+        return redirect(url_for("admin_settings"))
+
     @app.post("/admin/settings/smtp-test")
     @require_permission("admin.settings")
     def admin_send_smtp_test_mail():
@@ -628,6 +853,30 @@ def register_admin_routes(app, deps: dict):
             flash(f"Test e-mail sent to {recipient}.", "success")
         else:
             flash(f"Test e-mail could not be sent: {msg}", "danger")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/mail-ticketing/test-imap")
+    @require_permission("admin.settings")
+    def admin_test_mail_ticket_imap():
+        ok, msg = test_imap_connection_once()
+        if ok:
+            audit("mail_ticket_imap_test", "settings", None, msg[:200])
+            flash(msg, "success")
+        else:
+            flash(f"IMAP test failed: {msg}", "danger")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/mail-ticketing/poll")
+    @require_permission("admin.settings")
+    def admin_poll_mail_ticket_mailbox():
+        result = poll_ticket_mailbox_once()
+        audit("mail_ticket_poll", "settings", None, result["message"][:200], meta=result)
+        if result["ok"]:
+            flash(f"Mailbox poll completed. {result['message']}", "success")
+        elif result["locked"]:
+            flash(result["message"], "warning")
+        else:
+            flash(f"Mailbox poll failed: {result['message']}", "danger")
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp-public-lost-confirmation")
