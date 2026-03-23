@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from email import policy
+from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import make_msgid
@@ -339,7 +340,14 @@ def create_app(config: dict | None = None):
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
     )
 
-    state = {"db_inited": False, "status_maintenance_day": None, "audit_maintenance_day": None, "last_mail_poll_ts": 0}
+    state = {
+        "db_inited": False,
+        "status_maintenance_day": None,
+        "audit_maintenance_day": None,
+        "last_mail_poll_ts": 0,
+        "mailbox_counts_cache_ts": 0,
+        "mailbox_counts_cache": {"folders": {}, "unread_total": 0},
+    }
 
     def encrypt_setting_secret(value: str) -> str | None:
         if not settings_encryption_key:
@@ -696,13 +704,14 @@ def create_app(config: dict | None = None):
                     smtp.login(smtp_cfg["username"], smtp_cfg["password"])
                 smtp.send_message(msg)
             ticket_cfg = get_mail_ticket_settings()
-            if mailbox_append_folder and ticket_cfg["enabled"] and ticket_cfg["imap_host"] and ticket_cfg["imap_username"] and ticket_cfg["imap_password"]:
+            append_folder = (mailbox_append_folder or ticket_cfg.get("imap_sent_folder") or "").strip()
+            if append_folder and ticket_cfg["enabled"] and ticket_cfg["imap_host"] and ticket_cfg["imap_username"] and ticket_cfg["imap_password"]:
                 imap_conn = None
                 try:
                     imap_conn = _imap_connect(ticket_cfg)
-                    _ensure_mailbox(imap_conn, mailbox_append_folder)
+                    _ensure_mailbox(imap_conn, append_folder)
                     imap_conn.append(
-                        _quote_imap_mailbox(mailbox_append_folder),
+                        _quote_imap_mailbox(append_folder),
                         "\\Seen",
                         imaplib.Time2Internaldate(time.time()),
                         msg.as_bytes(),
@@ -777,6 +786,233 @@ def create_app(config: dict | None = None):
             return False
         store_status, _ = imap_conn.store(msg_num, "+FLAGS", "\\Deleted")
         return store_status == "OK"
+
+    def _decode_mime_header(value):
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            return str(make_header(decode_header(raw)))
+        except Exception:
+            return raw
+
+    def _extract_plain_text_body(message):
+        body = ""
+        if message.is_multipart():
+            for part in message.walk():
+                if part.get_content_type() == "text/plain" and not part.get_filename():
+                    try:
+                        body = part.get_content().strip()
+                    except Exception:
+                        body = (part.get_payload(decode=True) or b"").decode(errors="replace").strip()
+                    if body:
+                        break
+        else:
+            try:
+                body = message.get_content().strip()
+            except Exception:
+                body = (message.get_payload(decode=True) or b"").decode(errors="replace").strip()
+        return body
+
+    def list_imap_mailboxes():
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return []
+        imap_conn = None
+        folders = []
+        try:
+            imap_conn = _imap_connect(cfg)
+            status, data = imap_conn.list()
+            if status == "OK" and data:
+                for row in data:
+                    if not row:
+                        continue
+                    decoded = row.decode(errors="replace")
+                    match = re.search(r'\) "[^"]+" "?(.+?)"?$', decoded)
+                    if match:
+                        folder_name = match.group(1).strip().strip('"')
+                        if folder_name:
+                            folders.append(folder_name)
+            for fallback in [
+                cfg["imap_inbox_folder"],
+                cfg["imap_sent_folder"],
+                cfg["imap_processed_folder"],
+                cfg["imap_unassigned_folder"],
+            ]:
+                if fallback and fallback not in folders:
+                    folders.append(fallback)
+            return folders
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
+    def get_imap_mailbox_counts(force: bool = False):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return {"folders": {}, "unread_total": 0}
+        now_ts = int(time.time())
+        cached = state.get("mailbox_counts_cache") or {"folders": {}, "unread_total": 0}
+        cache_ts = int(state.get("mailbox_counts_cache_ts") or 0)
+        if not force and now_ts - cache_ts < 60:
+            return cached
+        folders = list_imap_mailboxes()
+        folder_counts = {}
+        unread_total = 0
+        imap_conn = None
+        try:
+            imap_conn = _imap_connect(cfg)
+            for folder_name in folders:
+                if not folder_name:
+                    continue
+                try:
+                    status, data = imap_conn.status(_quote_imap_mailbox(folder_name), "(UNSEEN)")
+                    unseen = 0
+                    if status == "OK" and data:
+                        decoded = b" ".join([part for part in data if part]).decode(errors="replace")
+                        match = re.search(r"UNSEEN\s+(\d+)", decoded)
+                        if match:
+                            unseen = int(match.group(1))
+                    folder_counts[folder_name] = unseen
+                    unread_total += unseen
+                except Exception:
+                    folder_counts[folder_name] = 0
+            cached = {"folders": folder_counts, "unread_total": unread_total}
+            state["mailbox_counts_cache"] = cached
+            state["mailbox_counts_cache_ts"] = now_ts
+            return cached
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
+    def fetch_imap_mailbox_messages(folder_name: str, limit: int = 60):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return []
+        imap_conn = None
+        messages = []
+        try:
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, folder_name)
+            status, data = imap_conn.uid("search", None, "ALL")
+            if status != "OK":
+                return []
+            uids = [uid for uid in (data[0] or b"").split() if uid]
+            for uid in reversed(uids[-max(1, limit):]):
+                fetch_status, msg_data = imap_conn.uid("fetch", uid, "(BODY.PEEK[] FLAGS)")
+                if fetch_status != "OK" or not msg_data:
+                    continue
+                raw_message = None
+                raw_meta = b""
+                for part in msg_data:
+                    if isinstance(part, tuple) and len(part) >= 2:
+                        raw_meta = part[0] or b""
+                        raw_message = part[1]
+                        break
+                if not raw_message:
+                    continue
+                message = BytesParser(policy=policy.default).parsebytes(raw_message)
+                body = _extract_plain_text_body(message)
+                meta_text = raw_meta.decode(errors="replace")
+                flags_match = re.search(r"FLAGS \((.*?)\)", meta_text)
+                flags = flags_match.group(1).split() if flags_match else []
+                messages.append(
+                    {
+                        "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+                        "subject": _decode_mime_header(message.get("Subject")),
+                        "sender": _decode_mime_header(message.get("From")),
+                        "recipient": _decode_mime_header(message.get("To")),
+                        "date": _decode_mime_header(message.get("Date")),
+                        "message_id": _decode_mime_header(message.get("Message-ID")),
+                        "in_reply_to": _decode_mime_header(message.get("In-Reply-To")),
+                        "references": _decode_mime_header(message.get("References")),
+                        "snippet": re.sub(r"\s+", " ", body)[:180],
+                        "flags": flags,
+                    }
+                )
+            return messages
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
+    def fetch_imap_message_detail(folder_name: str, uid: str):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return None
+        imap_conn = None
+        try:
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, folder_name)
+            fetch_status, msg_data = imap_conn.uid("fetch", str(uid), "(BODY.PEEK[] FLAGS)")
+            if fetch_status != "OK" or not msg_data:
+                return None
+            raw_message = None
+            raw_meta = b""
+            for part in msg_data:
+                if isinstance(part, tuple) and len(part) >= 2:
+                    raw_meta = part[0] or b""
+                    raw_message = part[1]
+                    break
+            if not raw_message:
+                return None
+            message = BytesParser(policy=policy.default).parsebytes(raw_message)
+            body = _extract_plain_text_body(message)
+            meta_text = raw_meta.decode(errors="replace")
+            flags_match = re.search(r"FLAGS \((.*?)\)", meta_text)
+            flags = flags_match.group(1).split() if flags_match else []
+            return {
+                "uid": str(uid),
+                "folder": folder_name,
+                "subject": _decode_mime_header(message.get("Subject")),
+                "sender": _decode_mime_header(message.get("From")),
+                "recipient": _decode_mime_header(message.get("To")),
+                "cc": _decode_mime_header(message.get("Cc")),
+                "date": _decode_mime_header(message.get("Date")),
+                "message_id": _decode_mime_header(message.get("Message-ID")),
+                "in_reply_to": _decode_mime_header(message.get("In-Reply-To")),
+                "references": _decode_mime_header(message.get("References")),
+                "body": body,
+                "flags": flags,
+            }
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
+    def delete_imap_message(folder_name: str, uid: str):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return False, "IMAP is not configured."
+        imap_conn = None
+        try:
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, folder_name)
+            status, _ = imap_conn.uid("store", str(uid), "+FLAGS", "(\\Deleted)")
+            if status != "OK":
+                return False, "Could not mark message as deleted."
+            expunge_status, _ = imap_conn.expunge()
+            if expunge_status != "OK":
+                return False, "Could not expunge deleted message."
+            return True, "Message deleted."
+        except Exception as exc:
+            app.logger.exception("IMAP delete failed folder=%s uid=%s", folder_name, uid)
+            return False, str(exc)
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
 
     def csrf_token():
         token = session.get("_csrf_token")
@@ -1256,6 +1492,23 @@ def create_app(config: dict | None = None):
         can_regenerate_public = bool(has_permission("items.public_regenerate", user=u))
         can_delete_item = bool(has_permission("items.delete", user=u))
         can_send_email = bool(has_permission("items.send_email", user=u))
+        can_access_mailbox = bool(can_send_email and can_view_pii)
+        mailbox_unassigned_count = 0
+        mailbox_unread_total = 0
+        mailbox_folder_counts = {}
+        if can_access_mailbox:
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM mail_unassigned_messages WHERE assigned_at IS NULL"
+                ).fetchone()
+                mailbox_unassigned_count = int(row["c"] if row else 0)
+            finally:
+                conn.close()
+            mailbox_counts = get_imap_mailbox_counts()
+            mailbox_unread_total = int(mailbox_counts.get("unread_total") or 0)
+            mailbox_folder_counts = dict(mailbox_counts.get("folders") or {})
+        mailbox_combined_count = mailbox_unread_total + mailbox_unassigned_count
         can_manage_reminders = bool(has_permission("reminders.manage", user=u))
         can_admin_access = bool(has_permission("admin.access", user=u))
         can_admin_users = bool(has_permission("admin.users", user=u))
@@ -1316,6 +1569,11 @@ def create_app(config: dict | None = None):
             "can_regenerate_public": can_regenerate_public,
             "can_delete_item": can_delete_item,
             "can_send_email": can_send_email,
+            "can_access_mailbox": can_access_mailbox,
+            "mailbox_unassigned_count": mailbox_unassigned_count,
+            "mailbox_unread_total": mailbox_unread_total,
+            "mailbox_combined_count": mailbox_combined_count,
+            "mailbox_folder_counts": mailbox_folder_counts,
             "can_manage_reminders": can_manage_reminders,
             "can_admin_access": can_admin_access,
             "can_admin_users": can_admin_users,
@@ -1516,9 +1774,15 @@ def create_app(config: dict | None = None):
             "get_smtp_settings": get_smtp_settings,
             "get_mail_ticket_settings": get_mail_ticket_settings,
             "build_ticket_reference": build_ticket_reference,
+            "extract_ticket_reference": extract_ticket_reference,
             "send_smtp_mail": send_smtp_mail,
             "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
             "test_imap_connection_once": test_imap_connection_once,
+            "list_imap_mailboxes": list_imap_mailboxes,
+            "get_imap_mailbox_counts": get_imap_mailbox_counts,
+            "fetch_imap_mailbox_messages": fetch_imap_mailbox_messages,
+            "fetch_imap_message_detail": fetch_imap_message_detail,
+            "delete_imap_message": delete_imap_message,
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,

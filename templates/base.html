@@ -36,6 +36,16 @@
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('dashboard') }}">Dashboard</a>
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
           {% endif %}
+          {% if can_access_mailbox %}
+            <a class="btn btn-sm btn-outline-light position-relative" href="{{ url_for('admin_mail_ticket_unassigned') }}">
+              Mailbox
+              {% if mailbox_combined_count %}
+                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">
+                  {{ mailbox_combined_count }}
+                </span>
+              {% endif %}
+            </a>
+          {% endif %}
           {% if can_review_items %}
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('lost_review_queue') }}">Lost Reviews</a>
           {% endif %}
@@ -47,6 +57,21 @@
             <ul class="dropdown-menu dropdown-menu-end">
               <li><a class="dropdown-item" href="{{ url_for('account_password') }}">Change password</a></li>
               <li><a class="dropdown-item" href="{{ url_for('account_totp') }}">Two-factor authentication</a></li>
+              {% if can_access_mailbox %}
+                <li>
+                  <a class="dropdown-item d-flex justify-content-between align-items-center gap-2" href="{{ url_for('admin_mail_ticket_unassigned') }}">
+                    <span>Mailbox</span>
+                    <span class="d-inline-flex gap-1">
+                      {% if mailbox_unread_total %}
+                        <span class="badge text-bg-primary">Unread {{ mailbox_unread_total }}</span>
+                      {% endif %}
+                      {% if mailbox_unassigned_count %}
+                        <span class="badge text-bg-danger">Unassigned {{ mailbox_unassigned_count }}</span>
+                      {% endif %}
+                    </span>
+                  </a>
+                </li>
+              {% endif %}
               {% if can_admin_menu %}
                 <li><hr class="dropdown-divider"></li>
                 {% if can_admin_settings %}<li><a class="dropdown-item" href="{{ url_for('admin_settings') }}">System Settings</a></li>{% endif %}

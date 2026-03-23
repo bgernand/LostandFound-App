@@ -249,7 +249,7 @@ If you received this message, SMTP settings are working.</textarea>
 
         <div class="d-flex flex-wrap gap-2 justify-content-md-end">
           <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin_mail_ticket_unassigned') }}">
-            Unassigned mail{% if unassigned_mail_count %} ({{ unassigned_mail_count }}){% endif %}
+            Mailbox{% if unassigned_mail_count %} · Unassigned {{ unassigned_mail_count }}{% endif %}
           </a>
           <form method="post" action="{{ url_for('admin_test_mail_ticket_imap') }}">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">

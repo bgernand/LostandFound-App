@@ -1,6 +1,6 @@
 import sqlite3
 import re
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 
 from flask import abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import generate_password_hash
@@ -17,9 +17,15 @@ def register_admin_routes(app, deps: dict):
     get_smtp_settings = deps["get_smtp_settings"]
     get_mail_ticket_settings = deps["get_mail_ticket_settings"]
     build_ticket_reference = deps["build_ticket_reference"]
+    extract_ticket_reference = deps["extract_ticket_reference"]
     send_smtp_mail = deps["send_smtp_mail"]
     poll_ticket_mailbox_once = deps["poll_ticket_mailbox_once"]
     test_imap_connection_once = deps["test_imap_connection_once"]
+    list_imap_mailboxes = deps["list_imap_mailboxes"]
+    get_imap_mailbox_counts = deps["get_imap_mailbox_counts"]
+    fetch_imap_mailbox_messages = deps["fetch_imap_mailbox_messages"]
+    fetch_imap_message_detail = deps["fetch_imap_message_detail"]
+    delete_imap_message = deps["delete_imap_message"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -86,6 +92,126 @@ def register_admin_routes(app, deps: dict):
                         continue
                     base[key] = ""
         return base
+
+    def _find_item_by_ticket_ref(conn, selected_message):
+        ticket_ref = extract_ticket_reference(
+            selected_message.get("subject"),
+            selected_message.get("body"),
+            selected_message.get("in_reply_to"),
+            selected_message.get("references"),
+        )
+        if not ticket_ref:
+            return None, None
+        item_ref = ticket_ref.removeprefix("LFT-")
+        item = conn.execute(
+            """
+            SELECT id, public_id, kind, title, status
+            FROM items
+            WHERE upper(public_id)=upper(?)
+            LIMIT 1
+            """,
+            (item_ref,),
+        ).fetchone()
+        return item, ticket_ref
+
+    def _find_unassigned_row(conn, selected_message):
+        message_id = (selected_message.get("message_id") or "").strip()
+        if message_id:
+            row = conn.execute(
+                """
+                SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
+                       references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+                FROM mail_unassigned_messages
+                WHERE message_id=? AND assigned_at IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (message_id,),
+            ).fetchone()
+            if row:
+                return row
+        return conn.execute(
+            """
+            SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
+                   references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+            FROM mail_unassigned_messages
+            WHERE assigned_at IS NULL
+              AND coalesce(sender,'')=coalesce(?, '')
+              AND coalesce(subject,'')=coalesce(?, '')
+              AND coalesce(body,'')=coalesce(?, '')
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                selected_message.get("sender"),
+                selected_message.get("subject"),
+                selected_message.get("body"),
+            ),
+        ).fetchone()
+
+    def _compose_defaults(selected_message, action, own_address):
+        sender_name, sender_email = parseaddr(selected_message.get("sender") or "")
+        original_to = getaddresses([selected_message.get("recipient") or ""])
+        original_cc = getaddresses([selected_message.get("cc") or ""])
+        own_norm = (own_address or "").strip().lower()
+        original_subject = (selected_message.get("subject") or "").strip() or "(no subject)"
+        subject = original_subject
+        if action in {"reply", "reply_all"} and not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+        elif action == "forward" and not subject.lower().startswith("fwd:"):
+            subject = f"Fwd: {subject}"
+
+        to_list = []
+        cc_list = []
+        if action == "reply":
+            if sender_email:
+                to_list = [sender_email]
+        elif action == "reply_all":
+            seen = set()
+            for _name, address in [(sender_name, sender_email), *original_to, *original_cc]:
+                addr = (address or "").strip()
+                if not addr:
+                    continue
+                addr_norm = addr.lower()
+                if own_norm and addr_norm == own_norm:
+                    continue
+                if addr_norm in seen:
+                    continue
+                seen.add(addr_norm)
+                if not to_list:
+                    to_list.append(addr)
+                else:
+                    cc_list.append(addr)
+
+        quoted_lines = []
+        if selected_message.get("date"):
+            quoted_lines.append(f"On {selected_message['date']}, {selected_message.get('sender') or 'unknown sender'} wrote:")
+        elif selected_message.get("sender"):
+            quoted_lines.append(f"{selected_message['sender']} wrote:")
+        quoted_body = selected_message.get("body") or ""
+        if quoted_body:
+            quoted_lines.extend([f"> {line}" if line else ">" for line in quoted_body.splitlines()])
+
+        if action == "forward":
+            body = (
+                "\n\n---------- Forwarded message ---------\n"
+                f"From: {selected_message.get('sender') or '—'}\n"
+                f"Date: {selected_message.get('date') or '—'}\n"
+                f"Subject: {original_subject}\n"
+                f"To: {selected_message.get('recipient') or '—'}\n"
+            )
+            if selected_message.get("cc"):
+                body += f"Cc: {selected_message.get('cc')}\n"
+            body += f"\n{quoted_body}"
+        else:
+            body = "\n\n" + "\n".join(quoted_lines)
+
+        return {
+            "to": ", ".join(to_list),
+            "cc": ", ".join(cc_list),
+            "subject": subject,
+            "body": body.strip("\n"),
+        }
 
     def row_to_dict(row):
         if not row:
@@ -294,45 +420,54 @@ def register_admin_routes(app, deps: dict):
         return _render_admin_settings()
 
     @app.get("/admin/mail-ticket/unassigned")
-    @require_permission("admin.settings")
+    @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_unassigned():
-        selected_id_raw = (request.args.get("message_id") or "").strip()
+        cfg = get_mail_ticket_settings()
+        folders = list_imap_mailboxes() if cfg["enabled"] else []
+        folder_counts = get_imap_mailbox_counts().get("folders", {}) if cfg["enabled"] else {}
+        default_folder = cfg["imap_unassigned_folder"] or "LostFound/Unassigned"
+        if default_folder and default_folder not in folders:
+            folders.append(default_folder)
+        folder = (request.args.get("folder") or "").strip() or default_folder
+        if folders and folder not in folders:
+            folder = default_folder if default_folder in folders else folders[0]
+        selected_uid_raw = (request.args.get("uid") or "").strip()
         mail_query = (request.args.get("q") or "").strip()
         item_query = (request.args.get("item_q") or "").strip()
-        conn = get_db()
-        params = []
-        where = ["assigned_at IS NULL"]
+        compose_action = (request.args.get("compose_action") or "").strip().lower()
+        if compose_action not in {"reply", "reply_all", "forward"}:
+            compose_action = ""
+
+        mailbox_messages = fetch_imap_mailbox_messages(folder, limit=80) if cfg["enabled"] and folders else []
         if mail_query:
-            like = f"%{mail_query}%"
-            where.append("(coalesce(sender,'') LIKE ? OR coalesce(subject,'') LIKE ? OR coalesce(body,'') LIKE ?)")
-            params.extend([like, like, like])
-        rows = conn.execute(
-            f"""
-            SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
-                   references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
-            FROM mail_unassigned_messages
-            WHERE {' AND '.join(where)}
-            ORDER BY created_at DESC, id DESC
-            """,
-            tuple(params),
-        ).fetchall()
-        selected_row = None
-        if rows:
-            if selected_id_raw:
-                try:
-                    selected_id = int(selected_id_raw)
-                except ValueError:
-                    selected_id = 0
-                selected_row = next((row for row in rows if int(row["id"]) == selected_id), None)
-            if not selected_row:
-                selected_row = rows[0]
+            q_norm = mail_query.lower()
+            mailbox_messages = [
+                msg for msg in mailbox_messages
+                if q_norm in (msg["sender"] or "").lower()
+                or q_norm in (msg["subject"] or "").lower()
+                or q_norm in (msg["snippet"] or "").lower()
+            ]
+
+        selected_summary = None
+        if mailbox_messages:
+            if selected_uid_raw:
+                selected_summary = next((msg for msg in mailbox_messages if str(msg["uid"]) == selected_uid_raw), None)
+            if not selected_summary:
+                selected_summary = mailbox_messages[0]
+
+        selected_message = fetch_imap_message_detail(folder, selected_summary["uid"]) if selected_summary else None
+        conn = get_db()
+        selected_row = _find_unassigned_row(conn, selected_message) if selected_message and folder == default_folder else None
+        linked_item, detected_ticket_ref = _find_item_by_ticket_ref(conn, selected_message) if selected_message else (None, None)
         item_candidates = []
-        if selected_row:
+        if selected_message:
             search_term = item_query
-            if not search_term:
+            if not search_term and selected_row:
                 search_term = (selected_row["ticket_ref_guess"] or "").strip()
             if not search_term:
-                search_term = _mail_subject_summary(selected_row["subject"] or "")
+                search_term = detected_ticket_ref.removeprefix("LFT-") if detected_ticket_ref else ""
+            if not search_term:
+                search_term = _mail_subject_summary(selected_message["subject"] or "")
             if search_term:
                 like = f"%{search_term[:80]}%"
                 item_candidates = conn.execute(
@@ -348,19 +483,34 @@ def register_admin_routes(app, deps: dict):
                     """,
                     (search_term, search_term, like, like),
                 ).fetchall()
+        smtp_cfg = get_smtp_settings(conn)
         conn.close()
+        compose_defaults = {"to": "", "cc": "", "subject": "", "body": ""}
+        if selected_message and compose_action:
+            compose_defaults = _compose_defaults(selected_message, compose_action, smtp_cfg["from"])
         return render_template(
             "admin_mail_unassigned.html",
             user=current_user(),
-            rows=rows,
+            folders=folders,
+            folder_counts=folder_counts,
+            current_folder=folder,
+            rows=mailbox_messages,
             selected_row=selected_row,
+            selected_message=selected_message,
             mail_query=mail_query,
             item_query=item_query,
             item_candidates=item_candidates,
+            linked_item=linked_item,
+            detected_ticket_ref=detected_ticket_ref,
+            compose_action=compose_action,
+            compose_defaults=compose_defaults,
+            smtp_enabled=smtp_cfg["enabled"],
+            smtp_from=smtp_cfg["from"],
+            unassigned_folder=default_folder,
         )
 
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/assign")
-    @require_permission("admin.settings")
+    @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_assign(message_id: int):
         target_ref = (request.form.get("target_item_ref") or "").strip()
         if not target_ref:
@@ -445,6 +595,128 @@ def register_admin_routes(app, deps: dict):
         )
         flash(f"Unassigned mail linked to item {item['public_id'] or item['id']}.", "success")
         return redirect(url_for("detail", item_id=int(item["id"])))
+
+    @app.post("/admin/mail-ticket/mailbox/send")
+    @require_permission("items.send_email", "items.view_pii")
+    def admin_mailbox_send():
+        folder = (request.form.get("folder") or "").strip()
+        uid = (request.form.get("uid") or "").strip()
+        to_raw = (request.form.get("to") or "").strip()
+        cc_raw = (request.form.get("cc") or "").strip()
+        subject = (request.form.get("subject") or "").strip()
+        body = request.form.get("body") or ""
+        if not folder or not uid:
+            flash("Folder and message selection are required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned"))
+        recipients = [addr for _name, addr in getaddresses([to_raw])]
+        cc_recipients = [addr for _name, addr in getaddresses([cc_raw])]
+        if not recipients:
+            flash("At least one recipient is required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
+        selected_message = fetch_imap_message_detail(folder, uid)
+        if not selected_message:
+            flash("Selected message could not be loaded.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=folder))
+
+        extra_headers = {}
+        if selected_message.get("message_id"):
+            extra_headers["In-Reply-To"] = selected_message["message_id"]
+            refs = (selected_message.get("references") or "").strip()
+            extra_headers["References"] = (refs + " " if refs else "") + selected_message["message_id"]
+        if cc_recipients:
+            extra_headers["Cc"] = ", ".join(cc_recipients)
+
+        conn = get_db()
+        linked_item, detected_ticket_ref = _find_item_by_ticket_ref(conn, selected_message)
+        ticket_cfg = get_mail_ticket_settings(conn)
+        if detected_ticket_ref:
+            extra_headers["X-LostFound-Ticket-Ref"] = detected_ticket_ref
+            if ticket_cfg["enabled"] and f"[{detected_ticket_ref}]".lower() not in subject.lower():
+                subject = f"[{detected_ticket_ref}] {subject}".strip()
+        conn.close()
+
+        ok, msg, mail_meta = send_smtp_mail(
+            ", ".join(recipients),
+            subject,
+            body,
+            attachments=None,
+            extra_headers=extra_headers,
+            mailbox_append_folder=(ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None),
+            return_metadata=True,
+        )
+        if not ok:
+            flash(f"E-mail could not be sent: {msg}", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
+
+        if linked_item and detected_ticket_ref:
+            conn = get_db()
+            conn.execute(
+                """
+                INSERT INTO item_mail_messages (
+                    item_id, actor_user_id, direction, sender, recipient, subject, body,
+                    ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                    mailbox_folder, created_at
+                )
+                VALUES (?, ?, 'outgoing', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                """,
+                (
+                    int(linked_item["id"]),
+                    current_user()["id"] if current_user() else None,
+                    get_smtp_settings(conn)["from"] or None,
+                    ", ".join(recipients + cc_recipients),
+                    subject,
+                    body,
+                    detected_ticket_ref,
+                    (mail_meta or {}).get("message_id"),
+                    selected_message.get("message_id"),
+                    ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None,
+                    now_utc(),
+                ),
+            )
+            conn.execute(
+                "UPDATE items SET status='Waiting for answer', updated_at=? WHERE id=?",
+                (now_utc(), int(linked_item["id"])),
+            )
+            conn.execute(
+                "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
+                (now_utc(), int(linked_item["id"])),
+            )
+            conn.commit()
+            conn.close()
+
+        audit(
+            "admin_mailbox_send",
+            "settings",
+            None,
+            f"folder={folder} uid={uid} to={','.join(recipients)} subject={subject[:120]}",
+            meta={"ticket_ref": detected_ticket_ref, "message_id": (mail_meta or {}).get("message_id")},
+        )
+        flash("E-mail sent.", "success")
+        return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
+
+    @app.post("/admin/mail-ticket/mailbox/delete")
+    @require_permission("items.send_email", "items.view_pii")
+    def admin_mailbox_delete():
+        folder = (request.form.get("folder") or "").strip()
+        uid = (request.form.get("uid") or "").strip()
+        if not folder or not uid:
+            flash("Folder and message selection are required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned"))
+        selected_message = fetch_imap_message_detail(folder, uid)
+        ok, msg = delete_imap_message(folder, uid)
+        if not ok:
+            flash(f"Delete failed: {msg}", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
+        if selected_message and folder == (get_mail_ticket_settings()["imap_unassigned_folder"] or "LostFound/Unassigned"):
+            conn = get_db()
+            row = _find_unassigned_row(conn, selected_message)
+            if row:
+                conn.execute("DELETE FROM mail_unassigned_messages WHERE id=?", (int(row["id"]),))
+                conn.commit()
+            conn.close()
+        audit("admin_mailbox_delete", "settings", None, f"folder={folder} uid={uid}")
+        flash("Message deleted.", "warning")
+        return redirect(url_for("admin_mail_ticket_unassigned", folder=folder))
 
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/start-create/<kind>")
     @require_permission("admin.settings")

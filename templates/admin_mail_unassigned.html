@@ -3,27 +3,34 @@
   {{ super() }}
   <style>
     .mailbox-shell {
-      min-height: 70vh;
+      min-height: 74vh;
     }
-    .mailbox-list {
-      max-height: 70vh;
+    .mail-folders,
+    .mail-list,
+    .mail-reader {
+      max-height: 74vh;
       overflow-y: auto;
+    }
+    .mail-folders {
+      border-right: 1px solid var(--bs-border-color);
+      background: rgba(0, 0, 0, 0.01);
+    }
+    .mail-list {
       border-right: 1px solid var(--bs-border-color);
     }
-    .mailbox-detail {
-      max-height: 70vh;
-      overflow-y: auto;
-    }
+    .folder-link,
     .mail-row {
       display: block;
-      color: inherit;
       text-decoration: none;
-      border-bottom: 1px solid var(--bs-border-color-translucent);
+      color: inherit;
       padding: .8rem .9rem;
+      border-bottom: 1px solid var(--bs-border-color-translucent);
     }
+    .folder-link:hover,
     .mail-row:hover {
       background: rgba(13, 110, 253, 0.05);
     }
+    .folder-link.active,
     .mail-row.active {
       background: rgba(13, 110, 253, 0.10);
       border-left: 4px solid var(--bs-primary);
@@ -42,152 +49,221 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
   <div>
-    <h4 class="mb-1">Unassigned Mail</h4>
-    <div class="text-muted small">Mailbox-style review for inbound messages that are not linked to an item yet.</div>
+    <h4 class="mb-1">Mailbox</h4>
+    <div class="text-muted small">Browse IMAP folders, read messages, reply, forward, delete, and turn unassigned mails into Lost / Found items.</div>
   </div>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_settings') }}">Back to Settings</a>
 </div>
 
-<div class="card">
-  <div class="card-body">
-    <form class="row g-2 mb-3" method="get" action="{{ url_for('admin_mail_ticket_unassigned') }}">
-      <div class="col-12 col-lg-5">
-        <input class="form-control form-control-sm" name="q" value="{{ mail_query or '' }}" placeholder="Search mailbox by sender, subject or body">
-      </div>
-      {% if selected_row %}
-      <input type="hidden" name="message_id" value="{{ selected_row['id'] }}">
-      {% endif %}
-      <div class="col-12 col-lg-3">
-        <button class="btn btn-sm btn-outline-primary w-100" type="submit">Search mailbox</button>
-      </div>
-      <div class="col-12 col-lg-2">
-        <a class="btn btn-sm btn-outline-secondary w-100" href="{{ url_for('admin_mail_ticket_unassigned') }}">Reset</a>
-      </div>
-      <div class="col-12 col-lg-2 text-muted small d-flex align-items-center justify-content-lg-end">
-        {{ rows|length }} message{{ '' if rows|length == 1 else 's' }}
-      </div>
-    </form>
-
-    {% if rows %}
-      <div class="row g-0 mailbox-shell border rounded overflow-hidden">
-        <div class="col-12 col-xl-4">
-          <div class="mailbox-list">
-            {% for row in rows %}
-              <a class="mail-row{% if selected_row and row['id'] == selected_row['id'] %} active{% endif %}"
-                 href="{{ url_for('admin_mail_ticket_unassigned', message_id=row['id'], q=mail_query or '', item_q=item_query or '') }}">
-                <div class="d-flex justify-content-between gap-2 align-items-start">
-                  <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
-                  <div class="small text-muted text-nowrap">{{ (row['received_at'] or row['created_at'] or '')[:16] }}</div>
-                </div>
-                <div class="small fw-semibold text-truncate">{{ row['subject'] or '(no subject)' }}</div>
-                <div class="small text-muted text-truncate">
-                  {% if row['ticket_ref_guess'] %}Ref guess: {{ row['ticket_ref_guess'] }} · {% endif %}
-                  {{ (row['body'] or '').replace('\n', ' ') }}
-                </div>
+{% if not folders %}
+  <div class="alert alert-warning mb-0">Mailbox is not available. Check IMAP configuration in system settings.</div>
+{% else %}
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="row g-0 mailbox-shell">
+        <div class="col-12 col-xl-2">
+          <div class="mail-folders">
+            <div class="p-3 border-bottom">
+              <div class="fw-semibold">Folders</div>
+            </div>
+            {% for folder_name in folders %}
+              <a class="folder-link{% if current_folder == folder_name %} active{% endif %}"
+                 href="{{ url_for('admin_mail_ticket_unassigned', folder=folder_name) }}">
+                <span class="d-flex justify-content-between align-items-center gap-2">
+                  <span class="text-truncate">{{ folder_name }}</span>
+                  {% set folder_badge_count = folder_counts.get(folder_name, 0) %}
+                  {% if folder_badge_count %}
+                    <span class="badge text-bg-primary">{{ folder_badge_count }}</span>
+                  {% endif %}
+                </span>
               </a>
             {% endfor %}
           </div>
         </div>
 
-        <div class="col-12 col-xl-8">
-          {% if selected_row %}
-            <div class="mailbox-detail p-3">
+        <div class="col-12 col-xl-3">
+          <div class="mail-list">
+            <form class="p-3 border-bottom" method="get" action="{{ url_for('admin_mail_ticket_unassigned') }}">
+              <input type="hidden" name="folder" value="{{ current_folder }}">
+              <input class="form-control form-control-sm mb-2" name="q" value="{{ mail_query or '' }}" placeholder="Search messages">
+              <button class="btn btn-sm btn-outline-primary w-100" type="submit">Search</button>
+            </form>
+            {% if rows %}
+              {% for row in rows %}
+                <a class="mail-row{% if selected_message and row['uid'] == selected_message['uid'] %} active{% endif %}"
+                   href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=row['uid'], q=mail_query or '', item_q=item_query or '') }}">
+                  <div class="d-flex justify-content-between gap-2 align-items-start">
+                    <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
+                    <div class="small text-muted text-nowrap">{{ row['date'] or '' }}</div>
+                  </div>
+                  <div class="small fw-semibold text-truncate">{{ row['subject'] or '(no subject)' }}</div>
+                  <div class="small text-muted text-truncate">{{ row['snippet'] or '' }}</div>
+                </a>
+              {% endfor %}
+            {% else %}
+              <div class="p-3 text-muted small">No messages in this folder.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="col-12 col-xl-7">
+          <div class="mail-reader p-3">
+            {% if selected_message %}
               <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
                 <div>
-                  <h5 class="mb-1">{{ selected_row['subject'] or '(no subject)' }}</h5>
+                  <h5 class="mb-1">{{ selected_message['subject'] or '(no subject)' }}</h5>
                   <div class="small text-muted">
-                    From: {{ selected_row['sender'] or '—' }}
-                    {% if selected_row['recipient'] %} · To: {{ selected_row['recipient'] }}{% endif %}
-                    {% if selected_row['received_at'] %} · Received: {{ selected_row['received_at'] }}{% endif %}
-                    {% if selected_row['mailbox_folder'] %} · Folder: {{ selected_row['mailbox_folder'] }}{% endif %}
+                    From: {{ selected_message['sender'] or '—' }}
+                    {% if selected_message['recipient'] %} · To: {{ selected_message['recipient'] }}{% endif %}
+                    {% if selected_message['cc'] %} · Cc: {{ selected_message['cc'] }}{% endif %}
+                    {% if selected_message['date'] %} · Date: {{ selected_message['date'] }}{% endif %}
                   </div>
                   <div class="small text-muted mt-1">
-                    {% if selected_row['ticket_ref_guess'] %}Ref guess: {{ selected_row['ticket_ref_guess'] }} · {% endif %}
-                    {% if selected_row['message_id'] %}Message-ID: {{ selected_row['message_id'] }}{% endif %}
+                    Folder: {{ current_folder }}
+                    {% if selected_message['message_id'] %} · Message-ID: {{ selected_message['message_id'] }}{% endif %}
+                    {% if detected_ticket_ref %} · Ref: {{ detected_ticket_ref }}{% endif %}
                   </div>
                 </div>
                 <div class="d-flex gap-2 flex-wrap">
-                  {% if can_create_lost %}
-                    <form method="post" action="{{ url_for('admin_mail_ticket_start_create', message_id=selected_row['id'], kind='lost') }}">
-                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <button class="btn btn-sm btn-outline-danger" type="submit">Create Lost</button>
-                    </form>
-                  {% endif %}
-                  {% if can_create_found %}
-                    <form method="post" action="{{ url_for('admin_mail_ticket_start_create', message_id=selected_row['id'], kind='found') }}">
-                      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <button class="btn btn-sm btn-outline-success" type="submit">Create Found</button>
-                    </form>
-                  {% endif %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=selected_message['uid'], q=mail_query or '', item_q=item_query or '', compose_action='reply') }}">Reply</a>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=selected_message['uid'], q=mail_query or '', item_q=item_query or '', compose_action='reply_all') }}">Reply all</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=selected_message['uid'], q=mail_query or '', item_q=item_query or '', compose_action='forward') }}">Forward</a>
+                  <form method="post" action="{{ url_for('admin_mailbox_delete') }}" onsubmit="return confirm('Delete this message permanently from the current folder?');">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="folder" value="{{ current_folder }}">
+                    <input type="hidden" name="uid" value="{{ selected_message['uid'] }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                  </form>
                 </div>
               </div>
 
-              <div class="mail-body mb-4">{{ selected_row['body'] or '' }}</div>
+              {% if linked_item %}
+                <div class="alert alert-info py-2">
+                  This message matches item <a href="{{ url_for('detail', item_id=linked_item['id']) }}">{{ linked_item['public_id'] or linked_item['id'] }}</a>
+                  ({{ linked_item['title'] or 'Untitled' }}).
+                </div>
+              {% endif %}
+
+              <div class="mail-body mb-4">{{ selected_message['body'] or '' }}</div>
 
               <div class="row g-3">
-                <div class="col-12 col-lg-5">
+                <div class="col-12 col-lg-7">
                   <div class="border rounded p-3 h-100">
-                    <div class="fw-semibold mb-2">Assign to Existing Item</div>
-                    <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=selected_row['id']) }}">
+                    <div class="fw-semibold mb-2">Compose</div>
+                    <form method="post" action="{{ url_for('admin_mailbox_send') }}">
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                      <label class="form-label small">Public ID or DB ID</label>
-                      <input class="form-control form-control-sm mb-2" name="target_item_ref" placeholder="Public ID or DB ID" required>
-                      <button class="btn btn-sm btn-primary w-100" type="submit">Assign and create thread entry</button>
+                      <input type="hidden" name="folder" value="{{ current_folder }}">
+                      <input type="hidden" name="uid" value="{{ selected_message['uid'] }}">
+                      <div class="row g-2">
+                        <div class="col-12">
+                          <label class="form-label small">To</label>
+                          <input class="form-control form-control-sm" name="to" value="{{ compose_defaults['to'] if compose_action else '' }}" required>
+                        </div>
+                        <div class="col-12">
+                          <label class="form-label small">Cc</label>
+                          <input class="form-control form-control-sm" name="cc" value="{{ compose_defaults['cc'] if compose_action else '' }}">
+                        </div>
+                        <div class="col-12">
+                          <label class="form-label small">Subject</label>
+                          <input class="form-control form-control-sm" name="subject" value="{{ compose_defaults['subject'] if compose_action else '' }}" required>
+                        </div>
+                        <div class="col-12">
+                          <label class="form-label small">Message</label>
+                          <textarea class="form-control form-control-sm" rows="10" name="body" required>{{ compose_defaults['body'] if compose_action else '' }}</textarea>
+                        </div>
+                      </div>
+                      <div class="d-flex justify-content-between align-items-center gap-2 mt-3 flex-wrap">
+                        <div class="small text-muted">
+                          {% if smtp_enabled %}Sent via {{ smtp_from or 'configured SMTP' }}.{% else %}SMTP is disabled.{% endif %}
+                        </div>
+                        <button class="btn btn-sm btn-primary" type="submit">Send mail</button>
+                      </div>
                     </form>
                   </div>
                 </div>
 
-                <div class="col-12 col-lg-7">
+                <div class="col-12 col-lg-5">
                   <div class="border rounded p-3 h-100">
-                    <div class="fw-semibold mb-2">Suggested Existing Items</div>
+                    <div class="fw-semibold mb-2">Item Actions</div>
+                    {% if current_folder == unassigned_folder and selected_row %}
+                      <div class="d-grid gap-2 mb-3">
+                        {% if can_create_lost %}
+                          <form method="post" action="{{ url_for('admin_mail_ticket_start_create', message_id=selected_row['id'], kind='lost') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-outline-danger w-100" type="submit">Create Lost</button>
+                          </form>
+                        {% endif %}
+                        {% if can_create_found %}
+                          <form method="post" action="{{ url_for('admin_mail_ticket_start_create', message_id=selected_row['id'], kind='found') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-outline-success w-100" type="submit">Create Found</button>
+                          </form>
+                        {% endif %}
+                      </div>
+                    {% else %}
+                      <div class="text-muted small mb-3">Lost / Found creation and manual assignment are only available for messages currently in the configured unassigned folder.</div>
+                    {% endif %}
+
+                    <div class="fw-semibold mb-2">Assign to Existing Item</div>
                     <form method="get" action="{{ url_for('admin_mail_ticket_unassigned') }}" class="row g-2 mb-3">
-                      <input type="hidden" name="message_id" value="{{ selected_row['id'] }}">
+                      <input type="hidden" name="folder" value="{{ current_folder }}">
+                      <input type="hidden" name="uid" value="{{ selected_message['uid'] }}">
                       <input type="hidden" name="q" value="{{ mail_query or '' }}">
-                      <div class="col-12 col-md-8">
+                      <div class="col-12">
+                        <label class="form-label small">Search items</label>
                         <input class="form-control form-control-sm" name="item_q" value="{{ item_query or '' }}" placeholder="Search item by ID, title or description">
                       </div>
-                      <div class="col-12 col-md-4">
+                      <div class="col-12">
                         <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Search items</button>
                       </div>
                     </form>
+
+                    {% if current_folder == unassigned_folder and selected_row %}
+                      <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=selected_row['id']) }}" class="mb-3">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <label class="form-label small">Manual Public ID or DB ID</label>
+                        <input class="form-control form-control-sm mb-2" name="target_item_ref" placeholder="Public ID or DB ID" required>
+                        <button class="btn btn-sm btn-outline-primary w-100" type="submit">Assign and create thread entry</button>
+                      </form>
+                    {% endif %}
+
                     {% if item_candidates %}
                       <div class="list-group list-group-flush">
                         {% for item in item_candidates %}
                           <div class="list-group-item px-0">
-                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                            <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
                               <div>
-                                <div class="fw-semibold">
-                                  {{ item['title'] or 'Untitled' }}
-                                  <span class="text-muted small">({{ item['public_id'] or item['id'] }})</span>
-                                </div>
+                                <div class="fw-semibold">{{ item['title'] or 'Untitled' }}</div>
                                 <div class="small text-muted">
-                                  {{ item['kind']|title }} · {{ item['status'] or '—' }}
-                                  {% if item['category'] %} · {{ item['category'] }}{% endif %}
-                                  {% if item['location'] %} · {{ item['location'] }}{% endif %}
+                                  {{ item['public_id'] or item['id'] }} · {{ item['kind']|title }} · {{ item['status'] or '—' }}
                                 </div>
                               </div>
-                              <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=selected_row['id']) }}">
-                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="target_item_ref" value="{{ item['public_id'] or item['id'] }}">
-                                <button class="btn btn-sm btn-outline-primary" type="submit">Assign</button>
-                              </form>
+                              {% if current_folder == unassigned_folder and selected_row %}
+                                <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=selected_row['id']) }}">
+                                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                  <input type="hidden" name="target_item_ref" value="{{ item['public_id'] or item['id'] }}">
+                                  <button class="btn btn-sm btn-outline-primary" type="submit">Assign</button>
+                                </form>
+                              {% else %}
+                                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('detail', item_id=item['id']) }}">Open</a>
+                              {% endif %}
                             </div>
                           </div>
                         {% endfor %}
                       </div>
                     {% else %}
-                      <div class="text-muted small">No matching items found yet. Use manual assignment or create a new Lost / Found entry.</div>
+                      <div class="text-muted small">No item suggestions available.</div>
                     {% endif %}
                   </div>
                 </div>
               </div>
-            </div>
-          {% endif %}
+            {% else %}
+              <div class="text-muted">Select a message to read it.</div>
+            {% endif %}
+          </div>
         </div>
       </div>
-    {% else %}
-      <div class="text-muted">No unassigned inbound mail.</div>
-    {% endif %}
+    </div>
   </div>
-</div>
+{% endif %}
 {% endblock %}
