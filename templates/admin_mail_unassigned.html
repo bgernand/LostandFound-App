@@ -47,13 +47,42 @@
     .mail-compose-modal textarea {
       min-height: 18rem;
     }
+    .mail-row {
+      padding: 0;
+    }
+    .mail-row-link {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      padding: .8rem .9rem;
+    }
+    .mail-row-unread .mail-row-link {
+      background: rgba(13, 110, 253, 0.04);
+    }
+    .mail-unread-dot {
+      width: .55rem;
+      height: .55rem;
+      border-radius: 50%;
+      background: var(--bs-primary);
+      display: inline-block;
+      flex: 0 0 auto;
+      margin-top: .35rem;
+    }
+    .folder-link.folder-unassigned {
+      font-weight: 700;
+    }
   </style>
 {% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
   <div>
     <h4 class="mb-1">Mailbox</h4>
-    <div class="text-muted small">Browse IMAP folders, read messages, reply, forward, delete, and turn unassigned mails into Lost / Found items.</div>
+    <div class="text-muted small">
+      Browse IMAP folders, read messages, reply, forward, delete, and turn unassigned mails into Lost / Found items.
+      {% if mailbox_totals %}
+        · Total {{ mailbox_totals.get('total', 0) }} · Unread {{ mailbox_totals.get('unread_total', 0) }} · Read {{ mailbox_totals.get('read_total', 0) }}
+      {% endif %}
+    </div>
   </div>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_settings') }}">Back to Settings</a>
 </div>
@@ -70,13 +99,13 @@
               <div class="fw-semibold">Folders</div>
             </div>
             {% for folder_name in folders %}
-              <a class="folder-link{% if current_folder == folder_name %} active{% endif %}"
+              <a class="folder-link{% if current_folder == folder_name %} active{% endif %}{% if folder_name == unassigned_folder %} folder-unassigned{% endif %}"
                  href="{{ url_for('admin_mail_ticket_unassigned', folder=folder_name) }}">
-                <span class="d-flex justify-content-between align-items-center gap-2">
+                  <span class="d-flex justify-content-between align-items-center gap-2">
                   <span class="text-truncate">{{ folder_name }}</span>
-                  {% set folder_badge_count = folder_counts.get(folder_name, 0) %}
-                  {% if folder_badge_count %}
-                    <span class="badge text-bg-primary">{{ folder_badge_count }}</span>
+                  {% set folder_stats = folder_counts.get(folder_name, {'unread': 0, 'read': 0, 'total': 0}) %}
+                  {% if folder_stats.get('unread') or folder_stats.get('total') %}
+                    <span class="badge text-bg-primary">{{ folder_stats.get('unread', 0) }}/{{ folder_stats.get('total', 0) }}</span>
                   {% endif %}
                 </span>
               </a>
@@ -93,15 +122,34 @@
             </form>
             {% if rows %}
               {% for row in rows %}
-                <a class="mail-row{% if selected_message and row['uid'] == selected_message['uid'] %} active{% endif %}"
-                   href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=row['uid'], q=mail_query or '', item_q=item_query or '') }}">
-                  <div class="d-flex justify-content-between gap-2 align-items-start">
-                    <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
-                    <div class="small text-muted text-nowrap">{{ row['date'] or '' }}</div>
+                <div class="mail-row{% if selected_message and row['uid'] == selected_message['uid'] %} active{% endif %}{% if not row['is_read'] %} mail-row-unread{% endif %}">
+                  <div class="d-flex align-items-stretch">
+                    <a class="mail-row-link flex-grow-1"
+                       href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=row['uid'], q=mail_query or '', item_q=item_query or '') }}">
+                      <div class="d-flex justify-content-between gap-2 align-items-start">
+                        <div class="d-flex gap-2 align-items-start text-truncate">
+                          {% if not row['is_read'] %}<span class="mail-unread-dot" aria-hidden="true"></span>{% endif %}
+                          <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
+                        </div>
+                        <div class="small text-muted text-nowrap">{{ row['date'] or '' }}</div>
+                      </div>
+                      <div class="small fw-semibold text-truncate">{{ row['subject'] or '(no subject)' }}</div>
+                      <div class="small text-muted text-truncate">{{ row['snippet'] or '' }}</div>
+                    </a>
+                    <div class="p-2 border-start d-flex align-items-center">
+                      <form method="post" action="{{ url_for('admin_mailbox_seen') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="folder" value="{{ current_folder }}">
+                        <input type="hidden" name="uid" value="{{ row['uid'] }}">
+                        <input type="hidden" name="selected_uid" value="{{ selected_message['uid'] if selected_message else row['uid'] }}">
+                        <input type="hidden" name="q" value="{{ mail_query or '' }}">
+                        <input type="hidden" name="item_q" value="{{ item_query or '' }}">
+                        <input type="hidden" name="seen" value="{{ 'unread' if row['is_read'] else 'read' }}">
+                        <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Mark unread' if row['is_read'] else 'Mark read' }}</button>
+                      </form>
+                    </div>
                   </div>
-                  <div class="small fw-semibold text-truncate">{{ row['subject'] or '(no subject)' }}</div>
-                  <div class="small text-muted text-truncate">{{ row['snippet'] or '' }}</div>
-                </a>
+                </div>
               {% endfor %}
             {% else %}
               <div class="p-3 text-muted small">No messages in this folder.</div>
@@ -125,9 +173,20 @@
                     Folder: {{ current_folder }}
                     {% if selected_message['message_id'] %} · Message-ID: {{ selected_message['message_id'] }}{% endif %}
                     {% if detected_ticket_ref %} · Ref: {{ detected_ticket_ref }}{% endif %}
+                    · Status: {{ 'Read' if selected_message['is_read'] else 'Unread' }}
                   </div>
                 </div>
                 <div class="d-flex gap-2 flex-wrap">
+                  <form method="post" action="{{ url_for('admin_mailbox_seen') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="folder" value="{{ current_folder }}">
+                    <input type="hidden" name="uid" value="{{ selected_message['uid'] }}">
+                    <input type="hidden" name="selected_uid" value="{{ selected_message['uid'] }}">
+                    <input type="hidden" name="q" value="{{ mail_query or '' }}">
+                    <input type="hidden" name="item_q" value="{{ item_query or '' }}">
+                    <input type="hidden" name="seen" value="{{ 'unread' if selected_message['is_read'] else 'read' }}">
+                    <button class="btn btn-sm btn-outline-dark" type="submit">{{ 'Mark unread' if selected_message['is_read'] else 'Mark read' }}</button>
+                  </form>
                   <button class="btn btn-sm btn-outline-primary js-mail-compose-open" type="button" data-action="reply">Reply</button>
                   <button class="btn btn-sm btn-outline-primary js-mail-compose-open" type="button" data-action="reply_all">Reply all</button>
                   <button class="btn btn-sm btn-outline-secondary js-mail-compose-open" type="button" data-action="forward">Forward</button>

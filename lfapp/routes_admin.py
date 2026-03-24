@@ -26,6 +26,7 @@ def register_admin_routes(app, deps: dict):
     fetch_imap_mailbox_messages = deps["fetch_imap_mailbox_messages"]
     fetch_imap_message_detail = deps["fetch_imap_message_detail"]
     delete_imap_message = deps["delete_imap_message"]
+    set_imap_message_seen = deps["set_imap_message_seen"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -419,15 +420,19 @@ def register_admin_routes(app, deps: dict):
     def admin_settings():
         return _render_admin_settings()
 
+    @app.get("/mailbox")
     @app.get("/admin/mail-ticket/unassigned")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_unassigned():
         cfg = get_mail_ticket_settings()
         folders = list_imap_mailboxes() if cfg["enabled"] else []
-        folder_counts = get_imap_mailbox_counts().get("folders", {}) if cfg["enabled"] else {}
+        mailbox_counts = get_imap_mailbox_counts() if cfg["enabled"] else {}
+        folder_counts = mailbox_counts.get("folders", {}) if cfg["enabled"] else {}
         default_folder = cfg["imap_unassigned_folder"] or "LostFound/Unassigned"
         if default_folder and default_folder not in folders:
             folders.append(default_folder)
+        if folders:
+            folders = sorted(set(folders), key=lambda name: (0 if name == default_folder else 1, str(name).lower()))
         folder = (request.args.get("folder") or "").strip() or default_folder
         if folders and folder not in folders:
             folder = default_folder if default_folder in folders else folders[0]
@@ -512,8 +517,10 @@ def register_admin_routes(app, deps: dict):
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
             unassigned_folder=default_folder,
+            mailbox_totals=mailbox_counts if cfg["enabled"] else {"unread_total": 0, "read_total": 0, "total": 0},
         )
 
+    @app.post("/mailbox/unassigned/<int:message_id>/assign")
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/assign")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_assign(message_id: int):
@@ -601,6 +608,7 @@ def register_admin_routes(app, deps: dict):
         flash(f"Unassigned mail linked to item {item['public_id'] or item['id']}.", "success")
         return redirect(url_for("detail", item_id=int(item["id"])))
 
+    @app.post("/mailbox/send")
     @app.post("/admin/mail-ticket/mailbox/send")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_send():
@@ -699,6 +707,7 @@ def register_admin_routes(app, deps: dict):
         flash("E-mail sent.", "success")
         return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
 
+    @app.post("/mailbox/delete")
     @app.post("/admin/mail-ticket/mailbox/delete")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_delete():
@@ -723,8 +732,34 @@ def register_admin_routes(app, deps: dict):
         flash("Message deleted.", "warning")
         return redirect(url_for("admin_mail_ticket_unassigned", folder=folder))
 
+    @app.post("/mailbox/seen")
+    @app.post("/admin/mail-ticket/mailbox/seen")
+    @require_permission("items.send_email", "items.view_pii")
+    def admin_mailbox_seen():
+        folder = (request.form.get("folder") or "").strip()
+        uid = (request.form.get("uid") or "").strip()
+        selected_uid = (request.form.get("selected_uid") or uid).strip()
+        mail_query = (request.form.get("q") or "").strip()
+        item_query = (request.form.get("item_q") or "").strip()
+        seen_value = (request.form.get("seen") or "").strip().lower()
+        if not folder or not uid or seen_value not in {"read", "unread"}:
+            flash("Folder, message and target state are required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=folder or None, uid=selected_uid or None))
+        ok, msg = set_imap_message_seen(folder, uid, seen_value == "read")
+        flash(msg, "success" if ok else "danger")
+        return redirect(
+            url_for(
+                "admin_mail_ticket_unassigned",
+                folder=folder,
+                uid=selected_uid,
+                q=mail_query,
+                item_q=item_query,
+            )
+        )
+
+    @app.post("/mailbox/unassigned/<int:message_id>/start-create/<kind>")
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/start-create/<kind>")
-    @require_permission("admin.settings")
+    @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_start_create(message_id: int, kind: str):
         if kind not in {"lost", "found"}:
             abort(404)

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import base64
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
@@ -346,8 +347,12 @@ def create_app(config: dict | None = None):
         "audit_maintenance_day": None,
         "last_mail_poll_ts": 0,
         "mailbox_counts_cache_ts": 0,
-        "mailbox_counts_cache": {"folders": {}, "unread_total": 0},
+        "mailbox_counts_cache": {"folders": {}, "unread_total": 0, "read_total": 0, "total": 0},
     }
+
+    def invalidate_mailbox_counts_cache():
+        state["mailbox_counts_cache_ts"] = 0
+        state["mailbox_counts_cache"] = {"folders": {}, "unread_total": 0, "read_total": 0, "total": 0}
 
     def encrypt_setting_secret(value: str) -> str | None:
         if not settings_encryption_key:
@@ -734,8 +739,37 @@ def create_app(config: dict | None = None):
                 return False, str(exc), {}
             return False, str(exc)
 
+    def _encode_imap_mailbox_name(value: str) -> str:
+        raw = str(value or "")
+        if not raw:
+            return ""
+        out = []
+        buffer = []
+
+        def flush_buffer():
+            if not buffer:
+                return
+            chunk = "".join(buffer)
+            encoded = base64.b64encode(chunk.encode("utf-16-be")).decode("ascii").rstrip("=").replace("/", ",")
+            out.append(f"&{encoded}-")
+            buffer.clear()
+
+        for ch in raw:
+            code = ord(ch)
+            if 0x20 <= code <= 0x7E and ch != "&":
+                flush_buffer()
+                out.append(ch)
+            elif ch == "&":
+                flush_buffer()
+                out.append("&-")
+            else:
+                buffer.append(ch)
+        flush_buffer()
+        return "".join(out)
+
     def _quote_imap_mailbox(mailbox_name: str) -> str:
-        return f'"{str(mailbox_name or "").replace(chr(34), "")}"'
+        encoded = _encode_imap_mailbox_name(mailbox_name)
+        return f'"{encoded.replace(chr(34), "")}"'
 
     def _imap_connect(cfg):
         if not cfg["imap_use_ssl"]:
@@ -884,15 +918,17 @@ def create_app(config: dict | None = None):
     def get_imap_mailbox_counts(force: bool = False):
         cfg = get_mail_ticket_settings()
         if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
-            return {"folders": {}, "unread_total": 0}
+            return {"folders": {}, "unread_total": 0, "read_total": 0, "total": 0}
         now_ts = int(time.time())
-        cached = state.get("mailbox_counts_cache") or {"folders": {}, "unread_total": 0}
+        cached = state.get("mailbox_counts_cache") or {"folders": {}, "unread_total": 0, "read_total": 0, "total": 0}
         cache_ts = int(state.get("mailbox_counts_cache_ts") or 0)
         if not force and now_ts - cache_ts < 60:
             return cached
         folders = list_imap_mailboxes()
         folder_counts = {}
         unread_total = 0
+        read_total = 0
+        total_messages = 0
         imap_conn = None
         try:
             imap_conn = _imap_connect(cfg)
@@ -900,18 +936,25 @@ def create_app(config: dict | None = None):
                 if not folder_name:
                     continue
                 try:
-                    status, data = imap_conn.status(_quote_imap_mailbox(folder_name), "(UNSEEN)")
+                    status, data = imap_conn.status(_quote_imap_mailbox(folder_name), "(MESSAGES UNSEEN)")
                     unseen = 0
+                    messages = 0
                     if status == "OK" and data:
                         decoded = b" ".join([part for part in data if part]).decode(errors="replace")
                         match = re.search(r"UNSEEN\s+(\d+)", decoded)
                         if match:
                             unseen = int(match.group(1))
-                    folder_counts[folder_name] = unseen
+                        match = re.search(r"MESSAGES\s+(\d+)", decoded)
+                        if match:
+                            messages = int(match.group(1))
+                    read_count = max(0, messages - unseen)
+                    folder_counts[folder_name] = {"unread": unseen, "read": read_count, "total": messages}
                     unread_total += unseen
+                    read_total += read_count
+                    total_messages += messages
                 except Exception:
-                    folder_counts[folder_name] = 0
-            cached = {"folders": folder_counts, "unread_total": unread_total}
+                    folder_counts[folder_name] = {"unread": 0, "read": 0, "total": 0}
+            cached = {"folders": folder_counts, "unread_total": unread_total, "read_total": read_total, "total": total_messages}
             state["mailbox_counts_cache"] = cached
             state["mailbox_counts_cache_ts"] = now_ts
             return cached
@@ -965,6 +1008,7 @@ def create_app(config: dict | None = None):
                         "references": _decode_mime_header(message.get("References")),
                         "snippet": re.sub(r"\s+", " ", body)[:180],
                         "flags": flags,
+                        "is_read": "\\Seen" in flags,
                     }
                 )
             return messages
@@ -1013,6 +1057,7 @@ def create_app(config: dict | None = None):
                 "references": _decode_mime_header(message.get("References")),
                 "body": body,
                 "flags": flags,
+                "is_read": "\\Seen" in flags,
             }
         finally:
             if imap_conn is not None:
@@ -1035,9 +1080,34 @@ def create_app(config: dict | None = None):
             expunge_status, _ = imap_conn.expunge()
             if expunge_status != "OK":
                 return False, "Could not expunge deleted message."
+            invalidate_mailbox_counts_cache()
             return True, "Message deleted."
         except Exception as exc:
             app.logger.exception("IMAP delete failed folder=%s uid=%s", folder_name, uid)
+            return False, str(exc)
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
+    def set_imap_message_seen(folder_name: str, uid: str, seen: bool):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return False, "IMAP is not configured."
+        imap_conn = None
+        try:
+            imap_conn = _imap_connect(cfg)
+            _select_mailbox(imap_conn, folder_name)
+            action = "+FLAGS.SILENT" if seen else "-FLAGS.SILENT"
+            status, _ = imap_conn.uid("store", str(uid), action, "(\\Seen)")
+            if status != "OK":
+                return False, f"Could not mark message as {'read' if seen else 'unread'}."
+            invalidate_mailbox_counts_cache()
+            return True, f"Message marked as {'read' if seen else 'unread'}."
+        except Exception as exc:
+            app.logger.exception("IMAP seen update failed folder=%s uid=%s seen=%s", folder_name, uid, seen)
             return False, str(exc)
         finally:
             if imap_conn is not None:
@@ -1527,6 +1597,8 @@ def create_app(config: dict | None = None):
         can_access_mailbox = bool(can_send_email and can_view_pii)
         mailbox_unassigned_count = 0
         mailbox_unread_total = 0
+        mailbox_read_total = 0
+        mailbox_total = 0
         mailbox_folder_counts = {}
         if can_access_mailbox:
             conn = get_db()
@@ -1539,8 +1611,10 @@ def create_app(config: dict | None = None):
                 conn.close()
             mailbox_counts = get_imap_mailbox_counts()
             mailbox_unread_total = int(mailbox_counts.get("unread_total") or 0)
+            mailbox_read_total = int(mailbox_counts.get("read_total") or 0)
+            mailbox_total = int(mailbox_counts.get("total") or 0)
             mailbox_folder_counts = dict(mailbox_counts.get("folders") or {})
-        mailbox_combined_count = mailbox_unread_total + mailbox_unassigned_count
+        mailbox_combined_count = mailbox_unread_total
         can_manage_reminders = bool(has_permission("reminders.manage", user=u))
         can_admin_access = bool(has_permission("admin.access", user=u))
         can_admin_users = bool(has_permission("admin.users", user=u))
@@ -1604,6 +1678,8 @@ def create_app(config: dict | None = None):
             "can_access_mailbox": can_access_mailbox,
             "mailbox_unassigned_count": mailbox_unassigned_count,
             "mailbox_unread_total": mailbox_unread_total,
+            "mailbox_read_total": mailbox_read_total,
+            "mailbox_total": mailbox_total,
             "mailbox_combined_count": mailbox_combined_count,
             "mailbox_folder_counts": mailbox_folder_counts,
             "can_manage_reminders": can_manage_reminders,
@@ -1815,6 +1891,7 @@ def create_app(config: dict | None = None):
             "fetch_imap_mailbox_messages": fetch_imap_mailbox_messages,
             "fetch_imap_message_detail": fetch_imap_message_detail,
             "delete_imap_message": delete_imap_message,
+            "set_imap_message_seen": set_imap_message_seen,
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
