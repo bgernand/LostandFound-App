@@ -2051,10 +2051,10 @@ def create_app(config: dict | None = None):
     def set_ui_language():
         settings = get_ui_translation_settings()
         language = (request.form.get("language") or "").strip().lower()
-        next_url = safe_next_url(request.form.get("next"), fallback=url_for("index"))
+        next_url = safe_next_url(request.form.get("next"))
         if language in settings["available_langs"]:
             session["ui_language"] = language
-        return redirect(next_url)
+        return redirect(next_url or request.referrer or url_for("index"))
 
     @app.post("/api/ui-translate")
     def api_ui_translate():
