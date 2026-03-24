@@ -813,12 +813,21 @@ def create_app(config: dict | None = None):
         return data
 
     def _move_message(imap_conn, msg_num, source_folder: str, target_folder: str) -> bool:
+        ticket_cfg = get_mail_ticket_settings()
+        should_force_seen = target_folder in {
+            (ticket_cfg.get("imap_processed_folder") or "").strip(),
+            (ticket_cfg.get("imap_sent_folder") or "").strip(),
+        }
         _ensure_mailbox(imap_conn, target_folder)
         _select_mailbox(imap_conn, source_folder)
+        if should_force_seen:
+            imap_conn.store(msg_num, "+FLAGS.SILENT", "(\\Seen)")
         copy_status, _ = imap_conn.copy(msg_num, _quote_imap_mailbox(target_folder))
         if copy_status != "OK":
             return False
         store_status, _ = imap_conn.store(msg_num, "+FLAGS", "\\Deleted")
+        if store_status == "OK":
+            invalidate_mailbox_counts_cache()
         return store_status == "OK"
 
     def _decode_mime_header(value):

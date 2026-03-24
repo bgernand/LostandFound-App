@@ -86,6 +86,17 @@
       {% endif %}
     </div>
   </div>
+  {% if has_permission('admin.settings') %}
+    <form method="post" action="{{ url_for('admin_poll_mail_ticket_mailbox') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="redirect_to" value="mailbox">
+      <input type="hidden" name="folder" value="{{ current_folder }}">
+      <input type="hidden" name="uid" value="{{ selected_message['uid'] if selected_message else '' }}">
+      <input type="hidden" name="q" value="{{ mail_query or '' }}">
+      <input type="hidden" name="item_q" value="{{ item_query or '' }}">
+      <button class="btn btn-sm btn-outline-primary" type="submit">Run Mailbox Poll</button>
+    </form>
+  {% endif %}
 </div>
 
 {% if not folders %}

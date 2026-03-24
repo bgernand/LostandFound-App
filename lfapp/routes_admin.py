@@ -1328,6 +1328,11 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/settings/mail-ticketing/poll")
     @require_permission("admin.settings")
     def admin_poll_mail_ticket_mailbox():
+        redirect_to = (request.form.get("redirect_to") or "").strip()
+        redirect_folder = (request.form.get("folder") or "").strip()
+        redirect_uid = (request.form.get("uid") or "").strip()
+        redirect_q = (request.form.get("q") or "").strip()
+        redirect_item_q = (request.form.get("item_q") or "").strip()
         result = poll_ticket_mailbox_once()
         audit("mail_ticket_poll", "settings", None, result["message"][:200], meta=result)
         if result["ok"]:
@@ -1336,6 +1341,16 @@ def register_admin_routes(app, deps: dict):
             flash(result["message"], "warning")
         else:
             flash(f"Mailbox poll failed: {result['message']}", "danger")
+        if redirect_to == "mailbox":
+            return redirect(
+                url_for(
+                    "admin_mail_ticket_unassigned",
+                    folder=redirect_folder or None,
+                    uid=redirect_uid or None,
+                    q=redirect_q or None,
+                    item_q=redirect_item_q or None,
+                )
+            )
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp-public-lost-confirmation")
