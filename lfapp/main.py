@@ -796,6 +796,38 @@ def create_app(config: dict | None = None):
         except Exception:
             return raw
 
+    def _decode_imap_mailbox_name(value: str) -> str:
+        raw = str(value or "")
+        if not raw:
+            return ""
+        out = []
+        i = 0
+        while i < len(raw):
+            ch = raw[i]
+            if ch != "&":
+                out.append(ch)
+                i += 1
+                continue
+            end = raw.find("-", i)
+            if end == -1:
+                out.append(raw[i:])
+                break
+            token = raw[i + 1:end]
+            if token == "":
+                out.append("&")
+            else:
+                try:
+                    import base64
+
+                    token_b64 = token.replace(",", "/")
+                    padding = "=" * ((4 - len(token_b64) % 4) % 4)
+                    decoded = base64.b64decode(token_b64 + padding)
+                    out.append(decoded.decode("utf-16-be"))
+                except Exception:
+                    out.append(raw[i : end + 1])
+            i = end + 1
+        return "".join(out)
+
     def _extract_plain_text_body(message):
         body = ""
         if message.is_multipart():
@@ -830,7 +862,7 @@ def create_app(config: dict | None = None):
                     decoded = row.decode(errors="replace")
                     match = re.search(r'\) "[^"]+" "?(.+?)"?$', decoded)
                     if match:
-                        folder_name = match.group(1).strip().strip('"')
+                        folder_name = _decode_imap_mailbox_name(match.group(1).strip().strip('"'))
                         if folder_name:
                             folders.append(folder_name)
             for fallback in [

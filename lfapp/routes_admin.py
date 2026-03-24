@@ -485,9 +485,14 @@ def register_admin_routes(app, deps: dict):
                 ).fetchall()
         smtp_cfg = get_smtp_settings(conn)
         conn.close()
-        compose_defaults = {"to": "", "cc": "", "subject": "", "body": ""}
-        if selected_message and compose_action:
-            compose_defaults = _compose_defaults(selected_message, compose_action, smtp_cfg["from"])
+        compose_presets = {
+            "reply": {"to": "", "cc": "", "subject": "", "body": ""},
+            "reply_all": {"to": "", "cc": "", "subject": "", "body": ""},
+            "forward": {"to": "", "cc": "", "subject": "", "body": ""},
+        }
+        if selected_message:
+            for action_key in compose_presets.keys():
+                compose_presets[action_key] = _compose_defaults(selected_message, action_key, smtp_cfg["from"])
         return render_template(
             "admin_mail_unassigned.html",
             user=current_user(),
@@ -503,7 +508,7 @@ def register_admin_routes(app, deps: dict):
             linked_item=linked_item,
             detected_ticket_ref=detected_ticket_ref,
             compose_action=compose_action,
-            compose_defaults=compose_defaults,
+            compose_presets=compose_presets,
             smtp_enabled=smtp_cfg["enabled"],
             smtp_from=smtp_cfg["from"],
             unassigned_folder=default_folder,
