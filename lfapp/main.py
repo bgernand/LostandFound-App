@@ -1125,6 +1125,49 @@ def create_app(config: dict | None = None):
                 except Exception:
                     pass
 
+    def move_imap_message(source_folder: str, uid: str, target_folder: str):
+        cfg = get_mail_ticket_settings()
+        if not (cfg["enabled"] and cfg["imap_host"] and cfg["imap_username"] and cfg["imap_password"]):
+            return False, "IMAP is not configured."
+        source_folder = (source_folder or "").strip()
+        target_folder = (target_folder or "").strip()
+        uid = str(uid or "").strip()
+        if not source_folder or not target_folder or not uid:
+            return False, "Source folder, target folder and message are required."
+        if source_folder == target_folder:
+            return True, "Message already in target folder."
+        imap_conn = None
+        try:
+            imap_conn = _imap_connect(cfg)
+            _ensure_mailbox(imap_conn, target_folder)
+            _select_mailbox(imap_conn, source_folder)
+            should_force_seen = target_folder in {
+                (cfg.get("imap_processed_folder") or "").strip(),
+                (cfg.get("imap_sent_folder") or "").strip(),
+            }
+            if should_force_seen:
+                imap_conn.uid("store", uid, "+FLAGS.SILENT", "(\\Seen)")
+            copy_status, _ = imap_conn.uid("copy", uid, _quote_imap_mailbox(target_folder))
+            if copy_status != "OK":
+                return False, "Could not copy message to target folder."
+            delete_status, _ = imap_conn.uid("store", uid, "+FLAGS.SILENT", "(\\Deleted)")
+            if delete_status != "OK":
+                return False, "Could not remove message from source folder."
+            expunge_status, _ = imap_conn.expunge()
+            if expunge_status != "OK":
+                return False, "Could not finalize moved message."
+            invalidate_mailbox_counts_cache()
+            return True, "Message moved."
+        except Exception as exc:
+            app.logger.exception("IMAP move failed source=%s uid=%s target=%s", source_folder, uid, target_folder)
+            return False, str(exc)
+        finally:
+            if imap_conn is not None:
+                try:
+                    imap_conn.logout()
+                except Exception:
+                    pass
+
     def csrf_token():
         token = session.get("_csrf_token")
         if not token:
@@ -1901,6 +1944,7 @@ def create_app(config: dict | None = None):
             "fetch_imap_message_detail": fetch_imap_message_detail,
             "delete_imap_message": delete_imap_message,
             "set_imap_message_seen": set_imap_message_seen,
+            "move_imap_message": move_imap_message,
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,

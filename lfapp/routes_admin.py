@@ -27,6 +27,7 @@ def register_admin_routes(app, deps: dict):
     fetch_imap_message_detail = deps["fetch_imap_message_detail"]
     delete_imap_message = deps["delete_imap_message"]
     set_imap_message_seen = deps["set_imap_message_seen"]
+    move_imap_message = deps["move_imap_message"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -149,6 +150,53 @@ def register_admin_routes(app, deps: dict):
                 selected_message.get("body"),
             ),
         ).fetchone()
+
+    def _upsert_unassigned_row(conn, selected_message, mailbox_folder: str):
+        ticket_ref_guess = extract_ticket_reference(
+            selected_message.get("subject"),
+            selected_message.get("body"),
+            selected_message.get("in_reply_to"),
+            selected_message.get("references"),
+        )
+        message_id = (selected_message.get("message_id") or "").strip() or None
+        sender = selected_message.get("sender")
+        subject = selected_message.get("subject")
+        body = selected_message.get("body")
+        existing = _find_unassigned_row(conn, selected_message)
+        if existing:
+            conn.execute(
+                """
+                UPDATE mail_unassigned_messages
+                SET mailbox_folder=?, ticket_ref_guess=?, received_at=?
+                WHERE id=?
+                """,
+                (mailbox_folder, ticket_ref_guess, now_utc(), int(existing["id"])),
+            )
+            return int(existing["id"])
+        conn.execute(
+            """
+            INSERT INTO mail_unassigned_messages (
+                sender, recipient, subject, body, message_id, in_reply_to,
+                references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sender,
+                selected_message.get("recipient"),
+                subject or "(no subject)",
+                body or "",
+                message_id,
+                selected_message.get("in_reply_to"),
+                selected_message.get("references"),
+                ticket_ref_guess,
+                mailbox_folder,
+                now_utc(),
+                now_utc(),
+            ),
+        )
+        row = _find_unassigned_row(conn, selected_message)
+        return int(row["id"]) if row else None
 
     def _compose_defaults(selected_message, action, own_address):
         sender_name, sender_email = parseaddr(selected_message.get("sender") or "")
@@ -754,6 +802,48 @@ def register_admin_routes(app, deps: dict):
                 uid=selected_uid,
                 q=mail_query,
                 item_q=item_query,
+            )
+        )
+
+    @app.post("/mailbox/move")
+    @app.post("/admin/mail-ticket/mailbox/move")
+    @require_permission("items.send_email", "items.view_pii")
+    def admin_mailbox_move():
+        source_folder = (request.form.get("source_folder") or "").strip()
+        target_folder = (request.form.get("target_folder") or "").strip()
+        uid = (request.form.get("uid") or "").strip()
+        current_folder = (request.form.get("current_folder") or source_folder).strip()
+        selected_uid = (request.form.get("selected_uid") or "").strip()
+        mail_query = (request.form.get("q") or "").strip()
+        item_query = (request.form.get("item_q") or "").strip()
+        if not source_folder or not target_folder or not uid:
+            flash("Source folder, target folder and message are required.", "danger")
+            return redirect(url_for("admin_mail_ticket_unassigned", folder=current_folder or None))
+
+        selected_message = fetch_imap_message_detail(source_folder, uid)
+        ok, msg = move_imap_message(source_folder, uid, target_folder)
+        if ok and selected_message:
+            conn = get_db()
+            try:
+                ticket_cfg = get_mail_ticket_settings(conn)
+                unassigned_folder = (ticket_cfg["imap_unassigned_folder"] or "LostFound/Unassigned").strip() or "LostFound/Unassigned"
+                unassigned_row = _find_unassigned_row(conn, selected_message)
+                if target_folder == unassigned_folder:
+                    _upsert_unassigned_row(conn, selected_message, unassigned_folder)
+                elif source_folder == unassigned_folder and unassigned_row:
+                    conn.execute("DELETE FROM mail_unassigned_messages WHERE id=?", (int(unassigned_row["id"]),))
+                conn.commit()
+            finally:
+                conn.close()
+        flash(msg, "success" if ok else "danger")
+        next_uid = selected_uid if selected_uid and selected_uid != uid else None
+        return redirect(
+            url_for(
+                "admin_mail_ticket_unassigned",
+                folder=current_folder or None,
+                uid=next_uid,
+                q=mail_query or None,
+                item_q=item_query or None,
             )
         )
 
