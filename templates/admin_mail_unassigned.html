@@ -59,14 +59,16 @@
     .mail-row-unread .mail-row-link {
       background: rgba(13, 110, 253, 0.04);
     }
-    .mail-unread-dot {
-      width: .55rem;
-      height: .55rem;
-      border-radius: 50%;
-      background: var(--bs-primary);
-      display: inline-block;
-      flex: 0 0 auto;
-      margin-top: .35rem;
+    .mail-read-indicator {
+      width: .45rem;
+      flex: 0 0 .45rem;
+      background: transparent;
+    }
+    .mail-row-unread .mail-read-indicator {
+      background: #0a58ca;
+    }
+    .mail-row-read .mail-read-indicator {
+      background: transparent;
     }
     .folder-link.folder-unassigned {
       font-weight: 700;
@@ -84,7 +86,6 @@
       {% endif %}
     </div>
   </div>
-  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_settings') }}">Back to Settings</a>
 </div>
 
 {% if not folders %}
@@ -104,8 +105,8 @@
                   <span class="d-flex justify-content-between align-items-center gap-2">
                   <span class="text-truncate">{{ folder_name }}</span>
                   {% set folder_stats = folder_counts.get(folder_name, {'unread': 0, 'read': 0, 'total': 0}) %}
-                  {% if folder_stats.get('unread') or folder_stats.get('total') %}
-                    <span class="badge text-bg-primary">{{ folder_stats.get('unread', 0) }}/{{ folder_stats.get('total', 0) }}</span>
+                  {% if folder_stats.get('unread') %}
+                    <span class="badge text-bg-primary">{{ folder_stats.get('unread', 0) }}</span>
                   {% endif %}
                 </span>
               </a>
@@ -122,32 +123,18 @@
             </form>
             {% if rows %}
               {% for row in rows %}
-                <div class="mail-row{% if selected_message and row['uid'] == selected_message['uid'] %} active{% endif %}{% if not row['is_read'] %} mail-row-unread{% endif %}">
+                <div class="mail-row{% if selected_message and row['uid'] == selected_message['uid'] %} active{% endif %}{% if not row['is_read'] %} mail-row-unread{% else %} mail-row-read{% endif %}">
                   <div class="d-flex align-items-stretch">
+                    <div class="mail-read-indicator" aria-hidden="true"></div>
                     <a class="mail-row-link flex-grow-1"
                        href="{{ url_for('admin_mail_ticket_unassigned', folder=current_folder, uid=row['uid'], q=mail_query or '', item_q=item_query or '') }}">
                       <div class="d-flex justify-content-between gap-2 align-items-start">
-                        <div class="d-flex gap-2 align-items-start text-truncate">
-                          {% if not row['is_read'] %}<span class="mail-unread-dot" aria-hidden="true"></span>{% endif %}
-                          <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
-                        </div>
+                        <div class="fw-semibold text-truncate">{{ row['sender'] or 'Unknown sender' }}</div>
                         <div class="small text-muted text-nowrap">{{ row['date'] or '' }}</div>
                       </div>
                       <div class="small fw-semibold text-truncate">{{ row['subject'] or '(no subject)' }}</div>
                       <div class="small text-muted text-truncate">{{ row['snippet'] or '' }}</div>
                     </a>
-                    <div class="p-2 border-start d-flex align-items-center">
-                      <form method="post" action="{{ url_for('admin_mailbox_seen') }}">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="folder" value="{{ current_folder }}">
-                        <input type="hidden" name="uid" value="{{ row['uid'] }}">
-                        <input type="hidden" name="selected_uid" value="{{ selected_message['uid'] if selected_message else row['uid'] }}">
-                        <input type="hidden" name="q" value="{{ mail_query or '' }}">
-                        <input type="hidden" name="item_q" value="{{ item_query or '' }}">
-                        <input type="hidden" name="seen" value="{{ 'unread' if row['is_read'] else 'read' }}">
-                        <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Mark unread' if row['is_read'] else 'Mark read' }}</button>
-                      </form>
-                    </div>
                   </div>
                 </div>
               {% endfor %}
