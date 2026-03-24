@@ -256,22 +256,12 @@
                         <input type="hidden" name="uid" value="{{ selected_message['uid'] }}">
                         <input type="hidden" name="q" value="{{ mail_query or '' }}">
                         <div class="col-12">
-                          <label class="form-label small">Search items</label>
-                          <input class="form-control form-control-sm" name="item_q" value="{{ item_query or '' }}" placeholder="Search item by ID, title or description">
+                          <input class="form-control form-control-sm" name="item_q" value="{{ item_query or '' }}" placeholder="Search by Public ID, DB ID, title or description">
                         </div>
                         <div class="col-12">
-                          <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Search items</button>
+                          <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Search</button>
                         </div>
                       </form>
-
-                      {% if current_folder == unassigned_folder and selected_row %}
-                        <form method="post" action="{{ url_for('admin_mail_ticket_assign', message_id=selected_row['id']) }}" class="mb-3">
-                          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                          <label class="form-label small">Manual Public ID or DB ID</label>
-                          <input class="form-control form-control-sm mb-2" name="target_item_ref" placeholder="Public ID or DB ID" required>
-                          <button class="btn btn-sm btn-outline-primary w-100" type="submit">Assign and create thread entry</button>
-                        </form>
-                      {% endif %}
 
                       {% if item_candidates %}
                         <div class="list-group list-group-flush border rounded bg-white">
