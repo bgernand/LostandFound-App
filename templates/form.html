@@ -26,9 +26,9 @@
       <div class="text-muted small mt-1">Review mode{% if review_queue_count is defined %} · Pending: {{ review_queue_count }}{% endif %}</div>
     {% endif %}
     {% if unassigned_mail_origin %}
-        <div class="alert alert-info mt-3 mb-0">
-          <div class="fw-semibold">Inbound mail draft</div>
-        <div class="small" data-no-translate>
+      <div class="alert alert-info mt-3 mb-0">
+        <div class="fw-semibold">Inbound mail draft</div>
+        <div class="small">
           From: {{ unassigned_mail_origin['sender'] or '—' }}
           {% if unassigned_mail_origin['recipient'] %} · To: {{ unassigned_mail_origin['recipient'] }}{% endif %}
           {% if unassigned_mail_origin['subject'] %} · Subject: {{ unassigned_mail_origin['subject'] }}{% endif %}
@@ -43,7 +43,7 @@
         <ul class="mb-0">
           {% for field, msg in errors.items() %}
             <li>
-              <a href="#" class="error-link" data-field="{{ field }}">{{ tr_ui(msg) }}</a>
+              <a href="#" class="error-link" data-field="{{ field }}">{{ msg }}</a>
             </li>
           {% endfor %}
         </ul>
@@ -73,7 +73,7 @@
         <div class="col-12 col-md-8" id="titleBlock">
           <label class="form-label">What was found *</label>
           <input class="form-control {% if errors.get('title') %}is-invalid{% endif %}" name="title" id="titleInput" value="{{ item['title'] if item else '' }}">
-          {% if errors.get('title') %}<div class="invalid-feedback">{{ tr_ui(errors.get('title')) }}</div>{% endif %}
+          {% if errors.get('title') %}<div class="invalid-feedback">{{ errors.get('title') }}</div>{% endif %}
         </div>
 
         <!-- Lost-only primary title -->
@@ -81,7 +81,7 @@
           <label class="form-label">What is lost *</label>
           <input class="form-control {% if errors.get('lost_what') %}is-invalid{% endif %}" name="lost_what" id="lostWhat"
                  value="{{ item['lost_what'] if item else '' }}">
-          {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_what')) }}</div>{% endif %}
+          {% if errors.get('lost_what') %}<div class="invalid-feedback">{{ errors.get('lost_what') }}</div>{% endif %}
         </div>
 
         {% if hide_status_field %}
@@ -115,13 +115,13 @@
           <label class="form-label">Date</label>
           <input class="form-control {% if errors.get('event_date') %}is-invalid{% endif %}" type="date" name="event_date"
                  value="{{ item['event_date'] if item and item['event_date'] else '' }}">
-          {% if errors.get('event_date') %}<div class="invalid-feedback">{{ tr_ui(errors.get('event_date')) }}</div>{% endif %}
+          {% if errors.get('event_date') %}<div class="invalid-feedback">{{ errors.get('event_date') }}</div>{% endif %}
         </div>
 
         <div class="col-12" id="descBlock">
           <label class="form-label">Description <span class="text-danger">*</span></label>
           <textarea class="form-control {% if errors.get('description') %}is-invalid{% endif %}" rows="3" name="description" id="descInput">{{ item['description'] if item else '' }}</textarea>
-          {% if errors.get('description') %}<div class="invalid-feedback">{{ tr_ui(errors.get('description')) }}</div>{% endif %}
+          {% if errors.get('description') %}<div class="invalid-feedback">{{ errors.get('description') }}</div>{% endif %}
           <div id="descQualityHint"
                class="form-text mt-1"
                data-min-chars="{{ description_quality_settings['min_chars'] }}"
@@ -147,28 +147,28 @@
               <label class="form-label">Last Name *</label>
               <input class="form-control {% if errors.get('lost_last_name') %}is-invalid{% endif %}" name="lost_last_name"
                      value="{{ item['lost_last_name'] if item else '' }}">
-              {% if errors.get('lost_last_name') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_last_name')) }}</div>{% endif %}
+              {% if errors.get('lost_last_name') %}<div class="invalid-feedback">{{ errors.get('lost_last_name') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">First Name *</label>
               <input class="form-control {% if errors.get('lost_first_name') %}is-invalid{% endif %}" name="lost_first_name"
                      value="{{ item['lost_first_name'] if item else '' }}">
-              {% if errors.get('lost_first_name') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_first_name')) }}</div>{% endif %}
+              {% if errors.get('lost_first_name') %}<div class="invalid-feedback">{{ errors.get('lost_first_name') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Street *</label>
               <input class="form-control {% if errors.get('lost_street') %}is-invalid{% endif %}" name="lost_street"
                      value="{{ item['lost_street'] if item else '' }}">
-              {% if errors.get('lost_street') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_street')) }}</div>{% endif %}
+              {% if errors.get('lost_street') %}<div class="invalid-feedback">{{ errors.get('lost_street') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-3">
               <label class="form-label">Number *</label>
               <input class="form-control {% if errors.get('lost_number') %}is-invalid{% endif %}" name="lost_number"
                      value="{{ item['lost_number'] if item else '' }}">
-              {% if errors.get('lost_number') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_number')) }}</div>{% endif %}
+              {% if errors.get('lost_number') %}<div class="invalid-feedback">{{ errors.get('lost_number') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-3">
@@ -181,42 +181,42 @@
               <label class="form-label">Postcode *</label>
               <input class="form-control {% if errors.get('lost_postcode') %}is-invalid{% endif %}" name="lost_postcode"
                      value="{{ item['lost_postcode'] if item else '' }}">
-              {% if errors.get('lost_postcode') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_postcode')) }}</div>{% endif %}
+              {% if errors.get('lost_postcode') %}<div class="invalid-feedback">{{ errors.get('lost_postcode') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Town *</label>
               <input class="form-control {% if errors.get('lost_town') %}is-invalid{% endif %}" name="lost_town"
                      value="{{ item['lost_town'] if item else '' }}">
-              {% if errors.get('lost_town') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_town')) }}</div>{% endif %}
+              {% if errors.get('lost_town') %}<div class="invalid-feedback">{{ errors.get('lost_town') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-4">
               <label class="form-label">Country *</label>
               <input class="form-control {% if errors.get('lost_country') %}is-invalid{% endif %}" name="lost_country"
                      value="{{ item['lost_country'] if item else '' }}">
-              {% if errors.get('lost_country') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_country')) }}</div>{% endif %}
+              {% if errors.get('lost_country') %}<div class="invalid-feedback">{{ errors.get('lost_country') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">E-Mail address *</label>
               <input class="form-control {% if errors.get('lost_email') %}is-invalid{% endif %}" type="email" name="lost_email"
                      value="{{ item['lost_email'] if item else '' }}">
-              {% if errors.get('lost_email') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_email')) }}</div>{% endif %}
+              {% if errors.get('lost_email') %}<div class="invalid-feedback">{{ errors.get('lost_email') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">Phone number (with countrycode: +….) *</label>
               <input class="form-control {% if errors.get('lost_phone') %}is-invalid{% endif %}" name="lost_phone"
                      value="{{ item['lost_phone'] if item else '' }}">
-              {% if errors.get('lost_phone') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_phone')) }}</div>{% endif %}
+              {% if errors.get('lost_phone') %}<div class="invalid-feedback">{{ errors.get('lost_phone') }}</div>{% endif %}
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">When are you leaving Taizé</label>
               <input class="form-control {% if errors.get('lost_leaving_date') %}is-invalid{% endif %}" type="date" name="lost_leaving_date"
                      value="{{ item['lost_leaving_date'] if item and item['lost_leaving_date'] else '' }}">
-              {% if errors.get('lost_leaving_date') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_leaving_date')) }}</div>{% endif %}
+              {% if errors.get('lost_leaving_date') %}<div class="invalid-feedback">{{ errors.get('lost_leaving_date') }}</div>{% endif %}
             </div>
 
             {% if not public_submit_mode %}
@@ -230,7 +230,7 @@
                     {% endif %}
                   {% endfor %}
                 </select>
-                {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ tr_ui(errors.get('lost_contact_way')) }}</div>{% endif %}
+                {% if errors.get('lost_contact_way') %}<div class="invalid-feedback">{{ errors.get('lost_contact_way') }}</div>{% endif %}
               </div>
             {% endif %}
 
@@ -247,7 +247,7 @@
                 <label class="form-label">Price of postage</label>
                 <input class="form-control {% if errors.get('postage_price') %}is-invalid{% endif %}" name="postage_price" inputmode="decimal"
                        value="{{ item['postage_price'] if item and item['postage_price'] is not none else '' }}">
-                {% if errors.get('postage_price') %}<div class="invalid-feedback">{{ tr_ui(errors.get('postage_price')) }}</div>{% endif %}
+                {% if errors.get('postage_price') %}<div class="invalid-feedback">{{ errors.get('postage_price') }}</div>{% endif %}
               </div>
 
               <div class="col-12 col-md-4 d-flex align-items-end">
@@ -271,7 +271,7 @@
           <div class="col-12 col-md-6">
             <label class="form-label">Captcha: {{ public_captcha_question }} = ?</label>
             <input class="form-control {% if errors.get('public_captcha_answer') %}is-invalid{% endif %}" type="text" name="public_captcha_answer">
-            {% if errors.get('public_captcha_answer') %}<div class="invalid-feedback">{{ tr_ui(errors.get('public_captcha_answer')) }}</div>{% endif %}
+            {% if errors.get('public_captcha_answer') %}<div class="invalid-feedback">{{ errors.get('public_captcha_answer') }}</div>{% endif %}
           </div>
         {% endif %}
 

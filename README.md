@@ -30,7 +30,6 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Public Lost submission page (`/report/lost`) without login
 - Dedicated Lost Review Queue with mass-processing flow (`Reviewed & Next`)
 - Optional confirmation e-mail to requester after public lost submission (configurable template with preview in `Settings -> System Settings`)
-- Optional runtime UI translation via a dedicated LibreTranslate container and language selector in the navbar (`en,de,fr,es,it,nl,pl`)
 
 ## Status Behavior
 - Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `Waiting for answer`, `Answer received`, `Ready to send`, `Handed over / Sent`, `Lost forever`
@@ -107,7 +106,6 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Nginx (reverse proxy, TLS termination)
 - Certbot (Let's Encrypt renewal)
 - Docker Compose
-- LibreTranslate (dedicated internal service for UI translation)
 
 ## Project Structure
 ```text
@@ -215,7 +213,6 @@ chmod +x deploy.sh
 - `AUDIT_MAX_ROWS` (optional, default `200000`; `0` disables count-based audit cleanup)
 - `AUDIT_REDACT_ENABLED` (optional, default `true`; redacts sensitive snapshots in audit log)
 - `SETTINGS_ENCRYPTION_KEY` (optional but recommended; required to store SMTP password encrypted in DB)
-- UI translation is configured in `Settings -> System Settings -> UI Translation` and uses the internal Compose service URL `http://libretranslate:5000` by default
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.

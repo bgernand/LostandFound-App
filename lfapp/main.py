@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 import base64
-import json
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
@@ -14,8 +13,6 @@ import re
 import secrets
 import smtplib
 import time
-from urllib import error as urllib_error
-from urllib import request as urllib_request
 
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 
@@ -231,132 +228,6 @@ SAVED_SEARCH_MULTI_KEYS = {
     "index": {"kind", "status", "category"},
     "matches": {"kind", "source_status", "candidate_status", "category"},
 }
-
-UI_LANGUAGE_OPTIONS = {
-    "en": "English",
-    "de": "Deutsch",
-    "fr": "Français",
-    "es": "Español",
-    "it": "Italiano",
-    "nl": "Nederlands",
-    "pl": "Polski",
-}
-
-CORE_UI_TRANSLATIONS = {
-    "de": {
-        "Please fix the highlighted fields.": "Bitte korrigieren Sie die markierten Felder.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Vielen Dank. Ihre Verlustmeldung wurde eingereicht und wartet auf Prüfung.",
-        "Captcha answer is invalid.": "Die Captcha-Antwort ist ungültig.",
-        "Invalid captcha answer.": "Ungültige Captcha-Antwort.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "Die Adresse kann verbessert werden. Bitte übernehmen Sie den Vorschlag oder behalten Sie Ihre ursprünglichen Angaben.",
-        "Database error while saving your request. Please retry.": "Datenbankfehler beim Speichern Ihrer Meldung. Bitte erneut versuchen.",
-        "Your request was saved, but confirmation e-mail could not be sent.": "Ihre Meldung wurde gespeichert, aber die Bestätigungs-E-Mail konnte nicht versendet werden.",
-        "Description is required.": "Beschreibung ist erforderlich.",
-        "Title is required.": "Titel ist erforderlich.",
-        "Date must be in YYYY-MM-DD format.": "Das Datum muss im Format JJJJ-MM-TT sein.",
-        "Item created.": "Eintrag erstellt.",
-        "Item updated.": "Eintrag aktualisiert.",
-        "E-mail sent.": "E-Mail gesendet.",
-        "No recipient e-mail is available on this item.": "Für diesen Eintrag ist keine Empfänger-E-Mail vorhanden.",
-        "Selected mail template is not available.": "Die gewählte Mailvorlage ist nicht verfügbar.",
-        "Invalid mail template selected.": "Ungültige Mailvorlage ausgewählt.",
-        "Receipt PDF could not be generated for the e-mail attachment.": "Das Receipt-PDF konnte nicht als E-Mail-Anhang erzeugt werden.",
-        "SMTP is disabled.": "SMTP ist deaktiviert.",
-        "Two-factor authentication is required. Please set up 2FA (TOTP) to continue.": "Zwei-Faktor-Authentifizierung ist erforderlich. Bitte richten Sie 2FA (TOTP) ein, um fortzufahren.",
-    },
-    "fr": {
-        "Please fix the highlighted fields.": "Veuillez corriger les champs mis en évidence.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Merci. Votre déclaration d'objet perdu a été envoyée et attend une vérification.",
-        "Captcha answer is invalid.": "La réponse au captcha est invalide.",
-        "Invalid captcha answer.": "Réponse captcha invalide.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "L'adresse peut être améliorée. Veuillez accepter la suggestion ou conserver vos valeurs d'origine.",
-        "Database error while saving your request. Please retry.": "Erreur de base de données lors de l'enregistrement de votre demande. Veuillez réessayer.",
-        "Your request was saved, but confirmation e-mail could not be sent.": "Votre demande a été enregistrée, mais l'e-mail de confirmation n'a pas pu être envoyé.",
-        "Description is required.": "La description est obligatoire.",
-        "Title is required.": "Le titre est obligatoire.",
-        "Date must be in YYYY-MM-DD format.": "La date doit être au format AAAA-MM-JJ.",
-        "Item created.": "Entrée créée.",
-        "Item updated.": "Entrée mise à jour.",
-        "E-mail sent.": "E-mail envoyé.",
-    },
-    "es": {
-        "Please fix the highlighted fields.": "Corrija los campos marcados.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Gracias. Su solicitud de pérdida fue enviada y está pendiente de revisión.",
-        "Captcha answer is invalid.": "La respuesta del captcha no es válida.",
-        "Invalid captcha answer.": "Respuesta de captcha no válida.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "La dirección puede mejorarse. Acepte la sugerencia o conserve sus valores originales.",
-        "Description is required.": "La descripción es obligatoria.",
-        "Title is required.": "El título es obligatorio.",
-        "Date must be in YYYY-MM-DD format.": "La fecha debe tener el formato AAAA-MM-DD.",
-        "Item created.": "Elemento creado.",
-        "Item updated.": "Elemento actualizado.",
-        "E-mail sent.": "Correo enviado.",
-    },
-    "it": {
-        "Please fix the highlighted fields.": "Correggere i campi evidenziati.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Grazie. La richiesta di oggetto smarrito è stata inviata ed è in attesa di revisione.",
-        "Captcha answer is invalid.": "La risposta al captcha non è valida.",
-        "Invalid captcha answer.": "Risposta captcha non valida.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "L'indirizzo può essere migliorato. Accettare il suggerimento o mantenere i valori originali.",
-        "Description is required.": "La descrizione è obbligatoria.",
-        "Title is required.": "Il titolo è obbligatorio.",
-        "Date must be in YYYY-MM-DD format.": "La data deve essere nel formato AAAA-MM-GG.",
-        "Item created.": "Elemento creato.",
-        "Item updated.": "Elemento aggiornato.",
-        "E-mail sent.": "E-mail inviata.",
-    },
-    "nl": {
-        "Please fix the highlighted fields.": "Corrigeer de gemarkeerde velden.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Bedankt. Uw verliesmelding is ingediend en wacht op controle.",
-        "Captcha answer is invalid.": "Het captcha-antwoord is ongeldig.",
-        "Invalid captcha answer.": "Ongeldig captcha-antwoord.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "Het adres kan worden verbeterd. Accepteer het voorstel of behoud uw oorspronkelijke waarden.",
-        "Description is required.": "Beschrijving is verplicht.",
-        "Title is required.": "Titel is verplicht.",
-        "Date must be in YYYY-MM-DD format.": "De datum moet in JJJJ-MM-DD formaat zijn.",
-        "Item created.": "Item aangemaakt.",
-        "Item updated.": "Item bijgewerkt.",
-        "E-mail sent.": "E-mail verzonden.",
-    },
-    "pl": {
-        "Please fix the highlighted fields.": "Popraw zaznaczone pola.",
-        "Thank you. Your Lost Request was submitted and is pending review.": "Dziękujemy. Zgłoszenie zgubienia zostało wysłane i oczekuje na weryfikację.",
-        "Captcha answer is invalid.": "Odpowiedź captcha jest nieprawidłowa.",
-        "Invalid captcha answer.": "Nieprawidłowa odpowiedź captcha.",
-        "Address could be improved. Please accept suggestion or keep your original values.": "Adres można ulepszyć. Zaakceptuj sugestię lub zachowaj pierwotne wartości.",
-        "Description is required.": "Opis jest wymagany.",
-        "Title is required.": "Tytuł jest wymagany.",
-        "Date must be in YYYY-MM-DD format.": "Data musi mieć format RRRR-MM-DD.",
-        "Item created.": "Pozycja utworzona.",
-        "Item updated.": "Pozycja zaktualizowana.",
-        "E-mail sent.": "E-mail wysłany.",
-    },
-}
-
-CORE_UI_TRANSLATION_PATTERNS = [
-    (
-        re.compile(r"^(\d+) possible matches found\.$"),
-        {
-            "de": "{count} mögliche Treffer gefunden.",
-            "fr": "{count} correspondances possibles trouvées.",
-            "es": "Se encontraron {count} coincidencias posibles.",
-            "it": "Trovate {count} possibili corrispondenze.",
-            "nl": "{count} mogelijke overeenkomsten gevonden.",
-            "pl": "Znaleziono {count} możliwych dopasowań.",
-        },
-    ),
-    (
-        re.compile(r"^Updated (\d+) items to '(.+)'\.$"),
-        {
-            "de": "{count} Einträge auf '{status}' aktualisiert.",
-            "fr": "{count} éléments mis à jour vers '{status}'.",
-            "es": "Se actualizaron {count} elementos a '{status}'.",
-            "it": "Aggiornati {count} elementi a '{status}'.",
-            "nl": "{count} items bijgewerkt naar '{status}'.",
-            "pl": "Zaktualizowano {count} elementów do '{status}'.",
-        },
-    ),
-]
 
 
 def _parse_proxy_networks(raw: str):
@@ -773,150 +644,6 @@ def create_app(config: dict | None = None):
                 "legal_notice_text": legal_notice_text,
                 "privacy_policy_text": privacy_policy_text,
             }
-        finally:
-            if own_conn:
-                conn.close()
-
-    def get_ui_translation_settings(conn=None):
-        own_conn = False
-        if conn is None:
-            conn = get_db()
-            own_conn = True
-        try:
-            enabled_raw = get_setting(conn, "ui_translation_enabled", "0")
-            source_lang = (get_setting(conn, "ui_translation_source_lang", "en") or "en").strip().lower() or "en"
-            default_lang = (get_setting(conn, "ui_translation_default_lang", source_lang) or source_lang).strip().lower() or source_lang
-            available_raw = (get_setting(conn, "ui_translation_available_langs", "en,de,fr,es,it,nl,pl") or "").strip()
-            provider_url = (get_setting(conn, "ui_translation_provider_url", "http://libretranslate:5000") or "").strip().rstrip("/")
-            provider_api_key = (get_setting(conn, "ui_translation_provider_api_key", "") or "").strip()
-            available_langs = []
-            for token in available_raw.split(","):
-                lang_code = (token or "").strip().lower()
-                if not lang_code or lang_code not in UI_LANGUAGE_OPTIONS:
-                    continue
-                if lang_code not in available_langs:
-                    available_langs.append(lang_code)
-            if source_lang not in available_langs:
-                available_langs.insert(0, source_lang)
-            if default_lang not in available_langs:
-                default_lang = source_lang
-            return {
-                "enabled": _is_truthy(enabled_raw),
-                "source_lang": source_lang,
-                "default_lang": default_lang,
-                "available_langs": available_langs,
-                "available_labels": {code: UI_LANGUAGE_OPTIONS.get(code, code.upper()) for code in available_langs},
-                "provider_url": provider_url or "http://libretranslate:5000",
-                "provider_api_key": provider_api_key,
-            }
-        finally:
-            if own_conn:
-                conn.close()
-
-    def get_current_ui_language(conn=None):
-        settings = get_ui_translation_settings(conn)
-        selected = (session.get("ui_language") or settings["default_lang"]).strip().lower()
-        if selected not in settings["available_langs"]:
-            selected = settings["default_lang"]
-        return selected
-
-    def translate_core_ui_text(text: str, target_lang: str | None = None):
-        value = str(text or "")
-        lang = (target_lang or get_current_ui_language()).strip().lower()
-        if not value or lang == "en":
-            return value
-        exact_map = CORE_UI_TRANSLATIONS.get(lang, {})
-        if value in exact_map:
-            return exact_map[value]
-        for pattern, localized in CORE_UI_TRANSLATION_PATTERNS:
-            match = pattern.match(value)
-            if not match or lang not in localized:
-                continue
-            if len(match.groups()) == 1:
-                return localized[lang].format(count=match.group(1))
-            if len(match.groups()) == 2:
-                return localized[lang].format(count=match.group(1), status=match.group(2))
-        return value
-
-    def translate_ui_texts(texts: list[str], target_lang: str, source_lang: str | None = None, conn=None):
-        unique_texts = []
-        seen = set()
-        for text in texts:
-            value = str(text or "")
-            if not value or value in seen:
-                continue
-            seen.add(value)
-            unique_texts.append(value)
-        if not unique_texts:
-            return {}
-        settings = get_ui_translation_settings(conn)
-        effective_source = (source_lang or settings["source_lang"]).strip().lower() or settings["source_lang"]
-        effective_target = (target_lang or settings["default_lang"]).strip().lower() or settings["default_lang"]
-        if not settings["enabled"] or effective_target == effective_source:
-            return {text: text for text in unique_texts}
-        translations = {}
-        unresolved = []
-        for text in unique_texts:
-            translated = translate_core_ui_text(text, effective_target)
-            if translated != text:
-                translations[text] = translated
-            else:
-                unresolved.append(text)
-        if not unresolved:
-            return translations
-
-        own_conn = False
-        if conn is None:
-            conn = get_db()
-            own_conn = True
-        try:
-            cached_rows = conn.execute(
-                """
-                SELECT source_text, translated_text
-                FROM ui_translation_cache
-                WHERE source_lang=? AND target_lang=?
-                  AND source_text IN ({})
-                """.format(",".join("?" for _ in unresolved)),
-                [effective_source, effective_target, *unresolved],
-            ).fetchall()
-            translations.update({row["source_text"]: row["translated_text"] for row in cached_rows})
-            missing = [text for text in unresolved if text not in translations]
-            if missing:
-                provider_url = settings["provider_url"]
-                for text in missing:
-                    payload = {
-                        "q": text,
-                        "source": effective_source,
-                        "target": effective_target,
-                        "format": "text",
-                    }
-                    if settings["provider_api_key"]:
-                        payload["api_key"] = settings["provider_api_key"]
-                    req = urllib_request.Request(
-                        f"{provider_url}/translate",
-                        data=json.dumps(payload).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    translated_text = text
-                    try:
-                        with urllib_request.urlopen(req, timeout=12) as response:
-                            data = json.loads(response.read().decode("utf-8"))
-                        translated_text = str(data.get("translatedText") or text)
-                    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
-                        translated_text = text
-                    translations[text] = translated_text
-                    conn.execute(
-                        """
-                        INSERT INTO ui_translation_cache (source_lang, target_lang, source_text, translated_text, updated_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(source_lang, target_lang, source_text)
-                        DO UPDATE SET translated_text=excluded.translated_text, updated_at=excluded.updated_at
-                        """,
-                        (effective_source, effective_target, text, translated_text, now_utc()),
-                    )
-                conn.commit()
-            return translations
         finally:
             if own_conn:
                 conn.close()
@@ -1900,14 +1627,6 @@ def create_app(config: dict | None = None):
         elif not poll_result["ok"] and not poll_result["locked"]:
             app.logger.warning("Ticket mail poll failed: %s", poll_result["message"])
 
-    @app.before_request
-    def _ensure_ui_language():
-        settings = get_ui_translation_settings()
-        selected = (session.get("ui_language") or settings["default_lang"]).strip().lower()
-        if selected not in settings["available_langs"]:
-            selected = settings["default_lang"]
-        session["ui_language"] = selected
-
     @app.context_processor
     def inject_globals():
         u = current_user()
@@ -1987,8 +1706,6 @@ def create_app(config: dict | None = None):
                 can_review_items,
             ]
         )
-        ui_translation_settings = get_ui_translation_settings()
-        current_ui_language = get_current_ui_language()
         return {
             "STATUS_COLORS": STATUS_COLORS,
             "CONTACT_WAYS": CONTACT_WAYS,
@@ -2017,10 +1734,6 @@ def create_app(config: dict | None = None):
             "mailbox_total": mailbox_total,
             "mailbox_combined_count": mailbox_combined_count,
             "mailbox_folder_counts": mailbox_folder_counts,
-            "ui_translation_settings": ui_translation_settings,
-            "ui_language_options": ui_translation_settings["available_labels"],
-            "current_ui_language": current_ui_language,
-            "tr_ui": translate_core_ui_text,
             "can_manage_reminders": can_manage_reminders,
             "can_admin_access": can_admin_access,
             "can_admin_users": can_admin_users,
@@ -2042,34 +1755,6 @@ def create_app(config: dict | None = None):
             if not token or not expected or not secrets.compare_digest(token, expected):
                 abort(400)
 
-    @app.post("/ui/language")
-    def set_ui_language():
-        settings = get_ui_translation_settings()
-        language = (request.form.get("language") or "").strip().lower()
-        next_url = safe_next_url(request.form.get("next"))
-        if language in settings["available_langs"]:
-            session["ui_language"] = language
-        return redirect(next_url or request.referrer or url_for("index"))
-
-    @app.post("/api/ui-translate")
-    def api_ui_translate():
-        settings = get_ui_translation_settings()
-        target_lang = get_current_ui_language()
-        if not settings["enabled"] or target_lang == settings["source_lang"]:
-            return {"translations": {}, "target_lang": target_lang, "source_lang": settings["source_lang"]}
-        payload = request.get_json(silent=True) or {}
-        texts = payload.get("texts") if isinstance(payload, dict) else []
-        if not isinstance(texts, list):
-            texts = []
-        clean_texts = []
-        for text in texts[:400]:
-            value = str(text or "")
-            if not value or len(value) > 5000:
-                continue
-            clean_texts.append(value)
-        translations = translate_ui_texts(clean_texts, target_lang, settings["source_lang"])
-        return {"translations": translations, "target_lang": target_lang, "source_lang": settings["source_lang"]}
-
     @app.before_request
     def enforce_totp_mandatory():
         uid = session.get("user_id")
@@ -2083,8 +1768,6 @@ def create_app(config: dict | None = None):
             "account_totp",
             "account_totp_enable",
             "account_totp_disable",
-            "set_ui_language",
-            "api_ui_translate",
             "static",
         }
         if endpoint in allowed:
@@ -2230,7 +1913,6 @@ def create_app(config: dict | None = None):
             "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
             "test_imap_connection_once": test_imap_connection_once,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
-            "get_ui_translation_settings": get_ui_translation_settings,
             "render_mail_template": render_mail_template,
             "get_item_email_templates": get_item_email_templates,
             "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
@@ -2266,7 +1948,6 @@ def create_app(config: dict | None = None):
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
-            "get_ui_translation_settings": get_ui_translation_settings,
             "get_item_email_templates": get_item_email_templates,
             "validate_mail_template_variables": validate_mail_template_variables,
             "render_mail_template": render_mail_template,
@@ -2283,7 +1964,6 @@ def create_app(config: dict | None = None):
             "PUBLIC_LOST_CONFIRM_ALLOWED_VARS": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
             "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
             "MIN_PASSWORD_LENGTH": min_password_length,
-            "UI_LANGUAGE_OPTIONS": UI_LANGUAGE_OPTIONS,
         },
     )
 
