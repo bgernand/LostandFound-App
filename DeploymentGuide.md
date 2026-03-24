@@ -1,6 +1,6 @@
 # Deployment Guide (Debian/Linux)
 
-This guide deploys the app with Docker Compose, Nginx, and Certbot.
+This guide deploys the app with Docker Compose, Nginx, Certbot, and an internal LibreTranslate service for optional UI translation.
 
 Code layout note:
 - Runtime app code is in `lfapp/main.py`.
@@ -59,6 +59,9 @@ Recommended security settings:
 
 After first login as admin, configure SMTP, mail ticket workflow, item mail templates, and description-quality settings in:
 - `Settings -> System Settings`
+- Optional UI translation is configured in `Settings -> System Settings -> UI Translation`
+- Recommended internal LibreTranslate URL: `http://libretranslate:5000`
+- Supported UI languages: `en,de,fr,es,it,nl,pl`
 
 ## 3. One-Click Deploy
 ```bash
@@ -69,7 +72,7 @@ chmod +x deploy.sh
 What this does:
 - creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`)
 - validates `.env`
-- builds and starts `app`, `nginx`, and `certbot`
+- builds and starts `app`, `nginx`, `certbot`, and `libretranslate`
 
 ## 4. Initial Let's Encrypt Certificate (Optional in same script)
 ```bash
@@ -84,6 +87,7 @@ docker compose ps
 docker compose logs -f app
 docker compose logs -f nginx
 docker compose logs -f certbot
+docker compose logs -f libretranslate
 ```
 
 Functional checks after deploy:
@@ -105,6 +109,9 @@ Functional checks after deploy:
   - inbound mails without a valid reference are moved to `LostFound/Unassigned`
   - IMAP can be tested directly in the admin UI and a mailbox poll can be triggered manually
   - unassigned mails can be linked manually from the admin UI
+- If UI translation is enabled:
+  - the language selector is visible in the navbar
+  - changing the language reloads the page and translates visible UI labels at runtime
 
 If `docker compose` is unavailable on your server, use:
 ```bash

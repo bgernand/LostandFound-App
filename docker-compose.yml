@@ -1,4 +1,14 @@
 services:
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: lostfound_libretranslate
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - LT_DISABLE_FILES_TRANSLATION=true
+      - LT_LOAD_ONLY=en,de,fr,es,it,nl,pl
+    restart: unless-stopped
+
   app:
     build: .
     container_name: lostfound_app

@@ -31,6 +31,7 @@ def register_admin_routes(app, deps: dict):
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
+    get_ui_translation_settings = deps["get_ui_translation_settings"]
     get_item_email_templates = deps["get_item_email_templates"]
     validate_mail_template_variables = deps["validate_mail_template_variables"]
     render_mail_template = deps["render_mail_template"]
@@ -47,6 +48,7 @@ def register_admin_routes(app, deps: dict):
     PUBLIC_LOST_CONFIRM_ALLOWED_VARS = deps["PUBLIC_LOST_CONFIRM_ALLOWED_VARS"]
     ITEM_EMAIL_ALLOWED_VARS = deps["ITEM_EMAIL_ALLOWED_VARS"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
+    UI_LANGUAGE_OPTIONS = deps["UI_LANGUAGE_OPTIONS"]
 
     def _mail_subject_summary(subject: str):
         clean = re.sub(r"\s+", " ", (subject or "").strip())
@@ -391,6 +393,7 @@ def register_admin_routes(app, deps: dict):
         public_lost_confirm_settings=None,
         public_lost_confirm_preview_subject=None,
         public_lost_confirm_preview_body=None,
+        ui_translation_settings=None,
         legal_notice_text=None,
         privacy_policy_text=None,
         item_mail_templates=None,
@@ -405,6 +408,8 @@ def register_admin_routes(app, deps: dict):
         mail_ticket_settings = get_mail_ticket_settings(conn)
         if public_lost_confirm_settings is None:
             public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
+        if ui_translation_settings is None:
+            ui_translation_settings = get_ui_translation_settings(conn)
         if legal_notice_text is None:
             legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
         if privacy_policy_text is None:
@@ -425,6 +430,8 @@ def register_admin_routes(app, deps: dict):
             public_lost_confirm_settings=public_lost_confirm_settings,
             public_lost_confirm_preview_subject=public_lost_confirm_preview_subject,
             public_lost_confirm_preview_body=public_lost_confirm_preview_body,
+            ui_translation_settings=ui_translation_settings,
+            ui_language_option_labels=UI_LANGUAGE_OPTIONS,
             public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
             legal_notice_text=legal_notice_text,
             privacy_policy_text=privacy_policy_text,
@@ -1166,6 +1173,69 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Description quality settings updated.", "success")
+        return redirect(url_for("admin_settings"))
+
+    @app.post("/admin/settings/ui-translation")
+    @require_permission("admin.settings")
+    def admin_set_ui_translation_settings():
+        enabled = (request.form.get("ui_translation_enabled") or "") == "1"
+        source_lang = (request.form.get("ui_translation_source_lang") or "en").strip().lower()
+        default_lang = (request.form.get("ui_translation_default_lang") or source_lang).strip().lower()
+        available_langs_raw = request.form.getlist("ui_translation_available_langs")
+        provider_url = (request.form.get("ui_translation_provider_url") or "").strip().rstrip("/")
+        provider_api_key = (request.form.get("ui_translation_provider_api_key") or "").strip()
+
+        allowed_langs = [code for code in available_langs_raw if code in UI_LANGUAGE_OPTIONS]
+        if source_lang not in UI_LANGUAGE_OPTIONS:
+            flash("Source language is invalid.", "danger")
+            return redirect(url_for("admin_settings"))
+        if default_lang not in UI_LANGUAGE_OPTIONS:
+            flash("Default language is invalid.", "danger")
+            return redirect(url_for("admin_settings"))
+        if source_lang not in allowed_langs:
+            allowed_langs.insert(0, source_lang)
+        allowed_langs = list(dict.fromkeys(allowed_langs))
+        if default_lang not in allowed_langs:
+            flash("Default language must be part of the available languages.", "danger")
+            return redirect(url_for("admin_settings"))
+        if enabled and not provider_url:
+            flash("LibreTranslate URL is required when UI translation is enabled.", "danger")
+            return redirect(url_for("admin_settings"))
+
+        conn = get_db()
+        old_state = {
+            "ui_translation_enabled": get_setting(conn, "ui_translation_enabled", "0"),
+            "ui_translation_source_lang": get_setting(conn, "ui_translation_source_lang", "en"),
+            "ui_translation_default_lang": get_setting(conn, "ui_translation_default_lang", "en"),
+            "ui_translation_available_langs": get_setting(conn, "ui_translation_available_langs", "en"),
+            "ui_translation_provider_url": get_setting(conn, "ui_translation_provider_url", ""),
+            "ui_translation_provider_api_key": "***set***" if (get_setting(conn, "ui_translation_provider_api_key", "") or "").strip() else "",
+        }
+        set_setting(conn, "ui_translation_enabled", "1" if enabled else "0")
+        set_setting(conn, "ui_translation_source_lang", source_lang)
+        set_setting(conn, "ui_translation_default_lang", default_lang)
+        set_setting(conn, "ui_translation_available_langs", ",".join(allowed_langs))
+        set_setting(conn, "ui_translation_provider_url", provider_url)
+        set_setting(conn, "ui_translation_provider_api_key", provider_api_key)
+        conn.commit()
+        conn.close()
+
+        audit(
+            "ui_translation_settings",
+            "settings",
+            None,
+            f"enabled={1 if enabled else 0} source={source_lang} default={default_lang} langs={','.join(allowed_langs)}",
+            old_values=old_state,
+            new_values={
+                "ui_translation_enabled": "1" if enabled else "0",
+                "ui_translation_source_lang": source_lang,
+                "ui_translation_default_lang": default_lang,
+                "ui_translation_available_langs": ",".join(allowed_langs),
+                "ui_translation_provider_url": provider_url,
+                "ui_translation_provider_api_key": "***set***" if provider_api_key else "",
+            },
+        )
+        flash("UI translation settings updated.", "success")
         return redirect(url_for("admin_settings"))
 
     @app.post("/admin/settings/smtp")

@@ -16,7 +16,7 @@
       <div>
         <h5 class="card-title mb-1">
           {% if item['kind'] == 'lost' %}🔎 Lost Request:{% else %}📦 Found Item:{% endif %}
-          {{ item['title'] }}
+          <span data-no-translate>{{ item['title'] }}</span>
           <span class="text-muted fs-6">(Item ID: {{ item['public_id'] or "—" }})</span>
         </h5>
         <div class="text-muted small">
@@ -33,10 +33,10 @@
     <dl class="row">
       <dt class="col-sm-3">Status</dt><dd class="col-sm-9">{{ item['status'] or "—" }}</dd>
       <dt class="col-sm-3">Category</dt><dd class="col-sm-9">{{ item['category'] or "—" }}</dd>
-      <dt class="col-sm-3">Location</dt><dd class="col-sm-9">{{ item['location'] or "—" }}</dd>
+      <dt class="col-sm-3">Location</dt><dd class="col-sm-9"><span data-no-translate>{{ item['location'] or "—" }}</span></dd>
       <dt class="col-sm-3">Date</dt><dd class="col-sm-9">{{ item['event_date'] or "—" }}</dd>
-      <dt class="col-sm-3">Description</dt><dd class="col-sm-9">{{ item['description'] or "—" }}</dd>
-      <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">{{ item['lost_notes'] or "—" }}</dd>
+      <dt class="col-sm-3">Description</dt><dd class="col-sm-9"><span data-no-translate>{{ item['description'] or "—" }}</span></dd>
+      <dt class="col-sm-3">Notes</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_notes'] or "—" }}</span></dd>
     </dl>
 
     {% if item['kind'] == 'lost' %}
@@ -44,19 +44,19 @@
       <h6>Lost details (internal)</h6>
       {% if can_view_pii %}
         <dl class="row">
-          <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9">{{ item['lost_last_name'] or "—" }}</dd>
-          <dt class="col-sm-3">First Name</dt><dd class="col-sm-9">{{ item['lost_first_name'] or "—" }}</dd>
-          <dt class="col-sm-3">Street</dt><dd class="col-sm-9">{{ item['lost_street'] or "—" }}</dd>
-          <dt class="col-sm-3">Number</dt><dd class="col-sm-9">{{ item['lost_number'] or "—" }}</dd>
-          <dt class="col-sm-3">Additional (floor, etc.)</dt><dd class="col-sm-9">{{ item['lost_additional'] or "—" }}</dd>
-          <dt class="col-sm-3">Postcode</dt><dd class="col-sm-9">{{ item['lost_postcode'] or "—" }}</dd>
-          <dt class="col-sm-3">Town</dt><dd class="col-sm-9">{{ item['lost_town'] or "—" }}</dd>
-          <dt class="col-sm-3">Country</dt><dd class="col-sm-9">{{ item['lost_country'] or "—" }}</dd>
+          <dt class="col-sm-3">Last Name</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_last_name'] or "—" }}</span></dd>
+          <dt class="col-sm-3">First Name</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_first_name'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Street</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_street'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Number</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_number'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Additional (floor, etc.)</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_additional'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Postcode</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_postcode'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Town</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_town'] or "—" }}</span></dd>
+          <dt class="col-sm-3">Country</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_country'] or "—" }}</span></dd>
 
           <dt class="col-sm-3">E-Mail</dt>
           <dd class="col-sm-9">
             {% if item['lost_email'] %}
-              <a href="mailto:{{ item['lost_email'] }}">{{ item['lost_email'] }}</a>
+              <a href="mailto:{{ item['lost_email'] }}" data-no-translate>{{ item['lost_email'] }}</a>
             {% else %}
               —
             {% endif %}
@@ -64,7 +64,7 @@
           <dt class="col-sm-3">Phone</dt>
           <dd class="col-sm-9">
             {% if item['lost_phone'] %}
-              <a href="tel:{{ item['lost_phone']|replace(' ', '') }}">{{ item['lost_phone'] }}</a>
+              <a href="tel:{{ item['lost_phone']|replace(' ', '') }}" data-no-translate>{{ item['lost_phone'] }}</a>
             {% else %}
               —
             {% endif %}
@@ -72,7 +72,7 @@
 
           <dt class="col-sm-3">Leaving Taizé</dt><dd class="col-sm-9">{{ item['lost_leaving_date'] or "—" }}</dd>
           <dt class="col-sm-3">Way of contact</dt><dd class="col-sm-9">{{ item['lost_contact_way'] or "—" }}</dd>
-          <dt class="col-sm-3">Name of Groupleader</dt><dd class="col-sm-9">{{ item['lost_group_leader'] or "—" }}</dd>
+          <dt class="col-sm-3">Name of Groupleader</dt><dd class="col-sm-9"><span data-no-translate>{{ item['lost_group_leader'] or "—" }}</span></dd>
 
           <dt class="col-sm-3">Postage</dt>
           <dd class="col-sm-9">
@@ -299,7 +299,7 @@ Best regards{% endif %}</textarea>
                   {% if mail['receipt_filename'] %} · Attachment: {{ mail['receipt_filename'] }}{% endif %}
                   {% if mail['mailbox_folder'] %} · Folder: {{ mail['mailbox_folder'] }}{% endif %}
                 </div>
-                <pre class="small bg-light border rounded p-2 mb-0" style="white-space: pre-wrap;">{{ mail['body'] }}</pre>
+                <pre class="small bg-light border rounded p-2 mb-0" style="white-space: pre-wrap;" data-no-translate>{{ mail['body'] }}</pre>
               </div>
               <div class="small text-muted text-end text-nowrap">
                 {{ mail['username'] or "system" }}<br>

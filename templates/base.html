@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ current_ui_language or 'en' }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <title>Lost & Found</title>
   <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
   {% block extra_head %}{% endblock %}
@@ -23,8 +24,27 @@
 
     <div class="collapse navbar-collapse" id="navMain">
       <div class="ms-auto d-flex flex-column flex-lg-row gap-2 align-items-lg-center mt-3 mt-lg-0">
+        {% if ui_translation_settings['enabled'] and ui_language_options %}
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              Language: {{ ui_language_options.get(current_ui_language, (current_ui_language or 'en')|upper) }}
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              {% for lang_code, lang_label in ui_language_options.items() %}
+                <li>
+                  <form method="post" action="{{ url_for('set_ui_language') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="language" value="{{ lang_code }}">
+                    <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                    <button class="dropdown-item{% if current_ui_language == lang_code %} active{% endif %}" type="submit">{{ lang_label }}</button>
+                  </form>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
         {% if user %}
-          <span class="text-white-50 small">👤 {{ user['username'] }} ({{ user['role'] }})</span>
+          <span class="text-white-50 small" data-no-translate>👤 {{ user['username'] }} ({{ user['role'] }})</span>
           {% if can_create_lost %}
             <a class="btn btn-sm btn-danger" href="{{ url_for('new_lost_item') }}">+ New Lost</a>
           {% endif %}
@@ -83,7 +103,7 @@
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, msg in messages %}
-        <div class="alert alert-{{category}} mb-2" style="word-break: break-word;">{{ msg }}</div>
+        <div class="alert alert-{{category}} mb-2" style="word-break: break-word;">{{ tr_ui(msg) }}</div>
       {% endfor %}
     {% endif %}
   {% endwith %}
@@ -103,6 +123,125 @@
 </footer>
 
 <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+{% if ui_translation_settings['enabled'] and current_ui_language != ui_translation_settings['source_lang'] %}
+<script>
+  (function () {
+    var csrfToken = document.querySelector('meta[name="csrf-token"]');
+    var config = {
+      source: {{ ui_translation_settings['source_lang']|tojson }},
+      target: {{ current_ui_language|tojson }}
+    };
+    if (!csrfToken || !config.target || config.target === config.source) {
+      return;
+    }
+
+    var ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "PRE", "CODE"]);
+    var textNodes = [];
+    var attrNodes = [];
+    var texts = [];
+    var seen = new Set();
+
+    function shouldSkipElement(el) {
+      return !el || ignoredTags.has(el.tagName) || !!el.closest("[data-no-translate]");
+    }
+
+    function addText(value, sink) {
+      var normalized = String(value || "");
+      if (!normalized.trim()) {
+        return;
+      }
+      if (/^[\d\s.,:;()[\]{}\-+/\\|]+$/.test(normalized.trim())) {
+        return;
+      }
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        texts.push(normalized);
+      }
+      sink.push(normalized);
+    }
+
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        var parent = node.parentElement;
+        if (!parent || shouldSkipElement(parent)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (!String(node.nodeValue || "").trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    var node;
+    while ((node = walker.nextNode())) {
+      textNodes.push({ node: node, original: String(node.nodeValue || "") });
+      addText(node.nodeValue, []);
+    }
+
+    document.querySelectorAll("input[placeholder], textarea[placeholder], [title], [aria-label], input[type='submit'], input[type='button'], input[type='reset'], option").forEach(function (el) {
+      if (shouldSkipElement(el)) {
+        return;
+      }
+      ["placeholder", "title", "aria-label", "value"].forEach(function (attr) {
+        if (!el.hasAttribute(attr)) {
+          return;
+        }
+        var value = el.getAttribute(attr);
+        if (!String(value || "").trim()) {
+          return;
+        }
+        attrNodes.push({ element: el, attr: attr, original: value });
+        addText(value, []);
+      });
+      if (el.tagName === "OPTION") {
+        attrNodes.push({ element: el, attr: "textContent", original: el.textContent });
+        addText(el.textContent, []);
+      }
+    });
+
+    if (!texts.length) {
+      return;
+    }
+
+    fetch({{ url_for('api_ui_translate')|tojson }}, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken.getAttribute("content")
+      },
+      body: JSON.stringify({ texts: texts })
+    })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (payload) {
+        if (!payload || !payload.translations) {
+          return;
+        }
+        textNodes.forEach(function (entry) {
+          var translated = payload.translations[entry.original];
+          if (!translated || translated === entry.original) {
+            return;
+          }
+          var leading = entry.original.match(/^\s*/)[0];
+          var trailing = entry.original.match(/\s*$/)[0];
+          entry.node.nodeValue = leading + translated + trailing;
+        });
+        attrNodes.forEach(function (entry) {
+          var translated = payload.translations[entry.original];
+          if (!translated || translated === entry.original) {
+            return;
+          }
+          if (entry.attr === "textContent") {
+            entry.element.textContent = translated;
+          } else {
+            entry.element.setAttribute(entry.attr, translated);
+          }
+        });
+      })
+      .catch(function () {});
+  })();
+</script>
+{% endif %}
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

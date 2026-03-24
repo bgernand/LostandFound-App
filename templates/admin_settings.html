@@ -149,6 +149,68 @@ If you received this message, SMTP settings are working.</textarea>
   <div class="col-12">
     <div class="card">
       <div class="card-body">
+        <h5 class="card-title">UI Translation</h5>
+        <form method="post" action="{{ url_for('admin_set_ui_translation_settings') }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="uiTranslationEnabled" name="ui_translation_enabled" value="1"
+                   {% if ui_translation_settings['enabled'] %}checked{% endif %}>
+            <label class="form-check-label small" for="uiTranslationEnabled">Enable UI translation via LibreTranslate</label>
+          </div>
+          <div class="row g-2">
+            <div class="col-12 col-lg-4">
+              <label class="form-label small">Source language</label>
+              <select class="form-select form-select-sm" name="ui_translation_source_lang">
+                {% for lang_code, lang_label in ui_language_option_labels.items() %}
+                  <option value="{{ lang_code }}" {% if ui_translation_settings['source_lang'] == lang_code %}selected{% endif %}>{{ lang_label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-lg-4">
+              <label class="form-label small">Default language</label>
+              <select class="form-select form-select-sm" name="ui_translation_default_lang">
+                {% for lang_code, lang_label in ui_language_option_labels.items() %}
+                  <option value="{{ lang_code }}" {% if ui_translation_settings['default_lang'] == lang_code %}selected{% endif %}>{{ lang_label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-lg-4">
+              <label class="form-label small">LibreTranslate URL</label>
+              <input class="form-control form-control-sm" name="ui_translation_provider_url" value="{{ ui_translation_settings['provider_url'] }}" placeholder="http://libretranslate:5000">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Available languages</label>
+              <div class="row row-cols-2 row-cols-md-3 row-cols-xl-5 g-2">
+                {% for lang_code, lang_label in ui_language_option_labels.items() %}
+                  <div class="col">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" id="uiLang{{ lang_code }}" name="ui_translation_available_langs" value="{{ lang_code }}"
+                             {% if lang_code in ui_translation_settings['available_langs'] %}checked{% endif %}>
+                      <label class="form-check-label small" for="uiLang{{ lang_code }}">{{ lang_label }}</label>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small">Provider API key (optional)</label>
+              <input class="form-control form-control-sm" name="ui_translation_provider_api_key" value="{{ ui_translation_settings['provider_api_key'] }}" placeholder="Leave empty for local container">
+            </div>
+          </div>
+          <div class="small text-muted mt-3">
+            Recommended for this deployment: <code>http://libretranslate:5000</code>. UI translation is applied at runtime and cached in the application database.
+          </div>
+          <div class="d-grid d-md-flex justify-content-md-end mt-3">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Save translation settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
         <h5 class="card-title">Mail Ticket Workflow</h5>
         <form method="post" action="{{ url_for('admin_set_mail_ticket_settings') }}">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">

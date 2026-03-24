@@ -671,6 +671,18 @@ def init_db(db_path: str):
         """
     )
     conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ui_translation_cache (
+            source_lang TEXT NOT NULL,
+            target_lang TEXT NOT NULL,
+            source_text TEXT NOT NULL,
+            translated_text TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (source_lang, target_lang, source_text)
+        )
+        """
+    )
+    conn.execute(
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('totp_mandatory', '0', ?)",
         (now_utc(),),
     )
@@ -768,6 +780,12 @@ def init_db(db_path: str):
         ("mail_ticket_last_poll_at", ""),
         ("mail_ticket_last_poll_ok", ""),
         ("mail_ticket_last_poll_message", ""),
+        ("ui_translation_enabled", "0"),
+        ("ui_translation_source_lang", "en"),
+        ("ui_translation_default_lang", "en"),
+        ("ui_translation_available_langs", "en,de,fr,es,it,nl,pl"),
+        ("ui_translation_provider_url", "http://libretranslate:5000"),
+        ("ui_translation_provider_api_key", ""),
     ]:
         conn.execute(
             "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
