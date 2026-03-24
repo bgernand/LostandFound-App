@@ -1989,6 +1989,10 @@ def create_app(config: dict | None = None):
         )
         ui_translation_settings = get_ui_translation_settings()
         current_ui_language = get_current_ui_language()
+        current_ui_language_label = ui_translation_settings["available_labels"].get(
+            current_ui_language,
+            (current_ui_language or "en").upper(),
+        )
         return {
             "STATUS_COLORS": STATUS_COLORS,
             "CONTACT_WAYS": CONTACT_WAYS,
@@ -2020,6 +2024,7 @@ def create_app(config: dict | None = None):
             "ui_translation_settings": ui_translation_settings,
             "ui_language_options": ui_translation_settings["available_labels"],
             "current_ui_language": current_ui_language,
+            "current_ui_language_label": current_ui_language_label,
             "tr_ui": translate_core_ui_text,
             "can_manage_reminders": can_manage_reminders,
             "can_admin_access": can_admin_access,

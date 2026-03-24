@@ -27,7 +27,7 @@
         {% if ui_translation_settings['enabled'] and ui_language_options %}
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-              Language: {{ ui_language_options.get(current_ui_language, (current_ui_language or 'en')|upper) }}
+              Language: {{ current_ui_language_label }}
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
               {% for lang_code, lang_label in ui_language_options.items() %}
