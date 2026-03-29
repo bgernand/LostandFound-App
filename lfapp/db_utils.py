@@ -32,6 +32,7 @@ RBAC_PERMISSION_KEYS = [
     "items.public_regenerate",
     "items.delete",
     "items.send_email",
+    "items.webmail",
     "reminders.manage",
 ]
 
@@ -52,6 +53,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.photo_delete",
         "items.public_manage",
         "items.send_email",
+        "items.webmail",
         "reminders.manage",
     },
     "found-staff": {
@@ -65,6 +67,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.edit_lost",
         "items.view_pii",
         "items.send_email",
+        "items.webmail",
     },
     "viewer": {
         "items.view_lost",

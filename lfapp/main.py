@@ -1914,7 +1914,12 @@ def create_app(config: dict | None = None):
         can_regenerate_public = bool(has_permission("items.public_regenerate", user=u))
         can_delete_item = bool(has_permission("items.delete", user=u))
         can_send_email = bool(has_permission("items.send_email", user=u))
-        can_access_webmail = bool(roundcube_enabled and can_send_email and can_view_pii)
+        can_access_webmail = bool(
+            roundcube_enabled
+            and has_permission("items.webmail", user=u)
+            and can_send_email
+            and can_view_pii
+        )
         mailbox_unassigned_count = 0
         mailbox_unread_total = 0
         mailbox_read_total = 0

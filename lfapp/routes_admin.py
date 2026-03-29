@@ -296,6 +296,7 @@ def register_admin_routes(app, deps: dict):
         "items.public_regenerate": "Regenerate public link",
         "items.delete": "Delete items",
         "items.send_email": "Send mail",
+        "items.webmail": "Access Webmail",
         "reminders.manage": "Manage reminders",
     }
     permission_groups = [
@@ -336,6 +337,7 @@ def register_admin_routes(app, deps: dict):
                 "items.photo_delete",
                 "items.delete",
                 "items.send_email",
+                "items.webmail",
                 "reminders.manage",
             ],
         },
@@ -499,7 +501,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("roundcube_login"))
 
     @app.get("/webmail-login")
-    @require_permission("items.send_email", "items.view_pii")
+    @require_permission("items.webmail", "items.send_email", "items.view_pii")
     def roundcube_login():
         if not roundcube_enabled:
             abort(404)
