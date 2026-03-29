@@ -67,6 +67,11 @@ class lostandfound_bridge extends rcube_plugin
         }
 
         $bridge = $_SESSION['lostandfound_bridge'] ?? [];
+        $runtime = $this->fetch_runtime_config();
+        if (!empty($runtime['imap']['unassigned_folder'])) {
+            $bridge['unassigned_folder'] = trim((string) $runtime['imap']['unassigned_folder']) ?: ($bridge['unassigned_folder'] ?? 'ToDo');
+            $_SESSION['lostandfound_bridge'] = $bridge;
+        }
         $rcmail->output->set_env('laf_bridge', [
             'enabled' => !empty($bridge),
             'unassigned_folder' => trim((string) ($bridge['unassigned_folder'] ?? 'ToDo')) ?: 'ToDo',
@@ -81,8 +86,37 @@ class lostandfound_bridge extends rcube_plugin
 
     private function fetch_sso_config(string $token): array
     {
+        [$response, $status] = $this->http_get(
+            '/api/roundcube/sso-config?token=' . rawurlencode($token)
+        );
+
+        if (!$response || $status >= 400) {
+            $this->render_error('Lost & Found denied the Roundcube SSO request.');
+        }
+
+        $decoded = json_decode($response, true);
+        if (!is_array($decoded)) {
+            $this->render_error('Lost & Found returned invalid JSON for Roundcube SSO.');
+        }
+
+        return $decoded;
+    }
+
+    private function fetch_runtime_config(): array
+    {
+        [$response, $status] = $this->http_get('/api/roundcube/runtime-config');
+        if (!$response || $status >= 400) {
+            return [];
+        }
+
+        $decoded = json_decode($response, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function http_get(string $path): array
+    {
         $rcmail = rcmail::get_instance();
-        $url = rtrim((string) $rcmail->config->get('lostandfound_bridge_app_url'), '/') . '/api/roundcube/sso-config?token=' . rawurlencode($token);
+        $url = rtrim((string) $rcmail->config->get('lostandfound_bridge_app_url'), '/') . $path;
         $secret = (string) $rcmail->config->get('lostandfound_bridge_shared_secret');
         $headers = [
             'X-Roundcube-Secret: ' . $secret,
@@ -98,32 +132,24 @@ class lostandfound_bridge extends rcube_plugin
             $response = curl_exec($ch);
             $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
-        } else {
-            $context = stream_context_create([
-                'http' => [
-                    'method' => 'GET',
-                    'header' => implode("\r\n", $headers) . "\r\n",
-                    'timeout' => 15,
-                    'ignore_errors' => true,
-                ],
-            ]);
-            $response = @file_get_contents($url, false, $context);
-            $status = 0;
-            if (!empty($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
-                $status = (int) $m[1];
-            }
+            return [$response, $status];
         }
 
-        if (!$response || $status >= 400) {
-            $this->render_error('Lost & Found denied the Roundcube SSO request.');
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers) . "\r\n",
+                'timeout' => 15,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $response = @file_get_contents($url, false, $context);
+        $status = 0;
+        if (!empty($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
+            $status = (int) $m[1];
         }
 
-        $decoded = json_decode($response, true);
-        if (!is_array($decoded)) {
-            $this->render_error('Lost & Found returned invalid JSON for Roundcube SSO.');
-        }
-
-        return $decoded;
+        return [$response, $status];
     }
 
     private function render_error(string $message): void

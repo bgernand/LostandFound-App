@@ -545,6 +545,27 @@ def register_admin_routes(app, deps: dict):
         finally:
             conn.close()
 
+    @app.get("/api/roundcube/runtime-config")
+    def roundcube_runtime_config():
+        if not roundcube_enabled:
+            abort(404)
+        supplied_secret = (request.headers.get("X-Roundcube-Secret") or "").strip()
+        if not supplied_secret or supplied_secret != (roundcube_shared_secret or ""):
+            abort(403)
+        conn = get_db()
+        try:
+            ticket_cfg = get_mail_ticket_settings(conn)
+            return jsonify(
+                {
+                    "ok": True,
+                    "imap": {
+                        "unassigned_folder": ticket_cfg["imap_unassigned_folder"],
+                    },
+                }
+            )
+        finally:
+            conn.close()
+
     def _resolve_roundcube_message(folder_name: str, uid: str):
         folder_name = (folder_name or "").strip()
         uid = (uid or "").strip()
