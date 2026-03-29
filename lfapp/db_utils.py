@@ -1144,37 +1144,73 @@ def init_db(db_path: str):
     conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
     conn.execute("UPDATE items SET status='Waiting for answer' WHERE status='In contact'")
 
-    conn.execute(
-        """
-        INSERT INTO item_mail_messages (
-            item_id, actor_user_id, direction, sender, recipient, subject, body,
-            ticket_ref, template_name, receipt_filename, created_at
+    try:
+        conn.execute(
+            """
+            INSERT INTO item_mail_messages (
+                item_id, actor_user_id, direction, sender, recipient, subject, body,
+                ticket_ref, template_name, receipt_filename, created_at
+            )
+            SELECT
+                item_id,
+                actor_user_id,
+                'outgoing',
+                NULL,
+                recipient,
+                subject,
+                body,
+                NULL,
+                template_name,
+                receipt_filename,
+                created_at
+            FROM sent_item_emails s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM item_mail_messages m
+                WHERE m.direction='outgoing'
+                  AND m.item_id=s.item_id
+                  AND coalesce(m.recipient,'')=coalesce(s.recipient,'')
+                  AND m.subject=s.subject
+                  AND m.body=s.body
+                  AND m.created_at=s.created_at
+            )
+            """
         )
-        SELECT
-            item_id,
-            actor_user_id,
-            'outgoing',
-            NULL,
-            recipient,
-            subject,
-            body,
-            NULL,
-            template_name,
-            receipt_filename,
-            created_at
-        FROM sent_item_emails s
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM item_mail_messages m
-            WHERE m.direction='outgoing'
-              AND m.item_id=s.item_id
-              AND coalesce(m.recipient,'')=coalesce(s.recipient,'')
-              AND m.subject=s.subject
-              AND m.body=s.body
-              AND m.created_at=s.created_at
+    except sqlite3.OperationalError as exc:
+        if "items__old" not in str(exc):
+            raise
+        _rebuild_item_dependent_tables(conn)
+        conn.execute(
+            """
+            INSERT INTO item_mail_messages (
+                item_id, actor_user_id, direction, sender, recipient, subject, body,
+                ticket_ref, template_name, receipt_filename, created_at
+            )
+            SELECT
+                item_id,
+                actor_user_id,
+                'outgoing',
+                NULL,
+                recipient,
+                subject,
+                body,
+                NULL,
+                template_name,
+                receipt_filename,
+                created_at
+            FROM sent_item_emails s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM item_mail_messages m
+                WHERE m.direction='outgoing'
+                  AND m.item_id=s.item_id
+                  AND coalesce(m.recipient,'')=coalesce(s.recipient,'')
+                  AND m.subject=s.subject
+                  AND m.body=s.body
+                  AND m.created_at=s.created_at
+            )
+            """
         )
-        """
-    )
 
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
