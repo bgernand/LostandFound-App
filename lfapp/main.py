@@ -2272,7 +2272,14 @@ def create_app(config: dict | None = None):
     return app
 
 
-app = create_app()
+try:
+    app = create_app()
+except RuntimeError as exc:
+    if "INITIAL_ADMIN_PASSWORD environment variable is required for first startup." not in str(exc):
+        raise
+    # Allow importing `create_app` in environments that intentionally pass
+    # first-start credentials via config overrides instead of process env.
+    app = None
 
 
 if __name__ == "__main__":
