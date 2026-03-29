@@ -229,6 +229,7 @@ The script requests a certificate only if none exists yet for the configured `DO
 - `ROUNDCUBE_SHARED_SECRET` (optional but recommended; shared secret between app and Roundcube plugin)
 - `ROUNDCUBE_DES_KEY` (optional; dedicated Roundcube secret, otherwise derived from `ROUNDCUBE_SHARED_SECRET`)
 - `ROUNDCUBE_EXTERNAL_URL` (optional, default `/webmail/`)
+- `ROUNDCUBE_SSO_MAX_AGE_SECONDS` (optional, default `900`; validity of the one-time Roundcube SSO token)
 
 ## Background Worker
 - Scheduled maintenance and mail polling run in the separate `worker` container, not inside web requests.

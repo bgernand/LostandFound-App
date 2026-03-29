@@ -393,20 +393,25 @@ def create_app(config: dict | None = None):
         return bool(settings_encryption_key)
 
     roundcube_token_serializer = URLSafeTimedSerializer(app.secret_key, salt="roundcube-sso")
+    roundcube_sso_max_age_seconds = int(
+        app.config.get("ROUNDCUBE_SSO_MAX_AGE_SECONDS", os.environ.get("ROUNDCUBE_SSO_MAX_AGE_SECONDS", "900"))
+    )
+    roundcube_sso_max_age_seconds = max(60, min(3600, roundcube_sso_max_age_seconds))
 
     def issue_roundcube_sso_token(user_obj):
         if not user_obj:
             return None
         payload = {
-            "uid": int(user_obj["id"]),
+            "user_id": int(user_obj["id"]),
             "username": str(user_obj["username"]),
             "role": str(user_obj["role"]),
         }
         return roundcube_token_serializer.dumps(payload)
 
-    def verify_roundcube_sso_token(token: str, max_age: int = 120):
+    def verify_roundcube_sso_token(token: str, max_age: int | None = None):
+        effective_max_age = roundcube_sso_max_age_seconds if max_age is None else max_age
         try:
-            return roundcube_token_serializer.loads(token, max_age=max_age)
+            return roundcube_token_serializer.loads(token, max_age=effective_max_age)
         except (BadSignature, BadTimeSignature):
             return None
 
