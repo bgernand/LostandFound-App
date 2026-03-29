@@ -36,9 +36,9 @@
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('dashboard') }}">Dashboard</a>
             <a class="btn btn-sm btn-outline-light" href="{{ url_for('matches_overview') }}">Possible Matches</a>
           {% endif %}
-          {% if can_access_mailbox %}
-            <a class="btn btn-sm btn-outline-light position-relative" href="{{ url_for('admin_mail_ticket_unassigned') }}">
-              Mailbox
+          {% if can_access_webmail %}
+            <a class="btn btn-sm btn-outline-light position-relative" href="{{ url_for('roundcube_login') }}">
+              Webmail
               {% if mailbox_combined_count %}
                 <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">
                   {{ mailbox_combined_count }}

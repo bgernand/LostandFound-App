@@ -1098,7 +1098,7 @@ def init_db(db_path: str):
         ("imap_inbox_folder", "INBOX"),
         ("imap_sent_folder", "LostFound/Send"),
         ("imap_processed_folder", "LostFound/Proceeded"),
-        ("imap_unassigned_folder", "LostFound/Unassigned"),
+        ("imap_unassigned_folder", "ToDo"),
         ("mail_ticket_poll_interval_seconds", "300"),
         ("mail_ticket_poll_lock_until", "0"),
         ("mail_ticket_poll_lock_token", ""),

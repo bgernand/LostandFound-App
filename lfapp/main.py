@@ -14,7 +14,8 @@ from email.parser import BytesParser
 from email.utils import make_msgid
 from pathlib import Path
 
-from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from itsdangerous import BadSignature, BadTimeSignature, URLSafeTimedSerializer
 
 from lfapp.auth_core import build_auth_helpers
 from lfapp.category_utils import (
@@ -329,11 +330,18 @@ def create_app(config: dict | None = None):
     imap_inbox_folder_default = str(app.config.get("IMAP_INBOX_FOLDER", "INBOX")).strip() or "INBOX"
     imap_sent_folder_default = str(app.config.get("IMAP_SENT_FOLDER", "LostFound/Send")).strip() or "LostFound/Send"
     imap_processed_folder_default = str(app.config.get("IMAP_PROCESSED_FOLDER", "LostFound/Proceeded")).strip() or "LostFound/Proceeded"
-    imap_unassigned_folder_default = str(app.config.get("IMAP_UNASSIGNED_FOLDER", "LostFound/Unassigned")).strip() or "LostFound/Unassigned"
+    imap_unassigned_folder_default = str(app.config.get("IMAP_UNASSIGNED_FOLDER", "ToDo")).strip() or "ToDo"
     mail_ticket_poll_interval_default = int(app.config.get("MAIL_TICKET_POLL_INTERVAL_SECONDS", "300"))
     settings_encryption_key = str(
         app.config.get("SETTINGS_ENCRYPTION_KEY", os.environ.get("SETTINGS_ENCRYPTION_KEY", ""))
     ).strip()
+    roundcube_enabled = _is_truthy(app.config.get("ROUNDCUBE_ENABLED", os.environ.get("ROUNDCUBE_ENABLED", "false")))
+    roundcube_shared_secret = str(
+        app.config.get("ROUNDCUBE_SHARED_SECRET", os.environ.get("ROUNDCUBE_SHARED_SECRET", settings_encryption_key or app.secret_key))
+    ).strip()
+    roundcube_external_url = str(
+        app.config.get("ROUNDCUBE_EXTERNAL_URL", os.environ.get("ROUNDCUBE_EXTERNAL_URL", "/webmail/"))
+    ).strip() or "/webmail/"
     description_min_chars_default = int(app.config.get("DESCRIPTION_MIN_CHARS", "10"))
     description_min_words_default = int(app.config.get("DESCRIPTION_MIN_WORDS", "3"))
     description_score_threshold_default = int(
@@ -383,6 +391,24 @@ def create_app(config: dict | None = None):
 
     def settings_encryption_ready() -> bool:
         return bool(settings_encryption_key)
+
+    roundcube_token_serializer = URLSafeTimedSerializer(app.secret_key, salt="roundcube-sso")
+
+    def issue_roundcube_sso_token(user_obj):
+        if not user_obj:
+            return None
+        payload = {
+            "uid": int(user_obj["id"]),
+            "username": str(user_obj["username"]),
+            "role": str(user_obj["role"]),
+        }
+        return roundcube_token_serializer.dumps(payload)
+
+    def verify_roundcube_sso_token(token: str, max_age: int = 120):
+        try:
+            return roundcube_token_serializer.loads(token, max_age=max_age)
+        except (BadSignature, BadTimeSignature):
+            return None
 
     def get_db():
         return db_get_db(db_path)
@@ -529,7 +555,7 @@ def create_app(config: dict | None = None):
             inbox_folder = (get_setting(conn, "imap_inbox_folder", imap_inbox_folder_default) or "").strip() or "INBOX"
             sent_folder = (get_setting(conn, "imap_sent_folder", imap_sent_folder_default) or "").strip() or "LostFound/Send"
             processed_folder = (get_setting(conn, "imap_processed_folder", imap_processed_folder_default) or "").strip() or "LostFound/Proceeded"
-            unassigned_folder = (get_setting(conn, "imap_unassigned_folder", imap_unassigned_folder_default) or "").strip() or "LostFound/Unassigned"
+            unassigned_folder = (get_setting(conn, "imap_unassigned_folder", imap_unassigned_folder_default) or "").strip() or "ToDo"
             poll_interval_raw = get_setting(conn, "mail_ticket_poll_interval_seconds", str(mail_ticket_poll_interval_default))
             last_poll_at = (get_setting(conn, "mail_ticket_last_poll_at", "") or "").strip()
             last_poll_ok = (get_setting(conn, "mail_ticket_last_poll_ok", "") or "").strip()
@@ -1619,13 +1645,13 @@ def create_app(config: dict | None = None):
         can_regenerate_public = bool(has_permission("items.public_regenerate", user=u))
         can_delete_item = bool(has_permission("items.delete", user=u))
         can_send_email = bool(has_permission("items.send_email", user=u))
-        can_access_mailbox = bool(can_send_email and can_view_pii)
+        can_access_webmail = bool(roundcube_enabled and can_send_email and can_view_pii)
         mailbox_unassigned_count = 0
         mailbox_unread_total = 0
         mailbox_read_total = 0
         mailbox_total = 0
         mailbox_folder_counts = {}
-        if can_access_mailbox:
+        if can_access_webmail:
             conn = get_db()
             try:
                 row = conn.execute(
@@ -1700,13 +1726,15 @@ def create_app(config: dict | None = None):
             "can_regenerate_public": can_regenerate_public,
             "can_delete_item": can_delete_item,
             "can_send_email": can_send_email,
-            "can_access_mailbox": can_access_mailbox,
+            "can_access_webmail": can_access_webmail,
             "mailbox_unassigned_count": mailbox_unassigned_count,
             "mailbox_unread_total": mailbox_unread_total,
             "mailbox_read_total": mailbox_read_total,
             "mailbox_total": mailbox_total,
             "mailbox_combined_count": mailbox_combined_count,
             "mailbox_folder_counts": mailbox_folder_counts,
+            "roundcube_enabled": roundcube_enabled,
+            "roundcube_external_url": roundcube_external_url,
             "can_manage_reminders": can_manage_reminders,
             "can_admin_access": can_admin_access,
             "can_admin_users": can_admin_users,
@@ -1890,6 +1918,12 @@ def create_app(config: dict | None = None):
             "get_item_email_templates": get_item_email_templates,
             "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
             "get_description_quality_result": get_description_quality_result,
+            "issue_roundcube_sso_token": issue_roundcube_sso_token,
+            "verify_roundcube_sso_token": verify_roundcube_sso_token,
+            "roundcube_enabled": roundcube_enabled,
+            "roundcube_shared_secret": roundcube_shared_secret,
+            "roundcube_external_url": roundcube_external_url,
+            "jsonify": jsonify,
         },
     )
 
@@ -1937,6 +1971,12 @@ def create_app(config: dict | None = None):
             "PUBLIC_LOST_CONFIRM_ALLOWED_VARS": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
             "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
             "MIN_PASSWORD_LENGTH": min_password_length,
+            "issue_roundcube_sso_token": issue_roundcube_sso_token,
+            "verify_roundcube_sso_token": verify_roundcube_sso_token,
+            "roundcube_enabled": roundcube_enabled,
+            "roundcube_shared_secret": roundcube_shared_secret,
+            "roundcube_external_url": roundcube_external_url,
+            "jsonify": jsonify,
         },
     )
 

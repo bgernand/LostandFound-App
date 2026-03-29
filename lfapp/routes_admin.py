@@ -2,7 +2,7 @@ import re
 import sqlite3
 from email.utils import getaddresses, parseaddr
 
-from flask import abort, flash, redirect, render_template, request, session, url_for
+from flask import abort, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import generate_password_hash
 
 
@@ -21,13 +21,15 @@ def register_admin_routes(app, deps: dict):
     send_smtp_mail = deps["send_smtp_mail"]
     poll_ticket_mailbox_once = deps["poll_ticket_mailbox_once"]
     test_imap_connection_once = deps["test_imap_connection_once"]
-    list_imap_mailboxes = deps["list_imap_mailboxes"]
-    get_imap_mailbox_counts = deps["get_imap_mailbox_counts"]
-    fetch_imap_mailbox_messages = deps["fetch_imap_mailbox_messages"]
     fetch_imap_message_detail = deps["fetch_imap_message_detail"]
     delete_imap_message = deps["delete_imap_message"]
     set_imap_message_seen = deps["set_imap_message_seen"]
     move_imap_message = deps["move_imap_message"]
+    issue_roundcube_sso_token = deps["issue_roundcube_sso_token"]
+    verify_roundcube_sso_token = deps["verify_roundcube_sso_token"]
+    roundcube_enabled = deps["roundcube_enabled"]
+    roundcube_shared_secret = deps["roundcube_shared_secret"]
+    roundcube_external_url = deps["roundcube_external_url"]
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
@@ -484,55 +486,128 @@ def register_admin_routes(app, deps: dict):
     @app.get("/admin/mail-ticket/unassigned")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_unassigned():
-        cfg = get_mail_ticket_settings()
-        folders = list_imap_mailboxes() if cfg["enabled"] else []
-        mailbox_counts = get_imap_mailbox_counts() if cfg["enabled"] else {}
-        folder_counts = mailbox_counts.get("folders", {}) if cfg["enabled"] else {}
-        default_folder = cfg["imap_unassigned_folder"] or "LostFound/Unassigned"
-        if default_folder and default_folder not in folders:
-            folders.append(default_folder)
-        if folders:
-            folders = sorted(set(folders), key=lambda name: (0 if name == default_folder else 1, str(name).lower()))
-        folder = (request.args.get("folder") or "").strip() or default_folder
-        if folders and folder not in folders:
-            folder = default_folder if default_folder in folders else folders[0]
-        selected_uid_raw = (request.args.get("uid") or "").strip()
-        mail_query = (request.args.get("q") or "").strip()
-        item_query = (request.args.get("item_q") or "").strip()
-        compose_action = (request.args.get("compose_action") or "").strip().lower()
-        if compose_action not in {"reply", "reply_all", "forward"}:
-            compose_action = ""
+        if not roundcube_enabled:
+            abort(404)
+        return redirect(url_for("roundcube_login"))
 
-        mailbox_messages = fetch_imap_mailbox_messages(folder, limit=80) if cfg["enabled"] and folders else []
-        if mail_query:
-            q_norm = mail_query.lower()
-            mailbox_messages = [
-                msg for msg in mailbox_messages
-                if q_norm in (msg["sender"] or "").lower()
-                or q_norm in (msg["subject"] or "").lower()
-                or q_norm in (msg["snippet"] or "").lower()
-            ]
+    @app.get("/webmail-login")
+    @require_permission("items.send_email", "items.view_pii")
+    def roundcube_login():
+        if not roundcube_enabled:
+            abort(404)
+        token = issue_roundcube_sso_token(current_user())
+        target = roundcube_external_url.rstrip("/") or "/webmail"
+        return redirect(f"{target}/?_task=mail&_action=plugin.lostandfound_bridge.login&_laf_token={token}")
 
-        selected_summary = None
-        if mailbox_messages:
-            if selected_uid_raw:
-                selected_summary = next((msg for msg in mailbox_messages if str(msg["uid"]) == selected_uid_raw), None)
-            if not selected_summary:
-                selected_summary = mailbox_messages[0]
-
-        selected_message = fetch_imap_message_detail(folder, selected_summary["uid"]) if selected_summary else None
+    @app.post("/api/roundcube/sso-config")
+    def roundcube_sso_config():
+        if not roundcube_enabled:
+            abort(404)
+        supplied_secret = (request.headers.get("X-Roundcube-Secret") or "").strip()
+        if not supplied_secret or supplied_secret != (roundcube_shared_secret or ""):
+            abort(403)
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get("token") or "").strip()
+        token_payload = verify_roundcube_sso_token(token)
+        if not token_payload:
+            abort(403)
         conn = get_db()
-        selected_row = _find_unassigned_row(conn, selected_message) if selected_message and folder == default_folder else None
-        linked_item, detected_ticket_ref = _find_item_by_ticket_ref(conn, selected_message) if selected_message else (None, None)
-        item_candidates = []
-        if selected_message:
-            search_term = item_query
-            if not search_term and selected_row:
-                search_term = (selected_row["ticket_ref_guess"] or "").strip()
-            if not search_term:
-                search_term = detected_ticket_ref.removeprefix("LFT-") if detected_ticket_ref else ""
-            if not search_term:
-                search_term = _mail_subject_summary(selected_message["subject"] or "")
+        try:
+            ticket_cfg = get_mail_ticket_settings(conn)
+            return jsonify(
+                {
+                    "ok": True,
+                    "app_user": {
+                        "id": token_payload.get("user_id"),
+                        "username": token_payload.get("username"),
+                        "role": token_payload.get("role"),
+                    },
+                    "imap": {
+                        "host": ticket_cfg["imap_host"],
+                        "port": ticket_cfg["imap_port"],
+                        "username": ticket_cfg["imap_username"],
+                        "password": ticket_cfg["imap_password"],
+                        "use_ssl": ticket_cfg["imap_use_ssl"],
+                        "unassigned_folder": ticket_cfg["imap_unassigned_folder"],
+                    },
+                }
+            )
+        finally:
+            conn.close()
+
+    def _resolve_roundcube_message(folder_name: str, uid: str):
+        folder_name = (folder_name or "").strip()
+        uid = (uid or "").strip()
+        if not folder_name or not uid:
+            return None, None, None, None
+        selected_message = fetch_imap_message_detail(folder_name, uid)
+        if not selected_message:
+            return None, None, None, None
+        conn = get_db()
+        try:
+            unassigned_id = _upsert_unassigned_row(conn, selected_message, folder_name)
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT id, sender, recipient, subject, body, message_id, in_reply_to,
+                       references_raw, ticket_ref_guess, mailbox_folder, received_at, created_at
+                FROM mail_unassigned_messages
+                WHERE id=?
+                LIMIT 1
+                """,
+                (unassigned_id,),
+            ).fetchone()
+            linked_item, detected_ticket_ref = _find_item_by_ticket_ref(conn, selected_message)
+        finally:
+            conn.close()
+        return selected_message, row, linked_item, detected_ticket_ref
+
+    @app.get("/roundcube/bridge/start-create/<kind>")
+    @require_permission("items.send_email", "items.view_pii")
+    def roundcube_bridge_start_create(kind: str):
+        if not roundcube_enabled:
+            abort(404)
+        if kind not in {"lost", "found"}:
+            abort(404)
+        if kind == "lost" and not has_permission("items.create_lost", user=current_user()):
+            abort(403)
+        if kind == "found" and not has_permission("items.create_found", user=current_user()):
+            abort(403)
+        folder = (request.args.get("folder") or "").strip()
+        uid = (request.args.get("uid") or "").strip()
+        selected_message, row, _linked_item, _detected_ticket_ref = _resolve_roundcube_message(folder, uid)
+        if not selected_message or not row:
+            abort(404)
+        session["unassigned_mail_item_draft"] = {
+            "kind": kind,
+            "message_id": int(row["id"]),
+            "draft": _build_unassigned_mail_item_draft(row, kind),
+            "meta": {
+                "message_id": int(row["id"]),
+                "sender": row["sender"],
+                "recipient": row["recipient"],
+                "subject": row["subject"],
+                "received_at": row["received_at"] or row["created_at"],
+            },
+        }
+        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
+
+    @app.get("/roundcube/bridge/assign")
+    @require_permission("items.send_email", "items.view_pii")
+    def roundcube_bridge_assign():
+        if not roundcube_enabled:
+            abort(404)
+        folder = (request.args.get("folder") or "").strip()
+        uid = (request.args.get("uid") or "").strip()
+        item_query = (request.args.get("item_q") or "").strip()
+        selected_message, row, linked_item, detected_ticket_ref = _resolve_roundcube_message(folder, uid)
+        if not selected_message or not row:
+            abort(404)
+        search_term = item_query or (row["ticket_ref_guess"] or "").strip() or (detected_ticket_ref.removeprefix("LFT-") if detected_ticket_ref else "") or _mail_subject_summary(selected_message["subject"] or "")
+        conn = get_db()
+        try:
+            item_candidates = []
             if search_term:
                 like = f"%{search_term[:80]}%"
                 item_candidates = conn.execute(
@@ -548,42 +623,109 @@ def register_admin_routes(app, deps: dict):
                     """,
                     (search_term, search_term, like, like),
                 ).fetchall()
-        smtp_cfg = get_smtp_settings(conn)
-        conn.close()
-        compose_presets = {
-            "reply": {"to": "", "cc": "", "subject": "", "body": ""},
-            "reply_all": {"to": "", "cc": "", "subject": "", "body": ""},
-            "forward": {"to": "", "cc": "", "subject": "", "body": ""},
-        }
-        if selected_message:
-            for action_key in compose_presets.keys():
-                compose_presets[action_key] = _compose_defaults(selected_message, action_key, smtp_cfg["from"])
+        finally:
+            conn.close()
         return render_template(
-            "admin_mail_unassigned.html",
+            "roundcube_assign.html",
             user=current_user(),
-            folders=folders,
-            folder_counts=folder_counts,
-            current_folder=folder,
-            rows=mailbox_messages,
-            selected_row=selected_row,
+            selected_row=row,
             selected_message=selected_message,
-            mail_query=mail_query,
-            item_query=item_query,
-            item_candidates=item_candidates,
             linked_item=linked_item,
             detected_ticket_ref=detected_ticket_ref,
-            compose_action=compose_action,
-            compose_presets=compose_presets,
-            smtp_enabled=smtp_cfg["enabled"],
-            smtp_from=smtp_cfg["from"],
-            unassigned_folder=default_folder,
-            mailbox_totals=mailbox_counts if cfg["enabled"] else {"unread_total": 0, "read_total": 0, "total": 0},
+            item_candidates=item_candidates,
+            item_query=item_query,
+            folder=folder,
+            uid=uid,
         )
+
+    @app.post("/roundcube/bridge/assign")
+    @require_permission("items.send_email", "items.view_pii")
+    def roundcube_bridge_assign_submit():
+        if not roundcube_enabled:
+            abort(404)
+        folder = (request.form.get("folder") or "").strip()
+        uid = (request.form.get("uid") or "").strip()
+        target_ref = (request.form.get("target_item_ref") or "").strip()
+        if not folder or not uid or not target_ref:
+            flash("Folder, message and target item are required.", "danger")
+            return redirect(url_for("roundcube_bridge_assign", folder=folder or None, uid=uid or None))
+        selected_message, row, _linked_item, _detected_ticket_ref = _resolve_roundcube_message(folder, uid)
+        if not selected_message or not row:
+            abort(404)
+
+        conn = get_db()
+        try:
+            item = conn.execute(
+                """
+                SELECT id, public_id
+                FROM items
+                WHERE upper(public_id)=upper(?) OR CAST(id AS TEXT)=?
+                LIMIT 1
+                """,
+                (target_ref, target_ref),
+            ).fetchone()
+            if not item:
+                flash("Target item not found.", "danger")
+                return redirect(url_for("roundcube_bridge_assign", folder=folder, uid=uid, item_q=target_ref))
+            ticket_ref = build_ticket_reference(item)
+            conn.execute(
+                """
+                INSERT INTO item_mail_messages (
+                    item_id, actor_user_id, direction, sender, recipient, subject, body,
+                    ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                    mailbox_folder, created_at
+                )
+                VALUES (?, ?, 'incoming', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                """,
+                (
+                    int(item["id"]),
+                    current_user()["id"] if current_user() else None,
+                    row["sender"],
+                    row["recipient"],
+                    row["subject"],
+                    row["body"],
+                    ticket_ref,
+                    row["message_id"],
+                    row["in_reply_to"],
+                    row["mailbox_folder"],
+                    now_utc(),
+                ),
+            )
+            conn.execute(
+                "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+                (now_utc(), int(item["id"])),
+            )
+            conn.execute(
+                "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
+                (now_utc(), int(item["id"])),
+            )
+            conn.execute(
+                """
+                UPDATE mail_unassigned_messages
+                SET assigned_item_id=?, assigned_by_user_id=?, assigned_at=?
+                WHERE id=?
+                """,
+                (int(item["id"]), current_user()["id"] if current_user() else None, now_utc(), int(row["id"])),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        audit(
+            "roundcube_assign_item",
+            "item",
+            int(item["id"]),
+            f"mail_unassigned_id={row['id']} ticket_ref={ticket_ref}",
+            meta={"mail_unassigned_id": int(row["id"]), "ticket_ref": ticket_ref},
+        )
+        flash(f"Mail linked to item {item['public_id'] or item['id']}.", "success")
+        return redirect(url_for("detail", item_id=int(item["id"])))
 
     @app.post("/mailbox/unassigned/<int:message_id>/assign")
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/assign")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_assign(message_id: int):
+        if roundcube_enabled:
+            abort(404)
         target_ref = (request.form.get("target_item_ref") or "").strip()
         if not target_ref:
             flash("Target item reference is required.", "danger")
@@ -672,6 +814,8 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/mail-ticket/mailbox/send")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_send():
+        if roundcube_enabled:
+            abort(404)
         folder = (request.form.get("folder") or "").strip()
         uid = (request.form.get("uid") or "").strip()
         to_raw = (request.form.get("to") or "").strip()
@@ -771,6 +915,8 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/mail-ticket/mailbox/delete")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_delete():
+        if roundcube_enabled:
+            abort(404)
         folder = (request.form.get("folder") or "").strip()
         uid = (request.form.get("uid") or "").strip()
         if not folder or not uid:
@@ -781,7 +927,7 @@ def register_admin_routes(app, deps: dict):
         if not ok:
             flash(f"Delete failed: {msg}", "danger")
             return redirect(url_for("admin_mail_ticket_unassigned", folder=folder, uid=uid))
-        if selected_message and folder == (get_mail_ticket_settings()["imap_unassigned_folder"] or "LostFound/Unassigned"):
+        if selected_message and folder == (get_mail_ticket_settings()["imap_unassigned_folder"] or "ToDo"):
             conn = get_db()
             row = _find_unassigned_row(conn, selected_message)
             if row:
@@ -796,6 +942,8 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/mail-ticket/mailbox/seen")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_seen():
+        if roundcube_enabled:
+            abort(404)
         folder = (request.form.get("folder") or "").strip()
         uid = (request.form.get("uid") or "").strip()
         selected_uid = (request.form.get("selected_uid") or uid).strip()
@@ -821,6 +969,8 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/mail-ticket/mailbox/move")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mailbox_move():
+        if roundcube_enabled:
+            abort(404)
         source_folder = (request.form.get("source_folder") or "").strip()
         target_folder = (request.form.get("target_folder") or "").strip()
         uid = (request.form.get("uid") or "").strip()
@@ -838,7 +988,7 @@ def register_admin_routes(app, deps: dict):
             conn = get_db()
             try:
                 ticket_cfg = get_mail_ticket_settings(conn)
-                unassigned_folder = (ticket_cfg["imap_unassigned_folder"] or "LostFound/Unassigned").strip() or "LostFound/Unassigned"
+                unassigned_folder = (ticket_cfg["imap_unassigned_folder"] or "ToDo").strip() or "ToDo"
                 unassigned_row = _find_unassigned_row(conn, selected_message)
                 if target_folder == unassigned_folder:
                     _upsert_unassigned_row(conn, selected_message, unassigned_folder)
@@ -863,6 +1013,8 @@ def register_admin_routes(app, deps: dict):
     @app.post("/admin/mail-ticket/unassigned/<int:message_id>/start-create/<kind>")
     @require_permission("items.send_email", "items.view_pii")
     def admin_mail_ticket_start_create(message_id: int, kind: str):
+        if roundcube_enabled:
+            abort(404)
         if kind not in {"lost", "found"}:
             abort(404)
         if kind == "lost" and not has_permission("items.create_lost", user=current_user()):
@@ -1293,7 +1445,7 @@ def register_admin_routes(app, deps: dict):
         imap_inbox_folder = (request.form.get("imap_inbox_folder") or "").strip() or "INBOX"
         imap_sent_folder = (request.form.get("imap_sent_folder") or "").strip() or "LostFound/Send"
         imap_processed_folder = (request.form.get("imap_processed_folder") or "").strip() or "LostFound/Proceeded"
-        imap_unassigned_folder = (request.form.get("imap_unassigned_folder") or "").strip() or "LostFound/Unassigned"
+        imap_unassigned_folder = (request.form.get("imap_unassigned_folder") or "").strip() or "ToDo"
         poll_interval_raw = (request.form.get("mail_ticket_poll_interval_seconds") or "").strip()
 
         try:

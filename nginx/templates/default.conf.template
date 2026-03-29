@@ -2,18 +2,20 @@ upstream lostfound_app {
   server app:8000;
 }
 
+upstream lostfound_roundcube {
+  server roundcube:80;
+}
+
 server {
   listen 80;
   server_name ${DOMAIN};
 
   client_max_body_size 20m;
 
-  # ACME challenge must be reachable via HTTP
   location /.well-known/acme-challenge/ {
     root /var/www/certbot;
   }
 
-  # Everything else -> redirect to HTTPS
   location / {
     return 301 https://$host$request_uri;
   }
@@ -30,16 +32,24 @@ server {
   add_header Referrer-Policy "strict-origin-when-cross-origin" always;
   add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'" always;
 
-  # IMPORTANT:
-  # We always point Nginx to a "dummy" certificate path.
-  # After Certbot successfully issues a real LE certificate, you replace these
-  # dummy files with symlinks to /etc/letsencrypt/live/${DOMAIN}/...
   ssl_certificate     /etc/nginx/ssl-dummy/${DOMAIN}/fullchain.pem;
   ssl_certificate_key /etc/nginx/ssl-dummy/${DOMAIN}/privkey.pem;
 
   ssl_session_cache shared:SSL:10m;
   ssl_session_timeout 10m;
   ssl_protocols TLSv1.2 TLSv1.3;
+
+  location = /webmail {
+    return 301 /webmail/;
+  }
+
+  location /webmail/ {
+    proxy_pass http://lostfound_roundcube/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
 
   location / {
     proxy_pass http://lostfound_app;

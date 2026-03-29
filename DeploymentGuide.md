@@ -59,8 +59,12 @@ Recommended security settings:
 - `AUDIT_MAX_ROWS=200000` (daily cap by row count; set `0` to disable)
 - `AUDIT_REDACT_ENABLED=true`
 - `SETTINGS_ENCRYPTION_KEY=<long-random-secret>` (required for encrypted SMTP password storage)
+- `ROUNDCUBE_ENABLED=true` (to show the Webmail menu entry and enable SSO to Roundcube)
+- `ROUNDCUBE_SHARED_SECRET=<long-random-secret>`
+- `ROUNDCUBE_DES_KEY=<long-random-secret>` (optional but recommended)
+- `ROUNDCUBE_EXTERNAL_URL=/webmail/`
 
-After first login as admin, configure SMTP, mail ticket workflow, item mail templates, and description-quality settings in:
+After first login as admin, configure SMTP, mail ticket workflow, item mail templates, description-quality settings, and Roundcube bridge access in:
 - `Settings -> System Settings`
 
 ## 3. One-Click Deploy
@@ -72,7 +76,7 @@ chmod +x deploy.sh
 What this does:
 - creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`)
 - validates `.env`
-- builds and starts `app`, `worker`, `nginx`, and `certbot`
+- builds and starts `app`, `worker`, `nginx`, `roundcube`, and `certbot`
 
 ## 4. Initial Let's Encrypt Certificate (Optional in same script)
 ```bash
@@ -106,9 +110,9 @@ Functional checks after deploy:
   - sending a Lost Request mail adds a `[LFT-<public_id>]` reference
   - item status changes to `Waiting for answer`
   - incoming replies are imported into the item thread and move status to `Answer received`
-  - inbound mails without a valid reference are moved to `LostFound/Unassigned`
+  - inbound mails without a valid reference are moved to `ToDo`
   - IMAP can be tested directly in the admin UI and a mailbox poll can be triggered manually
-  - unassigned mails can be linked manually from the admin UI
+  - Webmail is handled in Roundcube and supports the Lost & Found bridge actions `Create Lost`, `Create Found`, and `Assign to Existing Item`
 
 If `docker compose` is unavailable on your server, use:
 ```bash
@@ -170,7 +174,7 @@ Run one maintenance cycle manually:
 docker compose exec worker python -m lfapp.cli run-maintenance
 ```
 
-Run one mailbox poll manually:
+Run one mail poll manually:
 ```bash
 docker compose exec worker python -m lfapp.cli run-mail-poll
 ```

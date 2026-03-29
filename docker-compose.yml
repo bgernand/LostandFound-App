@@ -36,6 +36,9 @@ services:
       - PUBLIC_LOST_CAPTCHA_ENABLED=${PUBLIC_LOST_CAPTCHA_ENABLED:-false}
       - ITEM_RETENTION_MONTHS=${ITEM_RETENTION_MONTHS:-12}
       - AUDIT_REDACT_ENABLED=${AUDIT_REDACT_ENABLED:-true}
+      - ROUNDCUBE_ENABLED=${ROUNDCUBE_ENABLED:-false}
+      - ROUNDCUBE_SHARED_SECRET=${ROUNDCUBE_SHARED_SECRET:-}
+      - ROUNDCUBE_EXTERNAL_URL=${ROUNDCUBE_EXTERNAL_URL:-/webmail/}
       - DATA_DIR=/app/data
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -81,6 +84,9 @@ services:
       - PUBLIC_LOST_CAPTCHA_ENABLED=${PUBLIC_LOST_CAPTCHA_ENABLED:-false}
       - ITEM_RETENTION_MONTHS=${ITEM_RETENTION_MONTHS:-12}
       - AUDIT_REDACT_ENABLED=${AUDIT_REDACT_ENABLED:-true}
+      - ROUNDCUBE_ENABLED=${ROUNDCUBE_ENABLED:-false}
+      - ROUNDCUBE_SHARED_SECRET=${ROUNDCUBE_SHARED_SECRET:-}
+      - ROUNDCUBE_EXTERNAL_URL=${ROUNDCUBE_EXTERNAL_URL:-/webmail/}
       - DATA_DIR=/app/data
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -95,15 +101,32 @@ services:
       - no-new-privileges:true
     depends_on:
       - app
+      - roundcube
     ports:
       - "80:80"
       - "443:443"
     environment:
       - DOMAIN=${DOMAIN}
+      - ROUNDCUBE_ENABLED=${ROUNDCUBE_ENABLED:-false}
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./certbot/www:/var/www/certbot:ro
       - ./certbot/conf:/etc/letsencrypt:rw
+    restart: unless-stopped
+
+  roundcube:
+    build: ./roundcube
+    container_name: lostfound_roundcube
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - app
+    environment:
+      - ROUNDCUBE_SHARED_SECRET=${ROUNDCUBE_SHARED_SECRET:-}
+      - ROUNDCUBE_DES_KEY=${ROUNDCUBE_DES_KEY:-}
+      - LAF_APP_INTERNAL_URL=http://app:8000
+    volumes:
+      - ./roundcube/data:/var/roundcube/db
     restart: unless-stopped
 
   certbot:
@@ -120,4 +143,3 @@ services:
          sleep 12h;
        done"
     restart: unless-stopped
-

@@ -25,7 +25,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Admin controls for TOTP mandatory mode and per-user 2FA reset
 - Manual SMTP e-mail sending from Lost Request detail view to requester address
 - Mail composer popup with admin-managed templates, variable rendering, and optional receipt PDF attachment
-- Ticket-style mail thread per item with outbound/inbound history, reference tagging, optional IMAP polling, and mailbox filing
+- Ticket-style mail thread per item with outbound/inbound history, reference tagging, optional IMAP polling, and Roundcube filing
 - Description quality validation with live form feedback and admin-managed blacklist extension
 - Public Lost submission page (`/report/lost`) without login
 - Dedicated Lost Review Queue with mass-processing flow (`Reviewed & Next`)
@@ -72,6 +72,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 
 ## Mail Ticket Workflow
 - The workflow is configured in `Settings -> System Settings -> Mail Ticket Workflow`.
+- The built-in mailbox UI was removed. Webmail access now runs through Roundcube under `/webmail/`.
 - Outgoing Lost Request mails are tagged with a reference in the subject using the schema `[LFT-<public_id>]`.
 - When ticket workflow is enabled:
   - sending a mail sets the item status to `Waiting for answer`
@@ -79,8 +80,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
   - received replies set the item status to `Answer received`
   - outgoing messages are appended to the IMAP sent folder (default `LostFound/Send`)
   - processed incoming messages are moved to the IMAP processed folder (default `LostFound/Proceeded`)
-  - incoming messages without a valid ticket reference are moved to the IMAP unassigned folder (default `LostFound/Unassigned`)
-  - unassigned messages can be reviewed and manually linked in `Settings -> Mail Ticket Workflow -> Unassigned mail`
+  - incoming messages without a valid ticket reference are moved to the IMAP unassigned folder (default `ToDo`)
+  - unassigned messages are handled in Roundcube with Lost & Found bridge actions: `Create Lost`, `Create Found`, `Assign to Existing Item`
 - The item detail page shows the complete mail thread (incoming and outgoing).
 
 ## Public Lost Submission + Review
@@ -222,9 +223,13 @@ This starts `app`, `worker`, `nginx`, and `certbot`.
 - `AUDIT_MAX_ROWS` (optional, default `200000`; `0` disables count-based audit cleanup)
 - `AUDIT_REDACT_ENABLED` (optional, default `true`; redacts sensitive snapshots in audit log)
 - `SETTINGS_ENCRYPTION_KEY` (optional but recommended; required to store SMTP password encrypted in DB)
+- `ROUNDCUBE_ENABLED` (optional, default `false`; enables the Roundcube webmail bridge and menu entry)
+- `ROUNDCUBE_SHARED_SECRET` (optional but recommended; shared secret between app and Roundcube plugin)
+- `ROUNDCUBE_DES_KEY` (optional; dedicated Roundcube secret, otherwise derived from `ROUNDCUBE_SHARED_SECRET`)
+- `ROUNDCUBE_EXTERNAL_URL` (optional, default `/webmail/`)
 
 ## Background Worker
-- Scheduled maintenance and mailbox polling run in the separate `worker` container, not inside web requests.
+- Scheduled maintenance and mail polling run in the separate `worker` container, not inside web requests.
 - Available CLI commands:
 ```bash
 python -m lfapp.cli run-maintenance
@@ -255,6 +260,7 @@ ruff check lfapp tests app.py
 - Session uses browser-session cookies plus an app-side absolute max age (`SESSION_MAX_AGE_SECONDS`, default 8h).
 - Optional SMTP integration allows sending manual update e-mails from Lost Request detail pages; configure in `Settings -> System Settings`.
 - Mail ticket workflow and IMAP polling are configured in `Settings -> System Settings`, not in `.env`.
+- Roundcube can be enabled via `.env` and uses the mailbox settings stored in `Settings -> System Settings -> Mail`.
 - Item mail templates are managed in `Settings -> System Settings` and support variables such as `{{ item_id }}`, `{{ title }}`, `{{ status }}`, `{{ full_name }}`, `{{ receipt_no }}`, and `{{ public_url }}`.
 - Item mail templates also support `{{ ticket_ref }}` when mail ticket workflow is enabled.
 - The mail composer popup on Lost Request detail pages can optionally attach the current Receipt PDF to the outgoing mail.

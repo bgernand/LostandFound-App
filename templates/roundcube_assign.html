@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">Assign Mail to Item</h1>
+    <div class="text-muted small">Roundcube bridge for messages from the ToDo folder.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('roundcube_login') }}">Back to Webmail</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <div class="small text-muted mb-2">Current message</div>
+        <div class="small"><strong>From:</strong> {{ selected_message['sender'] or '—' }}</div>
+        <div class="small"><strong>To:</strong> {{ selected_message['recipient'] or '—' }}</div>
+        <div class="small"><strong>Subject:</strong> {{ selected_message['subject'] or '—' }}</div>
+        {% if detected_ticket_ref %}<div class="small"><strong>Detected reference:</strong> {{ detected_ticket_ref }}</div>{% endif %}
+        {% if linked_item %}
+          <div class="alert alert-info small mt-3 mb-0">
+            This mail already matches item <a href="{{ url_for('detail', item_id=linked_item['id']) }}">{{ linked_item['public_id'] or linked_item['id'] }}</a>.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card mt-3">
+      <div class="card-body">
+        <div class="small text-muted mb-2">Create new item</div>
+        <div class="d-flex gap-2">
+          {% if has_permission('items.create_lost') %}
+            <a class="btn btn-sm btn-danger" href="{{ url_for('roundcube_bridge_start_create', kind='lost', folder=folder, uid=uid) }}">Create Lost</a>
+          {% endif %}
+          {% if has_permission('items.create_found') %}
+            <a class="btn btn-sm btn-success" href="{{ url_for('roundcube_bridge_start_create', kind='found', folder=folder, uid=uid) }}">Create Found</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <div class="small text-muted mb-2">Assign to existing item</div>
+        <form method="get" action="{{ url_for('roundcube_bridge_assign') }}" class="row g-2 mb-3">
+          <input type="hidden" name="folder" value="{{ folder }}">
+          <input type="hidden" name="uid" value="{{ uid }}">
+          <div class="col-12">
+            <input class="form-control form-control-sm" name="item_q" value="{{ item_query }}" placeholder="Search by Public ID, DB ID, title or description">
+          </div>
+          <div class="col-12 d-flex justify-content-end">
+            <button class="btn btn-sm btn-outline-primary" type="submit">Search items</button>
+          </div>
+        </form>
+
+        {% if item_candidates %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in item_candidates %}
+                  <tr>
+                    <td>{{ item['public_id'] or item['id'] }}</td>
+                    <td>{{ item['kind'] }}</td>
+                    <td>{{ item['title'] or '—' }}</td>
+                    <td>{{ item['status'] }}</td>
+                    <td class="text-end">
+                      <form method="post" action="{{ url_for('roundcube_bridge_assign_submit') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="folder" value="{{ folder }}">
+                        <input type="hidden" name="uid" value="{{ uid }}">
+                        <input type="hidden" name="target_item_ref" value="{{ item['public_id'] or item['id'] }}">
+                        <button class="btn btn-sm btn-outline-success" type="submit">Assign</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted small">No item suggestions available.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
