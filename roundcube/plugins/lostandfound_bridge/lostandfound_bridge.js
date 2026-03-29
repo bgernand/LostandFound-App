@@ -29,22 +29,63 @@
     return baseUrl + "?folder=" + encodeURIComponent(folder) + "&uid=" + encodeURIComponent(uid);
   }
 
-  function addBackButton() {
+  function addSidebarBackLink() {
     if (!window.rcmail || !rcmail.env || !rcmail.env.laf_bridge || !rcmail.env.laf_bridge.dashboard_url) {
       return;
     }
 
-    var toolbar = qs("#toolbar-menu") || qs("#toolbar") || qs(".toolbar");
-    if (!toolbar || qs("#laf-back-button")) {
+    var taskMenu =
+      qs("#taskmenu") ||
+      qs(".task-menu") ||
+      qs("nav[aria-label='Tasks']") ||
+      qs(".listing.iconized");
+    if (!taskMenu || qs("#task-lostfound")) {
       return;
     }
 
-    var btn = document.createElement("a");
-    btn.id = "laf-back-button";
-    btn.href = rcmail.env.laf_bridge.dashboard_url;
-    btn.textContent = "Back to Lost & Found";
-    btn.style.cssText = "display:inline-flex;align-items:center;padding:6px 10px;margin-right:8px;border:1px solid #adb5bd;border-radius:6px;text-decoration:none;color:#212529;background:#fff;font-size:13px;font-weight:600;";
-    toolbar.insertBefore(btn, toolbar.firstChild);
+    var reference =
+      qs("#task-mail") ||
+      qs("#task-addressbook") ||
+      taskMenu.querySelector("a, li");
+
+    var entry = reference ? reference.cloneNode(true) : document.createElement("a");
+    if (entry.tagName && entry.tagName.toLowerCase() !== "li") {
+      entry.id = "task-lostfound";
+      entry.href = rcmail.env.laf_bridge.dashboard_url;
+      entry.textContent = "Lost & Found";
+      entry.className = entry.className || "";
+      entry.removeAttribute("aria-current");
+      entry.style.removeProperty("display");
+      entry.style.removeProperty("visibility");
+    } else {
+      entry.id = "task-lostfound";
+      var link = entry.querySelector("a") || document.createElement("a");
+      link.href = rcmail.env.laf_bridge.dashboard_url;
+      link.textContent = "Lost & Found";
+      if (!link.parentNode) {
+        entry.appendChild(link);
+      }
+      entry.classList.remove("selected", "active");
+      entry.querySelectorAll("[aria-current='page']").forEach(function (node) {
+        node.removeAttribute("aria-current");
+      });
+    }
+
+    entry.querySelectorAll && entry.querySelectorAll("span, .inner").forEach(function (node) {
+      if (node.children.length === 0) {
+        node.textContent = "Lost & Found";
+      }
+    });
+
+    if (reference && reference.parentNode === taskMenu) {
+      reference.parentNode.insertBefore(entry, reference.nextSibling);
+      return;
+    }
+    if (reference && reference.parentNode && reference.parentNode.parentNode === taskMenu) {
+      reference.parentNode.parentNode.insertBefore(entry, reference.parentNode.nextSibling);
+      return;
+    }
+    taskMenu.appendChild(entry);
   }
 
   function addButtonRow() {
@@ -93,7 +134,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    addBackButton();
+    addSidebarBackLink();
     addButtonRow();
   });
 })();

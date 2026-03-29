@@ -10,7 +10,7 @@ class lostandfound_bridge extends rcube_plugin
         $this->add_hook('authenticate', [$this, 'authenticate']);
         $this->add_hook('render_page', [$this, 'render_page']);
         $this->add_hook('logout_after', [$this, 'logout_after']);
-        if ($rcmail->task === 'mail') {
+        if (in_array($rcmail->task, ['mail', 'addressbook', 'settings'], true)) {
             $this->include_script('lostandfound_bridge.js');
         }
     }
@@ -88,10 +88,6 @@ class lostandfound_bridge extends rcube_plugin
     public function render_page(array $args): array
     {
         $rcmail = rcmail::get_instance();
-        if ($rcmail->task !== 'mail') {
-            return $args;
-        }
-
         $bridge = $_SESSION['lostandfound_bridge'] ?? [];
         $runtime = $this->fetch_runtime_config();
         if (!empty($runtime['imap']['unassigned_folder'])) {
