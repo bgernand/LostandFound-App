@@ -502,18 +502,29 @@ def register_admin_routes(app, deps: dict):
     @app.post("/api/roundcube/sso-config")
     def roundcube_sso_config():
         if not roundcube_enabled:
+            app.logger.warning("Roundcube SSO denied: roundcube integration disabled.")
             abort(404)
         supplied_secret = (request.headers.get("X-Roundcube-Secret") or "").strip()
         if not supplied_secret or supplied_secret != (roundcube_shared_secret or ""):
+            app.logger.warning("Roundcube SSO denied: shared secret mismatch or missing.")
             abort(403)
         payload = request.get_json(silent=True) or {}
         token = str(payload.get("token") or "").strip()
         token_payload = verify_roundcube_sso_token(token)
         if not token_payload:
+            app.logger.warning("Roundcube SSO denied: token invalid or expired.")
             abort(403)
         conn = get_db()
         try:
             ticket_cfg = get_mail_ticket_settings(conn)
+            if not ticket_cfg["imap_host"] or not ticket_cfg["imap_username"] or not ticket_cfg["imap_password"]:
+                app.logger.warning("Roundcube SSO denied: IMAP settings incomplete.")
+                return jsonify({"ok": False, "error": "imap_incomplete"}), 400
+            app.logger.info(
+                "Roundcube SSO accepted for user=%s role=%s",
+                token_payload.get("username"),
+                token_payload.get("role"),
+            )
             return jsonify(
                 {
                     "ok": True,

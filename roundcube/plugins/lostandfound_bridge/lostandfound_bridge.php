@@ -88,6 +88,7 @@ class lostandfound_bridge extends rcube_plugin
         $headers = [
             'Content-Type: application/json',
             'X-Roundcube-Secret: ' . $secret,
+            'Content-Length: ' . strlen($body),
         ];
 
         if (function_exists('curl_init')) {
@@ -106,14 +107,17 @@ class lostandfound_bridge extends rcube_plugin
             $context = stream_context_create([
                 'http' => [
                     'method' => 'POST',
-                    'header' => implode("\r\n", $headers),
+                    'header' => implode("\r\n", $headers) . "\r\n",
                     'content' => $body,
                     'timeout' => 15,
                     'ignore_errors' => true,
                 ],
             ]);
             $response = @file_get_contents($url, false, $context);
-            $status = 200;
+            $status = 0;
+            if (!empty($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
+                $status = (int) $m[1];
+            }
         }
 
         if (!$response || $status >= 400) {
