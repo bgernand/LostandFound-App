@@ -2,8 +2,6 @@
 
 class lostandfound_bridge extends rcube_plugin
 {
-    public $task = 'mail|login';
-
     public function init(): void
     {
         $rcmail = rcmail::get_instance();
