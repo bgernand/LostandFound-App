@@ -195,6 +195,36 @@ AutoMail processing runs in the worker and sends each rule once per item.
 - Certbot
 - optional Roundcube
 
+## Local CI Test Run
+
+To run the same basic test flow as GitHub Actions locally, use Docker from the repository root.
+
+PowerShell:
+
+```powershell
+.\scripts\test-ci-local.ps1
+```
+
+Bash:
+
+```bash
+./scripts/test-ci-local.sh
+```
+
+VS Code:
+
+- open `Terminal -> Run Task`
+- run `CI: Docker Test`
+
+The local Docker run mirrors the CI job:
+
+- `debian:13`
+- Python `3.13`
+- fresh virtualenv inside the container
+- factory smoke check
+- `pytest -q`
+- `ruff check lfapp tests app.py`
+
 ## Project Structure
 
 ```text
