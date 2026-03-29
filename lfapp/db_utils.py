@@ -1136,6 +1136,9 @@ def init_db(db_path: str):
     ensure_column(conn, "items", "postage_paid", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "items", "review_pending", "INTEGER NOT NULL DEFAULT 0")
 
+    # Heal older SQLite schemas before any writes touch item-dependent FK tables.
+    ensure_fk_migrations(conn)
+
     conn.execute("UPDATE items SET status='Lost' WHERE status='Still lost'")
     conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
     conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
