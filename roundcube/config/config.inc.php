@@ -8,4 +8,5 @@ $config['request_path'] = rtrim(getenv('ROUNDCUBE_REQUEST_PATH') ?: '/webmail/',
 $config['session_path'] = rtrim(getenv('ROUNDCUBE_REQUEST_PATH') ?: '/webmail/', '/') . '/';
 $config['des_key'] = getenv('ROUNDCUBE_DES_KEY') ?: hash('sha256', getenv('ROUNDCUBE_SHARED_SECRET') ?: 'lostfound-roundcube');
 $config['lostandfound_bridge_app_url'] = rtrim(getenv('LAF_APP_INTERNAL_URL') ?: 'http://app:8000', '/');
+$config['lostandfound_bridge_base_url'] = rtrim(getenv('BASE_URL') ?: '', '/');
 $config['lostandfound_bridge_shared_secret'] = getenv('ROUNDCUBE_SHARED_SECRET') ?: '';

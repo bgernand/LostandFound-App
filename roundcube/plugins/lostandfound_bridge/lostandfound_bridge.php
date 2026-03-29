@@ -8,6 +8,7 @@ class lostandfound_bridge extends rcube_plugin
         $this->register_action('plugin.lostandfound_bridge.login', [$this, 'login_action']);
         $this->add_hook('startup', [$this, 'startup']);
         $this->add_hook('render_page', [$this, 'render_page']);
+        $this->add_hook('logout_after', [$this, 'logout_after']);
         if ($rcmail->task === 'mail') {
             $this->include_script('lostandfound_bridge.js');
         }
@@ -15,10 +16,15 @@ class lostandfound_bridge extends rcube_plugin
 
     public function startup(array $args): array
     {
+        $rcmail = rcmail::get_instance();
         $task = (string) ($args['task'] ?? '');
         $action = (string) ($args['action'] ?? '');
+
         if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
             $this->login_action();
+        }
+        if ($task === 'login' && !$rcmail->user) {
+            $this->render_login_notice();
         }
 
         return $args;
@@ -82,6 +88,13 @@ class lostandfound_bridge extends rcube_plugin
         ]);
 
         return $args;
+    }
+
+    public function logout_after(array $args): array
+    {
+        $target = $this->dashboard_url();
+        header('Location: ' . $target);
+        exit;
     }
 
     private function fetch_sso_config(string $token): array
@@ -150,6 +163,53 @@ class lostandfound_bridge extends rcube_plugin
         }
 
         return [$response, $status];
+    }
+
+    private function app_base_url(): string
+    {
+        $rcmail = rcmail::get_instance();
+        return rtrim((string) $rcmail->config->get('lostandfound_bridge_base_url'), '/');
+    }
+
+    private function dashboard_url(): string
+    {
+        $base = $this->app_base_url();
+        return ($base ?: '') . '/dashboard';
+    }
+
+    private function webmail_entry_url(): string
+    {
+        $base = $this->app_base_url();
+        return ($base ?: '') . '/webmail-login';
+    }
+
+    private function render_login_notice(): void
+    {
+        http_response_code(200);
+        $entryUrl = $this->webmail_entry_url();
+        $dashboardUrl = $this->dashboard_url();
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
+        echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<title>Open Webmail from Lost &amp; Found</title>';
+        echo '<style>';
+        echo 'body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f3f5f7;color:#1f2933;}';
+        echo '.wrap{max-width:640px;margin:10vh auto;padding:24px;}';
+        echo '.card{background:#fff;border:1px solid #d8dee4;border-radius:12px;padding:28px;box-shadow:0 8px 30px rgba(15,23,42,.08);}';
+        echo 'h1{margin:0 0 12px;font-size:28px;line-height:1.2;}';
+        echo 'p{margin:0 0 14px;line-height:1.6;}';
+        echo '.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px;}';
+        echo '.btn{display:inline-block;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600;}';
+        echo '.btn-primary{background:#0f766e;color:#fff;}';
+        echo '.btn-secondary{background:#fff;color:#1f2933;border:1px solid #cbd2d9;}';
+        echo '</style></head><body><main class="wrap"><section class="card">';
+        echo '<h1>Open Webmail from Lost &amp; Found</h1>';
+        echo '<p>Direct Roundcube login is disabled in this setup.</p>';
+        echo '<p>Open Webmail from Lost &amp; Found so the mailbox session is created with the configured mailbox credentials.</p>';
+        echo '<div class="actions">';
+        echo '<a class="btn btn-primary" href="' . htmlspecialchars($entryUrl, ENT_QUOTES, 'UTF-8') . '">Open Webmail</a>';
+        echo '<a class="btn btn-secondary" href="' . htmlspecialchars($dashboardUrl, ENT_QUOTES, 'UTF-8') . '">Back to Dashboard</a>';
+        echo '</div></section></main></body></html>';
+        exit;
     }
 
     private function render_error(string $message): void
