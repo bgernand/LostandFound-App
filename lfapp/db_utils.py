@@ -75,6 +75,11 @@ DEFAULT_ROLE_PERMISSIONS = {
 SYSTEM_ROLES = ("admin", "staff", "found-staff", "lost-staff", "viewer")
 
 
+def public_token_expiry(days: int | None = None) -> str:
+    validity_days = days if days is not None else int(os.environ.get("PUBLIC_TOKEN_VALIDITY_DAYS", "365"))
+    return (datetime.now(timezone.utc) + timedelta(days=validity_days)).isoformat()
+
+
 def get_db(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -1112,6 +1117,7 @@ def init_db(db_path: str):
         )
 
     ensure_column(conn, "items", "public_token", "TEXT")
+    ensure_column(conn, "items", "public_token_expires_at", "TEXT")
     ensure_column(conn, "items", "public_id", "TEXT")
     ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")
@@ -1226,7 +1232,7 @@ def init_db(db_path: str):
             """,
             (
                 initial_admin_username,
-                generate_password_hash(initial_admin_password),
+                generate_password_hash(initial_admin_password, method="scrypt", salt_length=16),
                 "admin",
                 now_utc(),
             ),
@@ -1268,11 +1274,19 @@ def init_db(db_path: str):
             (name, active, order, now_utc()),
         )
 
-    rows = conn.execute("SELECT id, public_token FROM items").fetchall()
+    rows = conn.execute("SELECT id, public_token, public_token_expires_at FROM items").fetchall()
     for r in rows:
         if not r["public_token"]:
             token = secrets.token_urlsafe(16)
-            conn.execute("UPDATE items SET public_token=? WHERE id=?", (token, r["id"]))
+            conn.execute(
+                "UPDATE items SET public_token=?, public_token_expires_at=? WHERE id=?",
+                (token, public_token_expiry(), r["id"]),
+            )
+        elif not r["public_token_expires_at"]:
+            conn.execute(
+                "UPDATE items SET public_token_expires_at=? WHERE id=?",
+                (public_token_expiry(), r["id"]),
+            )
 
     rows = conn.execute(
         "SELECT id FROM items WHERE public_id IS NULL OR trim(public_id) = '' ORDER BY id ASC"

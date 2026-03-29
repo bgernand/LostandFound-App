@@ -349,13 +349,13 @@
       </div>
     </div>
   </div>
-  <script type="application/json" id="mailComposePresets">{{ compose_presets|tojson }}</script>
+  <script nonce="{{ csp_nonce }}" type="application/json" id="mailComposePresets">{{ compose_presets|tojson }}</script>
 {% endif %}
 {% endblock %}
 {% block extra_scripts %}
   {{ super() }}
   {% if selected_message %}
-    <script>
+    <script nonce="{{ csp_nonce }}">
       (function () {
         var moveForm = document.getElementById("mailboxMoveForm");
         var moveSourceInput = document.getElementById("mailboxMoveSourceFolder");

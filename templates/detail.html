@@ -268,7 +268,7 @@ Best regards{% endif %}</textarea>
       </div>
     </div>
   </div>
-  <script type="application/json" id="itemMailTemplatesData">{{ email_templates|tojson }}</script>
+  <script nonce="{{ csp_nonce }}" type="application/json" id="itemMailTemplatesData">{{ email_templates|tojson }}</script>
 {% endif %}
 
 {% if email_history and email_history|length %}
@@ -490,7 +490,7 @@ Best regards{% endif %}</textarea>
 {% endblock %}
 {% block extra_scripts %}
   {{ super() }}
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       var btn = document.getElementById("timeline-more-btn");
       if (btn) {

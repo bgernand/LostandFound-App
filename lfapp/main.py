@@ -14,7 +14,7 @@ from email.parser import BytesParser
 from email.utils import make_msgid
 from pathlib import Path
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, BadTimeSignature, URLSafeTimedSerializer
 
 from lfapp.auth_core import build_auth_helpers
@@ -36,6 +36,7 @@ from lfapp.db_utils import (
     ensure_item_links_schema,
     get_setting,
     now_utc,
+    public_token_expiry,
     prune_audit_log,
     set_setting,
 )
@@ -87,6 +88,7 @@ from lfapp.security_utils import (
     is_public_submit_blocked,
     record_login_attempt,
     record_public_submit_attempt,
+    rate_limit,
     safe_next_url,
 )
 from lfapp.totp_utils import (
@@ -364,6 +366,7 @@ def create_app(config: dict | None = None):
     public_lost_daily_max_attempts = int(app.config.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", os.environ.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", "30")))
     public_lost_max_files = int(app.config.get("PUBLIC_LOST_MAX_FILES", os.environ.get("PUBLIC_LOST_MAX_FILES", "5")))
     public_lost_captcha_enabled = _is_truthy(app.config.get("PUBLIC_LOST_CAPTCHA_ENABLED", os.environ.get("PUBLIC_LOST_CAPTCHA_ENABLED", "false")))
+    public_token_validity_days = int(app.config.get("PUBLIC_TOKEN_VALIDITY_DAYS", os.environ.get("PUBLIC_TOKEN_VALIDITY_DAYS", "365")))
     item_retention_months = int(app.config.get("ITEM_RETENTION_MONTHS", os.environ.get("ITEM_RETENTION_MONTHS", "12")))
 
     trusted_proxy_networks = _parse_proxy_networks(
@@ -1631,6 +1634,27 @@ def create_app(config: dict | None = None):
             flash("Session expired. Please log in again.", "warning")
             return redirect(url_for("login", next=request.path))
 
+    @app.before_request
+    def _set_csp_nonce():
+        g.csp_nonce = secrets.token_urlsafe(16)
+
+    @app.after_request
+    def _add_csp_header(response):
+        if request.path.startswith("/webmail"):
+            return response
+        nonce = getattr(g, "csp_nonce", "")
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "img-src 'self' data: blob:; "
+            "style-src 'self' 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'self'; "
+            "form-action 'self'"
+        )
+        return response
+
     @app.context_processor
     def inject_globals():
         u = current_user()
@@ -1714,6 +1738,7 @@ def create_app(config: dict | None = None):
             "STATUS_COLORS": STATUS_COLORS,
             "CONTACT_WAYS": CONTACT_WAYS,
             "csrf_token": csrf_token,
+            "csp_nonce": getattr(g, "csp_nonce", ""),
             "has_permission": lambda permission_key: bool(has_permission(permission_key, user=u)),
             "can_create_lost": can_create_lost,
             "can_create_found": can_create_found,
@@ -1912,6 +1937,7 @@ def create_app(config: dict | None = None):
             "PUBLIC_LOST_DAILY_MAX_ATTEMPTS": public_lost_daily_max_attempts,
             "PUBLIC_LOST_MAX_FILES": public_lost_max_files,
             "PUBLIC_LOST_CAPTCHA_ENABLED": public_lost_captcha_enabled,
+            "PUBLIC_TOKEN_VALIDITY_DAYS": public_token_validity_days,
             "get_smtp_settings": get_smtp_settings,
             "get_mail_ticket_settings": get_mail_ticket_settings,
             "move_imap_message": move_imap_message,
@@ -1930,6 +1956,8 @@ def create_app(config: dict | None = None):
             "roundcube_shared_secret": roundcube_shared_secret,
             "roundcube_external_url": roundcube_external_url,
             "jsonify": jsonify,
+            "public_token_expiry": public_token_expiry,
+            "rate_limit": rate_limit,
         },
     )
 

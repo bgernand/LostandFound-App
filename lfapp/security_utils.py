@@ -1,5 +1,14 @@
 import ipaddress
+import threading
+import time
+from collections import defaultdict
+from functools import wraps
 from urllib.parse import urlsplit
+
+from flask import abort, request, session
+
+_rate_store: dict[str, list[float]] = defaultdict(list)
+_rate_lock = threading.Lock()
 
 
 def safe_next_url(target: str | None, fallback: str) -> str:
@@ -111,3 +120,24 @@ def record_public_submit_attempt(conn, endpoint: str, ip_addr: str, now_ts: int,
         "DELETE FROM public_submit_attempts WHERE attempted_at < ?",
         (now_ts - max(window_seconds * 12, 86400 * 3),),
     )
+
+
+def rate_limit(max_calls: int, window_seconds: int):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            user_id = session.get("user_id")
+            identity = user_id if user_id is not None else (request.remote_addr or "unknown")
+            key = f"{f.__name__}:{identity}"
+            now = time.monotonic()
+            with _rate_lock:
+                calls = [ts for ts in _rate_store[key] if now - ts < window_seconds]
+                if len(calls) >= max_calls:
+                    abort(429)
+                calls.append(now)
+                _rate_store[key] = calls
+            return f(*args, **kwargs)
+
+        return wrapped
+
+    return decorator

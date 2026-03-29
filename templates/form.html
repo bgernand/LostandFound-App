@@ -337,7 +337,7 @@
   </div>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
   const kindSel = document.getElementById('kindSel');
   const lostFields = document.getElementById('lostFields');
   const lostWhatBlock = document.getElementById('lostWhatBlock');

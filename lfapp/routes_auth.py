@@ -191,7 +191,7 @@ def register_auth_routes(app, deps: dict):
 
         conn.execute(
             "UPDATE users SET password_hash=? WHERE id=?",
-            (generate_password_hash(new_pw), u["id"]),
+            (generate_password_hash(new_pw, method="scrypt", salt_length=16), u["id"]),
         )
         conn.commit()
         conn.close()

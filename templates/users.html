@@ -338,7 +338,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
   function resetUserPassword(userId, username) {
     const newPassword = window.prompt("Enter new password for " + username + " (min 10 chars):");
     if (newPassword === null) return false;

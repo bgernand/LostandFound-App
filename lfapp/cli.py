@@ -66,7 +66,7 @@ def reset_initial_admin_password(db_path: Path, new_password: str) -> str:
             SET password_hash=?, role='admin', is_active=1, is_root_admin=1
             WHERE id=?
             """,
-            (generate_password_hash(new_password), int(root_user["id"])),
+            (generate_password_hash(new_password, method="scrypt", salt_length=16), int(root_user["id"])),
         )
         conn.commit()
         return str(root_user["username"])

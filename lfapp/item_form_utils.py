@@ -185,9 +185,13 @@ def validate_lost_fields(lost: dict, contact_ways: list[str]):
 
     if lost.get("postage_price"):
         try:
-            lost["postage_price"] = float(lost["postage_price"].replace(",", "."))
+            postage_price = round(float(lost["postage_price"].replace(",", ".")), 2)
+            if postage_price < 0 or postage_price > 999.99:
+                raise ValueError("Out of range")
+            lost["postage_price"] = postage_price
         except ValueError:
-            errors["postage_price"] = "Price of postage must be a number."
+            errors["postage_price"] = "Price of postage must be a number between 0 and 999.99."
+            lost["postage_price"] = None
     else:
         lost["postage_price"] = None
 

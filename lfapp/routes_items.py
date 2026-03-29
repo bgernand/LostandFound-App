@@ -62,9 +62,23 @@ def register_item_routes(app, deps: dict):
     PUBLIC_LOST_DAILY_MAX_ATTEMPTS = deps["PUBLIC_LOST_DAILY_MAX_ATTEMPTS"]
     PUBLIC_LOST_MAX_FILES = deps["PUBLIC_LOST_MAX_FILES"]
     PUBLIC_LOST_CAPTCHA_ENABLED = deps["PUBLIC_LOST_CAPTCHA_ENABLED"]
+    PUBLIC_TOKEN_VALIDITY_DAYS = deps["PUBLIC_TOKEN_VALIDITY_DAYS"]
+    public_token_expiry = deps["public_token_expiry"]
+    rate_limit = deps["rate_limit"]
 
     def _is_truthy(value) -> bool:
         return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _public_token_is_expired(expires_at: str | None) -> bool:
+        if not expires_at:
+            return False
+        try:
+            expires = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return False
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expires
 
     def _pop_unassigned_mail_draft(expected_kind=None, keep=False):
         payload = session.get("unassigned_mail_item_draft")
@@ -605,6 +619,7 @@ def register_item_routes(app, deps: dict):
             )
 
         public_token = secrets.token_urlsafe(16)
+        public_token_expires_at = public_token_expiry(PUBLIC_TOKEN_VALIDITY_DAYS)
         conn = get_db()
         try:
             public_id = generate_public_item_id(conn)
@@ -612,7 +627,7 @@ def register_item_routes(app, deps: dict):
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, public_id, created_at, review_pending,
+                status, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -620,7 +635,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -629,7 +644,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, None, public_token, public_id, now_utc(), 1,
+                    status, None, public_token, public_token_expires_at, public_id, now_utc(), 1,
                     lost.get("lost_what"),
                     lost.get("lost_last_name"),
                     lost.get("lost_first_name"),
@@ -852,6 +867,7 @@ def register_item_routes(app, deps: dict):
             )
 
         public_token = secrets.token_urlsafe(16)
+        public_token_expires_at = public_token_expiry(PUBLIC_TOKEN_VALIDITY_DAYS)
         conn = get_db()
         try:
             public_id = generate_public_item_id(conn)
@@ -859,7 +875,7 @@ def register_item_routes(app, deps: dict):
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, public_id, created_at, review_pending,
+                status, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -867,7 +883,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -876,7 +892,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, u["id"], public_token, public_id, now_utc(), 0,
+                    status, u["id"], public_token, public_token_expires_at, public_id, now_utc(), 0,
                     (lost.get("lost_what") if kind == "lost" else None),
                     (lost.get("lost_last_name") if kind == "lost" else None),
                     (lost.get("lost_first_name") if kind == "lost" else None),
@@ -1502,6 +1518,7 @@ def register_item_routes(app, deps: dict):
 
     @app.post("/items/bulk-status")
     @require_permission("items.bulk_status")
+    @rate_limit(max_calls=20, window_seconds=60)
     def bulk_status_update():
         raw_ids = request.form.getlist("item_ids")
         new_status = (request.form.get("bulk_status") or "").strip()
@@ -1774,10 +1791,12 @@ def register_item_routes(app, deps: dict):
 
     @app.post("/items/<int:item_id>/public/regenerate")
     @require_permission("items.public_regenerate")
+    @rate_limit(max_calls=20, window_seconds=60)
     def regenerate_public_token(item_id: int):
         new_token = secrets.token_urlsafe(16)
+        expires_at = public_token_expiry(PUBLIC_TOKEN_VALIDITY_DAYS)
         conn = get_db()
-        item = conn.execute("SELECT id, public_token FROM items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute("SELECT id, public_token, public_token_expires_at FROM items WHERE id=?", (item_id,)).fetchone()
         if not item:
             conn.close()
             abort(404)
@@ -1785,10 +1804,10 @@ def register_item_routes(app, deps: dict):
         conn.execute(
             """
             UPDATE items
-            SET public_token=?, public_enabled=1, updated_at=?
+            SET public_token=?, public_token_expires_at=?, public_enabled=1, updated_at=?
             WHERE id=?
             """,
-            (new_token, now_utc(), item_id),
+            (new_token, expires_at, now_utc(), item_id),
         )
         conn.commit()
         conn.close()
@@ -1798,8 +1817,8 @@ def register_item_routes(app, deps: dict):
             "item",
             item_id,
             "token regenerated",
-            old_values={"public_token": item["public_token"]},
-            new_values={"public_token": new_token},
+            old_values={"public_token": item["public_token"], "public_token_expires_at": item["public_token_expires_at"]},
+            new_values={"public_token": new_token, "public_token_expires_at": expires_at},
         )
         flash("Public link regenerated (old link is no longer valid).", "info")
         return redirect(url_for("detail", item_id=item_id))
@@ -1888,6 +1907,9 @@ def register_item_routes(app, deps: dict):
         if not item:
             conn.close()
             abort(404)
+        if _public_token_is_expired(item["public_token_expires_at"]):
+            conn.close()
+            abort(410)
         if int(item["public_enabled"] or 0) != 1:
             conn.close()
             abort(404)
@@ -1902,7 +1924,7 @@ def register_item_routes(app, deps: dict):
         conn = get_db()
         p = conn.execute(
             """
-            SELECT p.*, i.public_token, i.public_enabled, i.public_photos_enabled
+            SELECT p.*, i.public_token, i.public_token_expires_at, i.public_enabled, i.public_photos_enabled
             FROM photos p
             JOIN items i ON i.id = p.item_id
             WHERE p.id = ?
@@ -1915,6 +1937,8 @@ def register_item_routes(app, deps: dict):
             abort(404)
         if p["public_token"] != token:
             abort(404)
+        if _public_token_is_expired(p["public_token_expires_at"]):
+            abort(410)
         if int(p["public_enabled"] or 0) != 1:
             abort(404)
         if int(p["public_photos_enabled"] or 0) != 1:
@@ -1927,6 +1951,7 @@ def register_item_routes(app, deps: dict):
 
     @app.get("/export.csv")
     @login_required
+    @rate_limit(max_calls=20, window_seconds=60)
     def export_csv():
         u = current_user()
         if not can_access_backoffice_read(u):

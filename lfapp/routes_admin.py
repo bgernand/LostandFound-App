@@ -1275,7 +1275,7 @@ def register_admin_routes(app, deps: dict):
 
             conn.execute(
                 "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                (username, generate_password_hash(password), role, now_utc()),
+                (username, generate_password_hash(password, method="scrypt", salt_length=16), role, now_utc()),
             )
             conn.commit()
             created = conn.execute(
@@ -1801,7 +1801,7 @@ def register_admin_routes(app, deps: dict):
         old_user = row_to_dict(u)
         conn.execute(
             "UPDATE users SET password_hash=? WHERE id=?",
-            (generate_password_hash(new_pw), user_id),
+            (generate_password_hash(new_pw, method="scrypt", salt_length=16), user_id),
         )
         conn.commit()
         conn.close()

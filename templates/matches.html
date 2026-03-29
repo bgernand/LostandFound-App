@@ -196,7 +196,7 @@
   {% endfor %}
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
   (function () {
     const fromInput = document.querySelector('input[name="date_from"]');
     const toInput = document.querySelector('input[name="date_to"]');
