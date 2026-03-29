@@ -136,6 +136,154 @@ def _rebuild_table(conn, table_name: str, create_sql: str, copy_columns: list[st
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _rebuild_item_dependent_tables(conn):
+    _rebuild_table(
+        conn,
+        "photos",
+        """
+        CREATE TABLE photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """,
+        ["id", "item_id", "filename", "uploaded_at"],
+    )
+    _rebuild_table(
+        conn,
+        "item_links",
+        """
+        CREATE TABLE item_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            found_item_id INTEGER NOT NULL,
+            lost_item_id INTEGER NOT NULL,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(found_item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(lost_item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(found_item_id, lost_item_id)
+        )
+        """,
+        ["id", "found_item_id", "lost_item_id", "created_by", "created_at"],
+        [
+            "CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)",
+            "CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)",
+        ],
+    )
+    _rebuild_table(
+        conn,
+        "reminders",
+        """
+        CREATE TABLE reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            reminder_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            is_done INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            done_at TEXT,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """,
+        ["id", "item_id", "reminder_type", "message", "due_at", "is_done", "created_at", "done_at"],
+        [
+            "CREATE INDEX IF NOT EXISTS idx_reminders_open_due ON reminders(is_done, due_at)",
+        ],
+    )
+    _rebuild_table(
+        conn,
+        "sent_item_emails",
+        """
+        CREATE TABLE sent_item_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            actor_user_id INTEGER,
+            recipient TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            template_name TEXT,
+            receipt_filename TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """,
+        ["id", "item_id", "actor_user_id", "recipient", "subject", "body", "template_name", "receipt_filename", "created_at"],
+        [
+            "CREATE INDEX IF NOT EXISTS idx_sent_item_emails_item_created ON sent_item_emails(item_id, created_at DESC)",
+        ],
+    )
+    _rebuild_table(
+        conn,
+        "item_mail_messages",
+        """
+        CREATE TABLE item_mail_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL,
+            actor_user_id INTEGER,
+            direction TEXT NOT NULL,
+            sender TEXT,
+            recipient TEXT,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            ticket_ref TEXT,
+            template_name TEXT,
+            receipt_filename TEXT,
+            message_id TEXT,
+            in_reply_to TEXT,
+            mailbox_folder TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """,
+        [
+            "id", "item_id", "actor_user_id", "direction", "sender", "recipient", "subject", "body",
+            "ticket_ref", "template_name", "receipt_filename", "message_id", "in_reply_to", "mailbox_folder", "created_at",
+        ],
+        [
+            "CREATE INDEX IF NOT EXISTS idx_item_mail_messages_item_created ON item_mail_messages(item_id, created_at DESC, id DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_item_mail_messages_ticket_ref ON item_mail_messages(ticket_ref)",
+        ],
+    )
+    _rebuild_table(
+        conn,
+        "mail_unassigned_messages",
+        """
+        CREATE TABLE mail_unassigned_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT,
+            recipient TEXT,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            message_id TEXT,
+            in_reply_to TEXT,
+            references_raw TEXT,
+            ticket_ref_guess TEXT,
+            mailbox_folder TEXT,
+            received_at TEXT,
+            created_at TEXT NOT NULL,
+            assigned_item_id INTEGER,
+            assigned_by_user_id INTEGER,
+            assigned_at TEXT,
+            FOREIGN KEY(assigned_item_id) REFERENCES items(id) ON DELETE SET NULL,
+            FOREIGN KEY(assigned_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """,
+        [
+            "id", "sender", "recipient", "subject", "body", "message_id", "in_reply_to", "references_raw",
+            "ticket_ref_guess", "mailbox_folder", "received_at", "created_at", "assigned_item_id", "assigned_by_user_id", "assigned_at",
+        ],
+        [
+            "CREATE INDEX IF NOT EXISTS idx_mail_unassigned_messages_created ON mail_unassigned_messages(created_at DESC, id DESC)",
+        ],
+    )
+
+
 def ensure_fk_migrations(conn):
     item_link_fks = _foreign_key_map(conn, "item_links")
     needs_item_links_migration = (
@@ -168,6 +316,7 @@ def ensure_fk_migrations(conn):
         )
 
     items_fks = _foreign_key_map(conn, "items")
+    items_rebuilt = False
     if items_fks.get("created_by", {}).get("on_delete") != "SET NULL":
         _rebuild_table(
             conn,
@@ -223,6 +372,9 @@ def ensure_fk_migrations(conn):
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_public_id ON items(public_id)",
             ],
         )
+        items_rebuilt = True
+    if items_rebuilt:
+        _rebuild_item_dependent_tables(conn)
 
     audit_fks = _foreign_key_map(conn, "audit_log")
     if audit_fks.get("actor_user_id", {}).get("on_delete") != "SET NULL":
