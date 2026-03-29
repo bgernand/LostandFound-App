@@ -35,6 +35,13 @@
           {% if unassigned_mail_origin['received_at'] %} · Received: {{ unassigned_mail_origin['received_at'] }}{% endif %}
         </div>
         <div class="small mt-1">Saving this form will automatically link the mail to the new item.</div>
+        {% if unassigned_mail_origin.get('can_move_to_processed') %}
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" name="move_mail_to_processed" id="moveMailToProcessed"
+                   value="1" {% if unassigned_mail_origin.get('move_to_processed') %}checked{% endif %}>
+            <label class="form-check-label small" for="moveMailToProcessed">Move mail to Processed folder after saving</label>
+          </div>
+        {% endif %}
       </div>
     {% endif %}
     {% if errors and errors|length %}

@@ -45,6 +45,7 @@ def register_item_routes(app, deps: dict):
     STATUSES = deps["STATUSES"]
     get_smtp_settings = deps["get_smtp_settings"]
     get_mail_ticket_settings = deps["get_mail_ticket_settings"]
+    move_imap_message = deps["move_imap_message"]
     send_smtp_mail = deps["send_smtp_mail"]
     build_ticket_reference = deps["build_ticket_reference"]
     get_item_email_templates = deps["get_item_email_templates"]
@@ -61,6 +62,9 @@ def register_item_routes(app, deps: dict):
     PUBLIC_LOST_DAILY_MAX_ATTEMPTS = deps["PUBLIC_LOST_DAILY_MAX_ATTEMPTS"]
     PUBLIC_LOST_MAX_FILES = deps["PUBLIC_LOST_MAX_FILES"]
     PUBLIC_LOST_CAPTCHA_ENABLED = deps["PUBLIC_LOST_CAPTCHA_ENABLED"]
+
+    def _is_truthy(value) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _pop_unassigned_mail_draft(expected_kind=None, keep=False):
         payload = session.get("unassigned_mail_item_draft")
@@ -127,8 +131,19 @@ def register_item_routes(app, deps: dict):
             """,
             (int(item_id), current_user()["id"] if current_user() else None, now_utc(), int(message_id)),
         )
+        source_folder = (payload.get("meta", {}).get("mailbox_folder") or row["mailbox_folder"] or "").strip()
+        source_uid = str(payload.get("meta", {}).get("mailbox_uid") or "").strip()
+        move_to_processed = _is_truthy(request.form.get("move_mail_to_processed"))
+        if "move_mail_to_processed" not in request.form:
+            move_to_processed = _is_truthy(payload.get("move_to_processed"))
         session.pop("unassigned_mail_item_draft", None)
-        return {"message_id": int(message_id), "ticket_ref": ticket_ref}
+        return {
+            "message_id": int(message_id),
+            "ticket_ref": ticket_ref,
+            "move_to_processed": move_to_processed,
+            "mailbox_folder": source_folder,
+            "mailbox_uid": source_uid,
+        }
 
     def can_edit_item(user_obj, item_row) -> bool:
         if not user_obj or not item_row:
@@ -939,6 +954,16 @@ def register_item_routes(app, deps: dict):
                 meta=unassigned_mail_link,
             )
             flash("Inbound mail was linked to the new item.", "info")
+            if unassigned_mail_link.get("move_to_processed"):
+                processed_folder = (get_mail_ticket_settings().get("imap_processed_folder") or "").strip()
+                source_folder = (unassigned_mail_link.get("mailbox_folder") or "").strip()
+                source_uid = str(unassigned_mail_link.get("mailbox_uid") or "").strip()
+                if source_folder and source_uid and processed_folder:
+                    moved, move_message = move_imap_message(source_folder, source_uid, processed_folder)
+                    if moved:
+                        flash(f"Mail moved to processed folder {processed_folder}.", "info")
+                    else:
+                        flash(f"Item created, but moving mail to processed folder failed: {move_message}", "warning")
         if save_and_new:
             flash("Item created. Ready for the next one.", "success")
             if matches:

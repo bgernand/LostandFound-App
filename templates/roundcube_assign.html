@@ -27,14 +27,20 @@
     <div class="card mt-3">
       <div class="card-body">
         <div class="small text-muted mb-2">Create new item</div>
-        <div class="d-flex gap-2">
+        <form method="get" class="d-flex gap-2 flex-wrap align-items-center">
+          <input type="hidden" name="folder" value="{{ folder }}">
+          <input type="hidden" name="uid" value="{{ uid }}">
+          <div class="form-check me-2">
+            <input class="form-check-input" type="checkbox" id="moveToProcessedCreate" name="move_to_processed" value="1" checked>
+            <label class="form-check-label small" for="moveToProcessedCreate">Move mail to Processed folder</label>
+          </div>
           {% if has_permission('items.create_lost') %}
-            <a class="btn btn-sm btn-danger" href="{{ url_for('roundcube_bridge_start_create', kind='lost', folder=folder, uid=uid) }}">Create Lost</a>
+            <button class="btn btn-sm btn-danger" type="submit" formaction="{{ url_for('roundcube_bridge_start_create', kind='lost') }}">Create Lost</button>
           {% endif %}
           {% if has_permission('items.create_found') %}
-            <a class="btn btn-sm btn-success" href="{{ url_for('roundcube_bridge_start_create', kind='found', folder=folder, uid=uid) }}">Create Found</a>
+            <button class="btn btn-sm btn-success" type="submit" formaction="{{ url_for('roundcube_bridge_start_create', kind='found') }}">Create Found</button>
           {% endif %}
-        </div>
+        </form>
       </div>
     </div>
   </div>
@@ -43,6 +49,10 @@
     <div class="card">
       <div class="card-body">
         <div class="small text-muted mb-2">Assign to existing item</div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="moveToProcessedAssign" checked>
+          <label class="form-check-label small" for="moveToProcessedAssign">Move mail to Processed folder after assigning</label>
+        </div>
         <form method="get" action="{{ url_for('roundcube_bridge_assign') }}" class="row g-2 mb-3">
           <input type="hidden" name="folder" value="{{ folder }}">
           <input type="hidden" name="uid" value="{{ uid }}">
@@ -79,6 +89,7 @@
                         <input type="hidden" name="folder" value="{{ folder }}">
                         <input type="hidden" name="uid" value="{{ uid }}">
                         <input type="hidden" name="target_item_ref" value="{{ item['public_id'] or item['id'] }}">
+                        <input type="hidden" name="move_to_processed" value="1" data-sync-move-to-processed>
                         <button class="btn btn-sm btn-outline-success" type="submit">Assign</button>
                       </form>
                     </td>
@@ -94,4 +105,19 @@
     </div>
   </div>
 </div>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var checkbox = document.getElementById("moveToProcessedAssign");
+  if (!checkbox) {
+    return;
+  }
+  function syncMovePreference() {
+    document.querySelectorAll("input[data-sync-move-to-processed]").forEach(function (input) {
+      input.value = checkbox.checked ? "1" : "0";
+    });
+  }
+  syncMovePreference();
+  checkbox.addEventListener("change", syncMovePreference);
+});
+</script>
 {% endblock %}

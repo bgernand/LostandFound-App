@@ -1914,6 +1914,7 @@ def create_app(config: dict | None = None):
             "PUBLIC_LOST_CAPTCHA_ENABLED": public_lost_captcha_enabled,
             "get_smtp_settings": get_smtp_settings,
             "get_mail_ticket_settings": get_mail_ticket_settings,
+            "move_imap_message": move_imap_message,
             "build_ticket_reference": build_ticket_reference,
             "send_smtp_mail": send_smtp_mail,
             "poll_ticket_mailbox_once": poll_ticket_mailbox_once,

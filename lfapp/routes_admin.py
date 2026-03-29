@@ -269,6 +269,9 @@ def register_admin_routes(app, deps: dict):
             return None
         return {k: row[k] for k in row.keys()}
 
+    def _is_truthy(value) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
     permission_labels = {
         "admin.access": "Admin access",
         "admin.users": "Manage users",
@@ -606,6 +609,7 @@ def register_admin_routes(app, deps: dict):
             abort(403)
         folder = (request.args.get("folder") or "").strip()
         uid = (request.args.get("uid") or "").strip()
+        move_to_processed = _is_truthy(request.args.get("move_to_processed"))
         selected_message, row, _linked_item, _detected_ticket_ref = _resolve_roundcube_message(folder, uid)
         if not selected_message or not row:
             abort(404)
@@ -613,12 +617,17 @@ def register_admin_routes(app, deps: dict):
             "kind": kind,
             "message_id": int(row["id"]),
             "draft": _build_unassigned_mail_item_draft(row, kind),
+            "move_to_processed": move_to_processed,
             "meta": {
                 "message_id": int(row["id"]),
                 "sender": row["sender"],
                 "recipient": row["recipient"],
                 "subject": row["subject"],
                 "received_at": row["received_at"] or row["created_at"],
+                "mailbox_folder": folder or row["mailbox_folder"],
+                "mailbox_uid": uid,
+                "can_move_to_processed": bool(folder and uid),
+                "move_to_processed": move_to_processed,
             },
         }
         flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
@@ -677,6 +686,7 @@ def register_admin_routes(app, deps: dict):
         folder = (request.form.get("folder") or "").strip()
         uid = (request.form.get("uid") or "").strip()
         target_ref = (request.form.get("target_item_ref") or "").strip()
+        move_to_processed = _is_truthy(request.form.get("move_to_processed"))
         if not folder or not uid or not target_ref:
             flash("Folder, message and target item are required.", "danger")
             return redirect(url_for("roundcube_bridge_assign", folder=folder or None, uid=uid or None))
@@ -748,6 +758,13 @@ def register_admin_routes(app, deps: dict):
             f"mail_unassigned_id={row['id']} ticket_ref={ticket_ref}",
             meta={"mail_unassigned_id": int(row["id"]), "ticket_ref": ticket_ref},
         )
+        if move_to_processed:
+            processed_folder = (get_mail_ticket_settings().get("imap_processed_folder") or "").strip()
+            moved, move_message = move_imap_message(folder, uid, processed_folder)
+            if moved:
+                flash(f"Mail moved to processed folder {processed_folder}.", "info")
+            else:
+                flash(f"Mail linked, but moving to processed folder failed: {move_message}", "warning")
         flash(f"Mail linked to item {item['public_id'] or item['id']}.", "success")
         return redirect(url_for("detail", item_id=int(item["id"])))
 
