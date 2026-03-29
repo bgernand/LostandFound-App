@@ -12,6 +12,7 @@ class lostandfound_bridge extends rcube_plugin
         $this->add_hook('logout_after', [$this, 'logout_after']);
         if (in_array($rcmail->task, ['mail', 'addressbook', 'settings'], true)) {
             $this->include_script('lostandfound_bridge.js');
+            $this->include_stylesheet('lostandfound_bridge.css');
         }
     }
 

@@ -63,10 +63,15 @@
     });
 
     var img = document.createElement("img");
+    img.className = "task-icon";
     img.src = (rcmail.env.laf_bridge.icon_url || "./plugins/lostandfound_bridge/lostandfound_bridge.png");
     img.alt = "Lost & Found";
-    img.style.cssText = "width:20px;height:20px;display:block;object-fit:contain;";
     link.appendChild(img);
+
+    var label = document.createElement("span");
+    label.className = "button-inner";
+    label.textContent = "Lost & Found";
+    link.appendChild(label);
 
     item.appendChild(link);
 

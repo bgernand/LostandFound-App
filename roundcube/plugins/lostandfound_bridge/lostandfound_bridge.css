@@ -1,0 +1,24 @@
+#task-lostfound > a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+#task-lostfound .task-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  object-fit: contain;
+  filter: invert(66%) sepia(86%) saturate(1682%) hue-rotate(166deg) brightness(100%) contrast(101%);
+}
+
+#task-lostfound .button-inner {
+  display: inline-block;
+  max-width: 64px;
+  text-align: center;
+  line-height: 1.1;
+  white-space: normal;
+  word-break: break-word;
+}
