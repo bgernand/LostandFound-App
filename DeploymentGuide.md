@@ -187,7 +187,7 @@ chown -R 10001:10001 data uploads
 docker compose up -d --build app worker
 ```
 
-## 9. Manual operational commands
+## 9. Operations Runbook
 
 Run one maintenance cycle:
 
@@ -219,6 +219,14 @@ Non-interactive reset:
 docker compose exec app python -m lfapp.cli reset-initial-admin-password --password "YourNewStrongPassword"
 ```
 
+Quick triage order:
+
+1. `docker compose ps`
+2. inspect `app`, `worker`, and `nginx` logs
+3. if mail or webmail is involved, inspect `roundcube` logs too
+4. verify the relevant settings in `System Settings`
+5. rerun one worker cycle manually
+
 ## 10. Backups
 
 There is currently no built-in backup scheduler in the stack.
@@ -236,7 +244,19 @@ Pragmatic recommendation:
 - snapshot the whole project directory excluding transient build cache
 - or archive the persistent directories daily with host-level cron / systemd timer
 
-## 11. Security notes
+## 11. Visual Documentation Assets
+
+The repository now reserves `docs/media/` for UI screenshots and short GIFs.
+
+Suggested assets:
+
+- `mail-thread.png`
+- `auto-mail-settings.png`
+- `webmail-unassigned.gif`
+
+Expected capture scopes are documented in `docs/media/README.md`.
+
+## 12. Security notes
 
 - keep `.env` out of version control
 - rotate `SECRET_KEY`, `SETTINGS_ENCRYPTION_KEY`, and Roundcube shared secrets if exposed
@@ -245,7 +265,7 @@ Pragmatic recommendation:
 - use HTTPS only in production
 - verify `BASE_URL` is correct, because public links and webmail redirects depend on it
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### Roundcube login page appears instead of SSO
 

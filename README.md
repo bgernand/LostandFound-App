@@ -15,6 +15,17 @@ This project covers the full operational workflow for lost and found offices:
 - SMTP / IMAP based mail workflow
 - optional Roundcube SSO for mailbox handling
 
+## Terminology
+
+The documentation and UI use these terms consistently:
+
+- `Lost Request` - a reported lost item owned by a person searching for it
+- `Found Item` - an item that was handed in or recorded as found
+- `Review Queue` - the queue for public lost submissions that still need staff review
+- `Mail` - the item-centric ticket and template workflow inside Lost & Found
+- `Webmail` - the Roundcube mailbox UI reached through SSO
+- `AutoMail` - delayed, rule-based automatic mails triggered by item status and age in status
+
 ## Main Features
 
 ### Item workflow
@@ -333,6 +344,68 @@ python -m lfapp.cli run-mail-poll
 python -m lfapp.cli run-worker --once
 python -m lfapp.cli run-worker --interval 60
 ```
+
+## Operations Runbook
+
+Common operational tasks:
+
+### Check service health
+
+```bash
+docker compose ps
+docker compose logs --tail=100 app
+docker compose logs --tail=100 worker
+docker compose logs --tail=100 nginx
+```
+
+If Roundcube is enabled:
+
+```bash
+docker compose logs --tail=100 roundcube
+```
+
+### Run maintenance manually
+
+```bash
+docker compose exec worker python -m lfapp.cli run-maintenance
+```
+
+### Run one IMAP poll manually
+
+```bash
+docker compose exec worker python -m lfapp.cli run-mail-poll
+```
+
+### Run one full worker cycle manually
+
+```bash
+docker compose exec worker python -m lfapp.cli run-worker --once
+```
+
+### Redeploy after changes
+
+```bash
+git pull origin main
+./deploy.sh
+```
+
+### Reset the protected initial admin password
+
+```bash
+docker compose exec app python -m lfapp.cli reset-initial-admin-password
+```
+
+## Visual Guide
+
+The repository is prepared for visual documentation assets under `docs/media/`.
+
+Planned assets:
+
+- `docs/media/mail-thread.png`
+- `docs/media/auto-mail-settings.png`
+- `docs/media/webmail-unassigned.gif`
+
+See `docs/media/README.md` for the expected file names and capture scope.
 
 ## Local Development
 
