@@ -499,7 +499,7 @@ def register_admin_routes(app, deps: dict):
         target = roundcube_external_url.rstrip("/") or "/webmail"
         return redirect(f"{target}/?_task=login&_action=plugin.lostandfound_bridge.login&_laf_token={token}")
 
-    @app.post("/api/roundcube/sso-config")
+    @app.get("/api/roundcube/sso-config")
     def roundcube_sso_config():
         if not roundcube_enabled:
             app.logger.warning("Roundcube SSO denied: roundcube integration disabled.")
@@ -508,8 +508,7 @@ def register_admin_routes(app, deps: dict):
         if not supplied_secret or supplied_secret != (roundcube_shared_secret or ""):
             app.logger.warning("Roundcube SSO denied: shared secret mismatch or missing.")
             abort(403)
-        payload = request.get_json(silent=True) or {}
-        token = str(payload.get("token") or "").strip()
+        token = str(request.args.get("token") or "").strip()
         token_payload = verify_roundcube_sso_token(token)
         if not token_payload:
             app.logger.warning("Roundcube SSO denied: token invalid or expired.")

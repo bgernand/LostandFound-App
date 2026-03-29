@@ -82,22 +82,17 @@ class lostandfound_bridge extends rcube_plugin
     private function fetch_sso_config(string $token): array
     {
         $rcmail = rcmail::get_instance();
-        $url = rtrim((string) $rcmail->config->get('lostandfound_bridge_app_url'), '/') . '/api/roundcube/sso-config';
+        $url = rtrim((string) $rcmail->config->get('lostandfound_bridge_app_url'), '/') . '/api/roundcube/sso-config?token=' . rawurlencode($token);
         $secret = (string) $rcmail->config->get('lostandfound_bridge_shared_secret');
-        $body = json_encode(['token' => $token]);
         $headers = [
-            'Content-Type: application/json',
             'X-Roundcube-Secret: ' . $secret,
-            'Content-Length: ' . strlen($body),
         ];
 
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
-                CURLOPT_POST => true,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_HTTPHEADER => $headers,
-                CURLOPT_POSTFIELDS => $body,
                 CURLOPT_TIMEOUT => 15,
             ]);
             $response = curl_exec($ch);
@@ -106,9 +101,8 @@ class lostandfound_bridge extends rcube_plugin
         } else {
             $context = stream_context_create([
                 'http' => [
-                    'method' => 'POST',
+                    'method' => 'GET',
                     'header' => implode("\r\n", $headers) . "\r\n",
-                    'content' => $body,
                     'timeout' => 15,
                     'ignore_errors' => true,
                 ],
