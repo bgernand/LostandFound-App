@@ -12,7 +12,6 @@ from urllib.parse import quote, urlencode
 
 import qrcode
 
-
 TOTP_ISSUER = (os.environ.get("TOTP_ISSUER") or "Lost & Found").strip() or "Lost & Found"
 TOTP_DIGITS = 6
 TOTP_PERIOD = 30

@@ -37,6 +37,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - When a link is created between items, all items in the linked graph are set to `Found`
 - Changing the status of one linked item synchronizes that status to all linked items
 - Daily automatic maintenance sets `Lost` items to `Lost forever` when `event_date` is older than 90 days
+- Daily automatic maintenance deletes items after a configurable number of months without updates (`ITEM_RETENTION_MONTHS`, default `12`)
 
 ## Roles and Permissions
 - `admin`: full access, including user/category admin, mail template management, and destructive actions
@@ -96,13 +97,15 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
   - `Reviewed & Next` marks current entry reviewed and opens the next pending one.
 
 ## Quality and CI
-- Basic automated tests are included in `tests/`.
-- GitHub Actions CI runs a create_app factory smoke check and pytest on push and pull request (`.github/workflows/ci.yml`).
+- Tests are split by domain in `tests/` with shared fixtures in `tests/conftest.py`.
+- GitHub Actions CI runs a create_app factory smoke check, `pytest`, and `ruff` on push and pull request (`.github/workflows/ci.yml`).
+- Local development dependencies live in `requirements-dev.txt`.
 
 ## Tech Stack
 - Flask 3
 - SQLite
 - Gunicorn
+- Background worker container (`python -m lfapp.cli run-worker`)
 - Nginx (reverse proxy, TLS termination)
 - Certbot (Let's Encrypt renewal)
 - Docker Compose
@@ -114,7 +117,9 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 ├─ lfapp/
 │  ├─ __init__.py
 │  ├─ main.py                # app factory + dependency wiring
+│  ├─ cli.py                 # maintenance / worker CLI
 │  ├─ db_utils.py            # db/schema/maintenance helpers
+│  ├─ worker_tasks.py        # scheduled maintenance + mailbox poll orchestration
 │  ├─ totp_utils.py          # TOTP helper logic
 │  ├─ match_utils.py         # matching/search helper logic
 │  ├─ link_match_utils.py    # item link + matching db helpers
@@ -149,6 +154,8 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
   - `lfapp.main.create_app(config=None)` supports optional config overrides (useful for tests)
 - Additional helper modules extracted:
   - `lfapp/db_utils.py`
+  - `lfapp/cli.py`
+  - `lfapp/worker_tasks.py`
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
   - `lfapp/link_match_utils.py`
@@ -181,6 +188,7 @@ nano .env
 chmod +x deploy.sh
 ./deploy.sh
 ```
+This starts `app`, `worker`, `nginx`, and `certbot`.
 4. Optional: request initial Let's Encrypt certificate:
 ```bash
 ./deploy.sh --init-letsencrypt --email you@example.com
@@ -206,6 +214,7 @@ chmod +x deploy.sh
 - `PUBLIC_LOST_DAILY_MAX_ATTEMPTS` (optional, default `30`)
 - `PUBLIC_LOST_MAX_FILES` (optional, default `5`)
 - `PUBLIC_LOST_CAPTCHA_ENABLED` (optional, default `false`)
+- `ITEM_RETENTION_MONTHS` (optional, default `12`; automatic item deletion after N months without updates, `0` disables it)
 - `DATA_DIR` (optional, default `/app/data`; Docker Compose sets it internally)
 - `UPLOAD_DIR` (optional, default `/app/uploads`; Docker Compose sets it internally)
 - `FLASK_DEBUG` (optional, default `false`; local development only)
@@ -213,6 +222,27 @@ chmod +x deploy.sh
 - `AUDIT_MAX_ROWS` (optional, default `200000`; `0` disables count-based audit cleanup)
 - `AUDIT_REDACT_ENABLED` (optional, default `true`; redacts sensitive snapshots in audit log)
 - `SETTINGS_ENCRYPTION_KEY` (optional but recommended; required to store SMTP password encrypted in DB)
+
+## Background Worker
+- Scheduled maintenance and mailbox polling run in the separate `worker` container, not inside web requests.
+- Available CLI commands:
+```bash
+python -m lfapp.cli run-maintenance
+python -m lfapp.cli run-mail-poll
+python -m lfapp.cli run-worker --once
+python -m lfapp.cli run-worker --interval 60
+```
+
+## Database Migrations
+- SQLite migrations are versioned via `PRAGMA user_version`.
+- Startup upgrades legacy databases in place, including foreign-key cascade fixes and item-search rebuilds.
+
+## Local Development
+```bash
+python -m pip install -r requirements-dev.txt
+pytest -q
+ruff check lfapp tests app.py
+```
 
 ## Security Notes
 - CSRF protection is enabled for POST routes.
@@ -238,6 +268,7 @@ chmod +x deploy.sh
 - Security headers are set at Nginx level (HSTS, CSP, X-Frame-Options, nosniff, Referrer-Policy).
 - `.env` must never be committed; rotate secrets immediately if exposure is suspected.
 - Daily automatic maintenance updates stale `Lost` items (`event_date` older than 90 days) to `Lost forever`.
+- Daily automatic maintenance also deletes items with no changes for `ITEM_RETENTION_MONTHS` months and removes related photos, links, reminders, and mail records.
 
 ## Reset INITIAL_ADMIN Password (Console)
 If you no longer know the password of the protected `INITIAL_ADMIN` account, reset it from console:

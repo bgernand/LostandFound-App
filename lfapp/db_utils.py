@@ -1,3 +1,4 @@
+import calendar
 import os
 import secrets
 import sqlite3
@@ -5,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from werkzeug.security import generate_password_hash
 
-
 _fts5_available = None
+SCHEMA_VERSION_CURRENT = 2
 
 
 RBAC_PERMISSION_KEYS = [
@@ -77,6 +78,7 @@ SYSTEM_ROLES = ("admin", "staff", "found-staff", "lost-staff", "viewer")
 def get_db(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -88,6 +90,170 @@ def ensure_column(conn, table, col_name, col_def_sql):
     cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if col_name not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def_sql}")
+
+
+def get_schema_version(conn) -> int:
+    row = conn.execute("PRAGMA user_version").fetchone()
+    if not row:
+        return 0
+    try:
+        return int(row[0])
+    except (TypeError, ValueError, IndexError):
+        return 0
+
+
+def set_schema_version(conn, version: int):
+    conn.execute(f"PRAGMA user_version = {int(version)}")
+
+
+def _foreign_key_map(conn, table_name: str):
+    fk_rows = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+    result = {}
+    for row in fk_rows:
+        result[row["from"]] = {
+            "table": row["table"],
+            "on_delete": (row["on_delete"] or "").upper(),
+        }
+    return result
+
+
+def _rebuild_table(conn, table_name: str, create_sql: str, copy_columns: list[str], index_sql: list[str] | None = None):
+    tmp_name = f"{table_name}__old"
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(f"ALTER TABLE {table_name} RENAME TO {tmp_name}")
+        conn.execute(create_sql)
+        column_list = ", ".join(copy_columns)
+        conn.execute(
+            f"INSERT INTO {table_name} ({column_list}) SELECT {column_list} FROM {tmp_name}"
+        )
+        conn.execute(f"DROP TABLE {tmp_name}")
+        for stmt in index_sql or []:
+            conn.execute(stmt)
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
+def ensure_fk_migrations(conn):
+    item_link_fks = _foreign_key_map(conn, "item_links")
+    needs_item_links_migration = (
+        item_link_fks.get("found_item_id", {}).get("on_delete") != "CASCADE"
+        or item_link_fks.get("lost_item_id", {}).get("on_delete") != "CASCADE"
+        or item_link_fks.get("created_by", {}).get("on_delete") != "SET NULL"
+    )
+    if needs_item_links_migration:
+        _rebuild_table(
+            conn,
+            "item_links",
+            """
+            CREATE TABLE item_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                found_item_id INTEGER NOT NULL,
+                lost_item_id INTEGER NOT NULL,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(found_item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY(lost_item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL,
+                UNIQUE(found_item_id, lost_item_id)
+            )
+            """,
+            ["id", "found_item_id", "lost_item_id", "created_by", "created_at"],
+            [
+                "CREATE INDEX IF NOT EXISTS idx_item_links_found ON item_links(found_item_id)",
+                "CREATE INDEX IF NOT EXISTS idx_item_links_lost ON item_links(lost_item_id)",
+            ],
+        )
+
+    items_fks = _foreign_key_map(conn, "items")
+    if items_fks.get("created_by", {}).get("on_delete") != "SET NULL":
+        _rebuild_table(
+            conn,
+            "items",
+            """
+            CREATE TABLE items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                category TEXT NOT NULL,
+                location TEXT,
+                event_date TEXT,
+                contact TEXT,
+                status TEXT NOT NULL DEFAULT 'Lost',
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                lost_what TEXT,
+                lost_last_name TEXT,
+                lost_first_name TEXT,
+                lost_group_leader TEXT,
+                lost_street TEXT,
+                lost_number TEXT,
+                lost_additional TEXT,
+                lost_postcode TEXT,
+                lost_town TEXT,
+                lost_country TEXT,
+                lost_email TEXT,
+                lost_phone TEXT,
+                lost_leaving_date TEXT,
+                lost_contact_way TEXT,
+                lost_notes TEXT,
+                postage_price REAL,
+                postage_paid INTEGER NOT NULL DEFAULT 0,
+                public_token TEXT,
+                public_id TEXT,
+                public_enabled INTEGER NOT NULL DEFAULT 1,
+                public_photos_enabled INTEGER NOT NULL DEFAULT 1,
+                review_pending INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """,
+            [
+                "id", "kind", "title", "description", "category", "location", "event_date", "contact",
+                "status", "created_by", "created_at", "updated_at", "lost_what", "lost_last_name",
+                "lost_first_name", "lost_group_leader", "lost_street", "lost_number", "lost_additional",
+                "lost_postcode", "lost_town", "lost_country", "lost_email", "lost_phone",
+                "lost_leaving_date", "lost_contact_way", "lost_notes", "postage_price", "postage_paid",
+                "public_token", "public_id", "public_enabled", "public_photos_enabled", "review_pending",
+            ],
+            [
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_public_id ON items(public_id)",
+            ],
+        )
+
+    audit_fks = _foreign_key_map(conn, "audit_log")
+    if audit_fks.get("actor_user_id", {}).get("on_delete") != "SET NULL":
+        _rebuild_table(
+            conn,
+            "audit_log",
+            """
+            CREATE TABLE audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_user_id INTEGER,
+                action TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id INTEGER,
+                details TEXT,
+                old_values TEXT,
+                new_values TEXT,
+                meta_json TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """,
+            [
+                "id", "actor_user_id", "action", "entity_type", "entity_id", "details",
+                "old_values", "new_values", "meta_json", "ip_address", "user_agent", "created_at",
+            ],
+            [
+                "CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)",
+            ],
+        )
 
 
 def ensure_rbac_defaults(conn):
@@ -344,9 +510,12 @@ def ensure_item_search_schema(conn):
             )
             """
         )
+        conn.execute("DROP TRIGGER IF EXISTS item_search_ai")
+        conn.execute("DROP TRIGGER IF EXISTS item_search_au")
+        conn.execute("DROP TRIGGER IF EXISTS item_search_ad")
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS item_search_ai AFTER INSERT ON items BEGIN
+            CREATE TRIGGER item_search_ai AFTER INSERT ON items BEGIN
               INSERT INTO item_search(
                 rowid, item_id, kind, title, description, category, location, lost_last_name, lost_first_name
               ) VALUES (
@@ -359,7 +528,7 @@ def ensure_item_search_schema(conn):
         )
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS item_search_au AFTER UPDATE ON items BEGIN
+            CREATE TRIGGER item_search_au AFTER UPDATE ON items BEGIN
               DELETE FROM item_search WHERE rowid = old.id;
               INSERT INTO item_search(
                 rowid, item_id, kind, title, description, category, location, lost_last_name, lost_first_name
@@ -373,11 +542,12 @@ def ensure_item_search_schema(conn):
         )
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS item_search_ad AFTER DELETE ON items BEGIN
+            CREATE TRIGGER item_search_ad AFTER DELETE ON items BEGIN
               DELETE FROM item_search WHERE rowid = old.id;
             END
             """
         )
+        conn.execute("DELETE FROM item_search")
         conn.execute(
             """
             INSERT INTO item_search(
@@ -388,7 +558,6 @@ def ensure_item_search_schema(conn):
                 coalesce(i.title, ''), coalesce(i.description, ''), coalesce(i.category, ''),
                 coalesce(i.location, ''), coalesce(i.lost_last_name, ''), coalesce(i.lost_first_name, '')
             FROM items i
-            WHERE NOT EXISTS (SELECT 1 FROM item_search s WHERE s.rowid = i.id)
             """
         )
         _fts5_available = True
@@ -498,7 +667,6 @@ def init_db(db_path: str):
     )
 
     ensure_item_links_schema(conn)
-    ensure_item_search_schema(conn)
 
     conn.execute(
         """
@@ -907,6 +1075,19 @@ def init_db(db_path: str):
             (generate_public_item_id(conn), r["id"]),
         )
 
+    schema_version = get_schema_version(conn)
+    if schema_version < 1:
+        set_schema_version(conn, 1)
+        schema_version = 1
+    if schema_version < 2:
+        ensure_fk_migrations(conn)
+        ensure_item_search_schema(conn)
+        set_schema_version(conn, 2)
+        schema_version = 2
+    if schema_version < SCHEMA_VERSION_CURRENT:
+        set_schema_version(conn, SCHEMA_VERSION_CURRENT)
+    ensure_item_search_schema(conn)
+
     conn.commit()
     conn.close()
 
@@ -996,5 +1177,53 @@ def auto_create_followup_reminders(conn):
         )
         created += 1
     return created
+
+
+def _subtract_months(reference_dt: datetime, months: int) -> datetime:
+    year = reference_dt.year
+    month = reference_dt.month - int(months)
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(reference_dt.day, calendar.monthrange(year, month)[1])
+    return reference_dt.replace(year=year, month=month, day=day)
+
+
+def auto_delete_stale_items(conn, retention_months: int | None = None):
+    months = int(retention_months or 0)
+    if months <= 0:
+        return []
+    cutoff = _subtract_months(datetime.now(timezone.utc), months).strftime("%Y-%m-%dT%H:%M:%S")
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM items
+        WHERE coalesce(updated_at, created_at) IS NOT NULL
+          AND coalesce(updated_at, created_at) <= ?
+        ORDER BY coalesce(updated_at, created_at) ASC, id ASC
+        """,
+        (cutoff,),
+    ).fetchall()
+    deleted = []
+    for row in rows:
+        item_id = int(row["id"])
+        photos = conn.execute(
+            "SELECT filename FROM photos WHERE item_id=? ORDER BY id ASC",
+            (item_id,),
+        ).fetchall()
+        conn.execute("DELETE FROM item_links WHERE found_item_id=? OR lost_item_id=?", (item_id, item_id))
+        conn.execute("DELETE FROM photos WHERE item_id=?", (item_id,))
+        conn.execute("DELETE FROM reminders WHERE item_id=?", (item_id,))
+        conn.execute("DELETE FROM sent_item_emails WHERE item_id=?", (item_id,))
+        conn.execute("DELETE FROM item_mail_messages WHERE item_id=?", (item_id,))
+        conn.execute("DELETE FROM items WHERE id=?", (item_id,))
+        deleted.append(
+            {
+                "item": {key: row[key] for key in row.keys()},
+                "photo_filenames": [p["filename"] for p in photos],
+                "last_touch": row["updated_at"] or row["created_at"],
+            }
+        )
+    return deleted
 
 

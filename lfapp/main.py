@@ -1,47 +1,63 @@
-from datetime import datetime, timezone
 import base64
+import imaplib
+import ipaddress
+import os
+import re
+import secrets
+import smtplib
+import sqlite3
+import time
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import make_msgid
 from pathlib import Path
-import ipaddress
-import imaplib
-import os
-import re
-import secrets
-import smtplib
-import time
 
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 
 from lfapp.auth_core import build_auth_helpers
 from lfapp.category_utils import (
     category_names as cat_category_names,
+)
+from lfapp.category_utils import (
     get_categories as cat_get_categories,
+)
+from lfapp.category_utils import (
     safe_default_category as cat_safe_default_category,
 )
+from lfapp.crypto_utils import decrypt_secret, encrypt_secret
 from lfapp.db_utils import (
     RBAC_PERMISSION_KEYS,
     auto_create_followup_reminders,
+    auto_delete_stale_items,
     auto_mark_lost_forever,
     ensure_item_links_schema,
-    get_db as db_get_db,
-    get_roles as db_get_roles,
     get_setting,
-    init_db as db_init_db,
-    is_totp_mandatory as db_is_totp_mandatory,
     now_utc,
     prune_audit_log,
     set_setting,
+)
+from lfapp.db_utils import (
+    get_db as db_get_db,
+)
+from lfapp.db_utils import (
+    get_roles as db_get_roles,
+)
+from lfapp.db_utils import (
+    init_db as db_init_db,
+)
+from lfapp.db_utils import (
+    is_totp_mandatory as db_is_totp_mandatory,
 )
 from lfapp.filter_utils import (
     build_filters,
     clean_saved_query_string,
     get_multi_values,
-    get_saved_searches as filter_get_saved_searches,
     saved_search_target,
+)
+from lfapp.filter_utils import (
+    get_saved_searches as filter_get_saved_searches,
 )
 from lfapp.item_form_utils import (
     DEFAULT_DESCRIPTION_BLACKLIST,
@@ -52,7 +68,6 @@ from lfapp.item_form_utils import (
     read_lost_fields_from_form,
     validate_lost_fields,
 )
-from lfapp.crypto_utils import decrypt_secret, encrypt_secret
 from lfapp.link_match_utils import (
     find_matches,
     get_linked_items,
@@ -81,6 +96,7 @@ from lfapp.totp_utils import (
     user_totp_enabled,
     verify_totp,
 )
+from lfapp.worker_tasks import build_worker_tasks
 
 DEFAULT_DATA_DIR = "/app/data"
 DEFAULT_UPLOAD_DIR = "/app/uploads"
@@ -228,6 +244,8 @@ SAVED_SEARCH_MULTI_KEYS = {
     "index": {"kind", "status", "category"},
     "matches": {"kind", "source_status", "candidate_status", "category"},
 }
+MAIL_TRANSPORT_ERRORS = (smtplib.SMTPException, OSError, RuntimeError, ValueError)
+IMAP_OPERATION_ERRORS = (imaplib.IMAP4.error, OSError, RuntimeError, ValueError)
 
 
 def _parse_proxy_networks(raw: str):
@@ -336,16 +354,13 @@ def create_app(config: dict | None = None):
     public_lost_daily_max_attempts = int(app.config.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", os.environ.get("PUBLIC_LOST_DAILY_MAX_ATTEMPTS", "30")))
     public_lost_max_files = int(app.config.get("PUBLIC_LOST_MAX_FILES", os.environ.get("PUBLIC_LOST_MAX_FILES", "5")))
     public_lost_captcha_enabled = _is_truthy(app.config.get("PUBLIC_LOST_CAPTCHA_ENABLED", os.environ.get("PUBLIC_LOST_CAPTCHA_ENABLED", "false")))
+    item_retention_months = int(app.config.get("ITEM_RETENTION_MONTHS", os.environ.get("ITEM_RETENTION_MONTHS", "12")))
 
     trusted_proxy_networks = _parse_proxy_networks(
         str(app.config.get("TRUSTED_PROXY_CIDRS", os.environ.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)))
     )
 
     state = {
-        "db_inited": False,
-        "status_maintenance_day": None,
-        "audit_maintenance_day": None,
-        "last_mail_poll_ts": 0,
         "mailbox_counts_cache_ts": 0,
         "mailbox_counts_cache": {"folders": {}, "unread_total": 0, "read_total": 0, "total": 0},
     }
@@ -721,19 +736,19 @@ def create_app(config: dict | None = None):
                         imaplib.Time2Internaldate(time.time()),
                         msg.as_bytes(),
                     )
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     app.logger.exception("IMAP append failed for outgoing mail to=%s subject=%s", to_address, subject)
                 finally:
                     if imap_conn is not None:
                         try:
                             imap_conn.logout()
-                        except Exception:
+                        except IMAP_OPERATION_ERRORS:
                             pass
             metadata = {"message_id": str(msg.get("Message-ID") or "").strip() or None}
             if return_metadata:
                 return True, "Mail sent.", metadata
             return True, "Mail sent."
-        except Exception as exc:
+        except MAIL_TRANSPORT_ERRORS as exc:
             app.logger.exception("SMTP send failed to=%s subject=%s", to_address, subject)
             if return_metadata:
                 return False, str(exc), {}
@@ -785,7 +800,7 @@ def create_app(config: dict | None = None):
         try:
             status, _ = imap_conn.status(_quote_imap_mailbox(mailbox_name), "(UIDNEXT)")
             return status == "OK"
-        except Exception:
+        except IMAP_OPERATION_ERRORS:
             return False
 
     def _ensure_mailbox(imap_conn, mailbox_name: str):
@@ -921,7 +936,7 @@ def create_app(config: dict | None = None):
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def get_imap_mailbox_counts(force: bool = False):
@@ -971,7 +986,7 @@ def create_app(config: dict | None = None):
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def fetch_imap_mailbox_messages(folder_name: str, limit: int = 60):
@@ -1025,7 +1040,7 @@ def create_app(config: dict | None = None):
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def fetch_imap_message_detail(folder_name: str, uid: str):
@@ -1091,14 +1106,14 @@ def create_app(config: dict | None = None):
                 return False, "Could not expunge deleted message."
             invalidate_mailbox_counts_cache()
             return True, "Message deleted."
-        except Exception as exc:
+        except IMAP_OPERATION_ERRORS as exc:
             app.logger.exception("IMAP delete failed folder=%s uid=%s", folder_name, uid)
             return False, str(exc)
         finally:
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def set_imap_message_seen(folder_name: str, uid: str, seen: bool):
@@ -1115,14 +1130,14 @@ def create_app(config: dict | None = None):
                 return False, f"Could not mark message as {'read' if seen else 'unread'}."
             invalidate_mailbox_counts_cache()
             return True, f"Message marked as {'read' if seen else 'unread'}."
-        except Exception as exc:
+        except IMAP_OPERATION_ERRORS as exc:
             app.logger.exception("IMAP seen update failed folder=%s uid=%s seen=%s", folder_name, uid, seen)
             return False, str(exc)
         finally:
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def move_imap_message(source_folder: str, uid: str, target_folder: str):
@@ -1158,14 +1173,14 @@ def create_app(config: dict | None = None):
                 return False, "Could not finalize moved message."
             invalidate_mailbox_counts_cache()
             return True, "Message moved."
-        except Exception as exc:
+        except IMAP_OPERATION_ERRORS as exc:
             app.logger.exception("IMAP move failed source=%s uid=%s target=%s", source_folder, uid, target_folder)
             return False, str(exc)
         finally:
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     def csrf_token():
@@ -1462,7 +1477,7 @@ def create_app(config: dict | None = None):
                     imap_conn.expunge()
                 except Exception:
                     pass
-        except Exception:
+        except IMAP_OPERATION_ERRORS:
             app.logger.exception("Ticket mailbox polling failed")
             result["ok"] = False
             result["errors"] += 1
@@ -1487,17 +1502,17 @@ def create_app(config: dict | None = None):
                         set_setting(conn, "mail_ticket_poll_lock_until", "0")
                         set_setting(conn, "mail_ticket_poll_lock_token", "")
                     conn.commit()
-                except Exception:
+                except sqlite3.Error:
                     try:
                         conn.rollback()
-                    except Exception:
+                    except sqlite3.Error:
                         pass
             if conn is not None:
                 conn.close()
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
         return result
 
@@ -1522,14 +1537,14 @@ def create_app(config: dict | None = None):
                 True,
                 "IMAP connection successful. Inbox is reachable and ticket folders are ready.",
             )
-        except Exception as exc:
+        except IMAP_OPERATION_ERRORS as exc:
             app.logger.exception("IMAP connection test failed")
             return False, str(exc)
         finally:
             if imap_conn is not None:
                 try:
                     imap_conn.logout()
-                except Exception:
+                except IMAP_OPERATION_ERRORS:
                     pass
 
     auth_helpers = build_auth_helpers(
@@ -1545,12 +1560,26 @@ def create_app(config: dict | None = None):
     has_permission = auth_helpers["has_permission"]
     require_permission = auth_helpers["require_permission"]
     audit = auth_helpers["audit"]
-
-    @app.before_request
-    def _ensure_db():
-        if not state["db_inited"]:
-            db_init_db(db_path)
-            state["db_inited"] = True
+    db_init_db(db_path)
+    app.extensions["lostfound_worker"] = build_worker_tasks(
+        app,
+        {
+            "get_db": get_db,
+            "get_setting": get_setting,
+            "set_setting": set_setting,
+            "now_utc": now_utc,
+            "auto_mark_lost_forever": auto_mark_lost_forever,
+            "auto_create_followup_reminders": auto_create_followup_reminders,
+            "auto_delete_stale_items": auto_delete_stale_items,
+            "prune_audit_log": prune_audit_log,
+            "audit": audit,
+            "upload_dir": upload_dir,
+            "item_retention_months": item_retention_months,
+            "audit_retention_days": audit_retention_days,
+            "audit_max_rows": audit_max_rows,
+            "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
+        },
+    )
 
     @app.before_request
     def _enforce_session_max_age():
@@ -1568,64 +1597,6 @@ def create_app(config: dict | None = None):
             session.clear()
             flash("Session expired. Please log in again.", "warning")
             return redirect(url_for("login", next=request.path))
-
-    @app.before_request
-    def _auto_status_maintenance():
-        today = datetime.now(timezone.utc).date().isoformat()
-        if state["status_maintenance_day"] == today:
-            return
-
-        conn = get_db()
-        try:
-            changed = auto_mark_lost_forever(conn)
-            reminders = auto_create_followup_reminders(conn)
-            conn.commit()
-        finally:
-            conn.close()
-
-        state["status_maintenance_day"] = today
-        if changed > 0:
-            app.logger.info("Auto status maintenance: %s items set to 'Lost forever'.", changed)
-        if reminders > 0:
-            app.logger.info("Auto reminders: %s follow-up reminders created.", reminders)
-
-    @app.before_request
-    def _auto_audit_maintenance():
-        today = datetime.now(timezone.utc).date().isoformat()
-        if state["audit_maintenance_day"] == today:
-            return
-        conn = get_db()
-        try:
-            deleted_by_age, deleted_by_count = prune_audit_log(
-                conn,
-                retention_days=audit_retention_days,
-                max_rows=audit_max_rows,
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        state["audit_maintenance_day"] = today
-        if deleted_by_age or deleted_by_count:
-            app.logger.info(
-                "Audit rotation: deleted_by_age=%s deleted_by_count=%s",
-                deleted_by_age,
-                deleted_by_count,
-            )
-
-    @app.before_request
-    def _auto_ticket_mail_poll():
-        now_ts = int(time.time())
-        cfg = get_mail_ticket_settings()
-        if not cfg["enabled"]:
-            return
-        if now_ts - int(state.get("last_mail_poll_ts") or 0) < cfg["poll_interval_seconds"]:
-            return
-        poll_result = poll_ticket_mailbox_once()
-        state["last_mail_poll_ts"] = now_ts
-        if poll_result["processed"] > 0 or poll_result["unassigned"] > 0 or poll_result["duplicates"] > 0:
-            app.logger.info("Ticket mail poll: %s", poll_result["message"])
-        elif not poll_result["ok"] and not poll_result["locked"]:
-            app.logger.warning("Ticket mail poll failed: %s", poll_result["message"])
 
     @app.context_processor
     def inject_globals():

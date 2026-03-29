@@ -7,7 +7,9 @@ Code layout note:
 - Root `app.py` is a compatibility entry-point that calls `create_app()`, so existing `gunicorn app:app` setup keeps working.
 - `create_app(config=None)` supports optional config overrides (mainly useful for tests).
 - Extracted helper modules include:
+  - `lfapp/cli.py`
   - `lfapp/db_utils.py`
+  - `lfapp/worker_tasks.py`
   - `lfapp/totp_utils.py`
   - `lfapp/match_utils.py`
   - `lfapp/link_match_utils.py`
@@ -52,6 +54,7 @@ Recommended security settings:
 - `PUBLIC_LOST_DAILY_MAX_ATTEMPTS=30`
 - `PUBLIC_LOST_MAX_FILES=5`
 - `PUBLIC_LOST_CAPTCHA_ENABLED=false` (set `true` to enable captcha on public lost form)
+- `ITEM_RETENTION_MONTHS=12` (automatic deletion of items after N months without updates; set `0` to disable)
 - `AUDIT_RETENTION_DAYS=180` (daily cleanup by age; set `0` to disable)
 - `AUDIT_MAX_ROWS=200000` (daily cap by row count; set `0` to disable)
 - `AUDIT_REDACT_ENABLED=true`
@@ -69,7 +72,7 @@ chmod +x deploy.sh
 What this does:
 - creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`)
 - validates `.env`
-- builds and starts `app`, `nginx`, and `certbot`
+- builds and starts `app`, `worker`, `nginx`, and `certbot`
 
 ## 4. Initial Let's Encrypt Certificate (Optional in same script)
 ```bash
@@ -82,6 +85,7 @@ This requests the initial certificate and reloads Nginx with symlinked cert file
 ```bash
 docker compose ps
 docker compose logs -f app
+docker compose logs -f worker
 docker compose logs -f nginx
 docker compose logs -f certbot
 ```
@@ -135,12 +139,12 @@ Backup these folders regularly:
 - `certbot/conf/`
 
 ## 9. CI / Tests
-- CI config is in `.github/workflows/ci.yml` and runs a factory smoke check plus `pytest`.
+- CI config is in `.github/workflows/ci.yml` and runs a factory smoke check, `pytest`, and `ruff`.
 - Local test run:
 ```bash
-python -m pip install -r requirements.txt
-python -m pip install pytest
+python -m pip install -r requirements-dev.txt
 pytest -q
+ruff check lfapp tests app.py
 ```
 
 
@@ -158,6 +162,22 @@ docker compose exec app python -m lfapp.cli reset-initial-admin-password
 Optional non-interactive mode:
 ```bash
 docker compose exec app python -m lfapp.cli reset-initial-admin-password --password 'YourNewStrongPassword'
+```
+
+## Worker / Scheduled Jobs
+Run one maintenance cycle manually:
+```bash
+docker compose exec worker python -m lfapp.cli run-maintenance
+```
+
+Run one mailbox poll manually:
+```bash
+docker compose exec worker python -m lfapp.cli run-mail-poll
+```
+
+Run one full worker cycle manually:
+```bash
+docker compose exec worker python -m lfapp.cli run-worker --once
 ```
 
 Behavior:

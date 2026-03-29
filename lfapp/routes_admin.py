@@ -1,5 +1,5 @@
-import sqlite3
 import re
+import sqlite3
 from email.utils import getaddresses, parseaddr
 
 from flask import abort, flash, redirect, render_template, request, session, url_for

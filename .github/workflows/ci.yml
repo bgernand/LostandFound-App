@@ -26,8 +26,7 @@ jobs:
           python3 -m venv .venv
           . .venv/bin/activate
           pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-dev.txt
 
       - name: Factory smoke check
         run: |
@@ -38,3 +37,8 @@ jobs:
         run: |
           . .venv/bin/activate
           pytest -q
+
+      - name: Ruff
+        run: |
+          . .venv/bin/activate
+          ruff check lfapp tests app.py

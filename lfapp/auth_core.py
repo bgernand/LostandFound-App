@@ -1,5 +1,5 @@
-import sqlite3
 import json
+import sqlite3
 from functools import wraps
 
 from flask import abort, has_request_context, redirect, request, session, url_for

@@ -1,6 +1,5 @@
-from datetime import datetime
 import re
-
+from datetime import datetime
 
 DEFAULT_DESCRIPTION_BLACKLIST = (
     "unknown",

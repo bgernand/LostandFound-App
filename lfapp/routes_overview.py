@@ -20,7 +20,6 @@ def register_overview_routes(app, deps: dict):
     get_db = deps["get_db"]
     current_user = deps["current_user"]
     login_required = deps["login_required"]
-    require_role = deps["require_role"]
     require_permission = deps["require_permission"]
     category_names = deps["category_names"]
     now_utc = deps["now_utc"]

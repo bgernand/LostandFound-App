@@ -18,7 +18,6 @@ def register_auth_routes(app, deps: dict):
     totp_qr_data_uri = deps["totp_qr_data_uri"]
     is_totp_mandatory = deps["is_totp_mandatory"]
     audit = deps["audit"]
-    now_utc = deps["now_utc"]
     LOGIN_WINDOW_SECONDS = deps["LOGIN_WINDOW_SECONDS"]
     LOGIN_MAX_ATTEMPTS = deps["LOGIN_MAX_ATTEMPTS"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]

@@ -2,7 +2,6 @@ import re
 from datetime import datetime
 from difflib import SequenceMatcher
 
-
 STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "for", "with", "in", "on",
     "is", "are", "am", "my", "your", "our", "this", "that", "it"

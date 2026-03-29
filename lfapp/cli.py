@@ -1,11 +1,13 @@
 import argparse
 import os
+import time
 from getpass import getpass
 from pathlib import Path
 
 from werkzeug.security import generate_password_hash
 
 from lfapp.db_utils import ensure_column, get_db
+from lfapp.main import create_app
 
 
 def _resolve_db_path(db_path_arg: str | None) -> Path:
@@ -99,15 +101,77 @@ def main():
         default=10,
         help="Minimum password length check (default: 10).",
     )
+    p_maint = sub.add_parser(
+        "run-maintenance",
+        help="Run scheduled maintenance jobs once.",
+    )
+    p_maint.add_argument(
+        "--force",
+        action="store_true",
+        help="Run daily jobs even if they already ran today.",
+    )
+
+    sub.add_parser(
+        "run-mail-poll",
+        help="Run mailbox poll once.",
+    )
+
+    p_worker = sub.add_parser(
+        "run-worker",
+        help="Run background worker loop for maintenance and mailbox polling.",
+    )
+    p_worker.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Loop interval in seconds (default: 60).",
+    )
+    p_worker.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one worker cycle and exit.",
+    )
 
     args = parser.parse_args()
-    if args.command != "reset-initial-admin-password":
-        raise RuntimeError("Unsupported command.")
+    if args.command == "reset-initial-admin-password":
+        db_path = _resolve_db_path(args.db_path)
+        password = _read_password_from_input(args.password, max(1, int(args.min_length)))
+        username = reset_initial_admin_password(db_path, password)
+        print(f"INITIAL_ADMIN password reset successful for user '{username}'.")
+        return
 
-    db_path = _resolve_db_path(args.db_path)
-    password = _read_password_from_input(args.password, max(1, int(args.min_length)))
-    username = reset_initial_admin_password(db_path, password)
-    print(f"INITIAL_ADMIN password reset successful for user '{username}'.")
+    app = create_app()
+    worker = (app.extensions.get("lostfound_worker") or {})
+    if not worker:
+        raise RuntimeError("Worker services are not registered.")
+
+    if args.command == "run-maintenance":
+        result = worker["run_scheduled_jobs_once"](force_maintenance=bool(args.force))
+        print(
+            "maintenance"
+            f" status={result['status']}"
+            f" audit={result['audit']}"
+            f" mail_poll={result['mail_poll']}"
+        )
+        return
+
+    if args.command == "run-mail-poll":
+        result = worker["run_mail_poll_once"]()
+        print(f"mail_poll={result}")
+        return
+
+    if args.command == "run-worker":
+        interval = max(15, int(args.interval))
+        if args.once:
+            result = worker["run_scheduled_jobs_once"](force_maintenance=False)
+            print(f"worker_cycle={result}")
+            return
+        while True:
+            result = worker["run_scheduled_jobs_once"](force_maintenance=False)
+            print(f"worker_cycle={result}", flush=True)
+            time.sleep(interval)
+
+    raise RuntimeError("Unsupported command.")
 
 
 if __name__ == "__main__":
