@@ -70,7 +70,7 @@
 
     var label = document.createElement("span");
     label.className = "button-inner";
-    label.textContent = "Lost & Found";
+    label.textContent = "L&F";
     link.appendChild(label);
 
     item.appendChild(link);
