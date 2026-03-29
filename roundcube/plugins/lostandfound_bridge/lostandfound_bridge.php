@@ -23,7 +23,7 @@ class lostandfound_bridge extends rcube_plugin
         if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
             $this->login_action();
         }
-        if (!$rcmail->user && ($task === '' || $task === 'login')) {
+        if (!$rcmail->user) {
             $this->redirect_to_webmail_entry();
         }
 

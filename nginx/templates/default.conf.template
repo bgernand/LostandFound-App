@@ -45,10 +45,10 @@ server {
 
   location /webmail/ {
     set $laf_force_webmail_login 0;
-    if ($arg__task = login) {
+    if ($request_uri ~* "^/webmail/\?.*_task=login(?:&|$)") {
       set $laf_force_webmail_login 1;
     }
-    if ($arg__action = plugin.lostandfound_bridge.login) {
+    if ($request_uri ~* "_action=plugin\.lostandfound_bridge\.login(?:&|$)") {
       set $laf_force_webmail_login 0;
     }
     if ($laf_force_webmail_login = 1) {
