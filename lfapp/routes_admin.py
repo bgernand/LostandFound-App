@@ -408,17 +408,18 @@ def register_admin_routes(app, deps: dict):
         active_settings_section=None,
     ):
         allowed_sections = {"general", "mail", "auto-mail", "templates", "legal-pages"}
-        if active_settings_section not in allowed_sections:
-            active_settings_section = "general"
+        section_is_valid = active_settings_section in allowed_sections
         can_manage_mail_templates = bool(has_permission("admin.access", user=current_user()))
-        if active_settings_section == "templates" and not can_manage_mail_templates:
-            active_settings_section = "general"
         conn = get_db()
         if description_quality_settings is None:
             description_quality_settings = get_description_quality_settings(conn)
         if smtp_settings is None:
             smtp_settings = get_smtp_settings(conn)
         mail_ticket_settings = get_mail_ticket_settings(conn)
+        if not section_is_valid:
+            active_settings_section = "mail" if mail_ticket_settings["enabled"] else "general"
+        if active_settings_section == "templates" and not can_manage_mail_templates:
+            active_settings_section = "mail" if mail_ticket_settings["enabled"] else "general"
         if public_lost_confirm_settings is None:
             public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
         auto_mail_rules = get_auto_mail_rules(conn)
