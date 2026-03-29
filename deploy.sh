@@ -82,10 +82,34 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
   fi
 fi
 
-set -a
-# shellcheck disable=SC1091
-source ./.env
-set +a
+load_env_file() {
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    local line="$raw_line"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "${line:0:1}" == "#" ]] && continue
+    [[ "$line" != *=* ]] && continue
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+
+    if [[ ${#value} -ge 2 ]]; then
+      if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+        value="${value:1:${#value}-2}"
+      elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < ./.env
+}
+
+load_env_file
 
 is_invalid_example_value "${SECRET_KEY:-}" && fail "SECRET_KEY in .env is missing or still a placeholder."
 is_invalid_example_value "${INITIAL_ADMIN_PASSWORD:-}" && fail "INITIAL_ADMIN_PASSWORD in .env is missing or still a placeholder."
