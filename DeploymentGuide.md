@@ -74,10 +74,11 @@ chmod +x deploy.sh
 ```
 
 What this does:
-- creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`)
+- creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`, `roundcube/data`)
 - validates `.env`
 - builds and starts `app`, `worker`, `nginx`, and `certbot`
 - also starts `roundcube` when `ROUNDCUBE_ENABLED=true` is set in `.env`
+- fixes ownership for app data and Roundcube data volumes
 
 ## 4. Initial Let's Encrypt Certificate (Optional in same script)
 ```bash
