@@ -309,6 +309,12 @@ def create_app(config: dict | None = None):
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     if config:
         app.config.update(config)
+    if not app.config.get("INITIAL_ADMIN_PASSWORD") and (
+        bool(app.config.get("TESTING")) or os.environ.get("CI", "").strip().lower() == "true"
+    ):
+        # CI and test factory smoke checks should not depend on a production
+        # first-start password being present in process environment.
+        app.config["INITIAL_ADMIN_PASSWORD"] = "ci-bootstrap-initial-admin-password"
 
     secret_key = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not secret_key:
