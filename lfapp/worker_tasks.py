@@ -8,6 +8,7 @@ def build_worker_tasks(app, deps: dict):
     set_setting = deps["set_setting"]
     auto_mark_lost_forever = deps["auto_mark_lost_forever"]
     auto_create_followup_reminders = deps["auto_create_followup_reminders"]
+    run_auto_mails_once = deps["run_auto_mails_once"]
     auto_delete_stale_items = deps["auto_delete_stale_items"]
     prune_audit_log = deps["prune_audit_log"]
     audit = deps["audit"]
@@ -24,10 +25,11 @@ def build_worker_tasks(app, deps: dict):
             if not force:
                 last_day = (get_setting(conn, "worker_status_maintenance_day", "") or "").strip()
                 if last_day == today:
-                    return {"ran": False, "changed": 0, "reminders": 0, "deleted": 0}
+                    return {"ran": False, "changed": 0, "reminders": 0, "auto_mails": 0, "deleted": 0}
 
             changed = auto_mark_lost_forever(conn)
             reminders = auto_create_followup_reminders(conn)
+            auto_mails = run_auto_mails_once(conn)
             auto_deleted_items = auto_delete_stale_items(conn, retention_months=item_retention_months)
             set_setting(conn, "worker_status_maintenance_day", today)
             conn.commit()
@@ -60,6 +62,8 @@ def build_worker_tasks(app, deps: dict):
             app.logger.info("Auto status maintenance: %s items set to 'Lost forever'.", changed)
         if reminders > 0:
             app.logger.info("Auto reminders: %s follow-up reminders created.", reminders)
+        if auto_mails > 0:
+            app.logger.info("AutoMail: %s messages sent.", auto_mails)
         if auto_deleted_items:
             app.logger.info(
                 "Auto item retention cleanup: %s items deleted after %s month(s) without updates.",
@@ -70,6 +74,7 @@ def build_worker_tasks(app, deps: dict):
             "ran": True,
             "changed": changed,
             "reminders": reminders,
+            "auto_mails": auto_mails,
             "deleted": len(auto_deleted_items),
         }
 

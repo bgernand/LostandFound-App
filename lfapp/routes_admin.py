@@ -33,6 +33,7 @@ def register_admin_routes(app, deps: dict):
     encrypt_setting_secret = deps["encrypt_setting_secret"]
     settings_encryption_ready = deps["settings_encryption_ready"]
     get_public_lost_confirmation_settings = deps["get_public_lost_confirmation_settings"]
+    get_auto_mail_rules = deps["get_auto_mail_rules"]
     get_item_email_templates = deps["get_item_email_templates"]
     validate_mail_template_variables = deps["validate_mail_template_variables"]
     render_mail_template = deps["render_mail_template"]
@@ -48,6 +49,7 @@ def register_admin_routes(app, deps: dict):
     DEFAULT_PUBLIC_LOST_CONFIRM_BODY = deps["DEFAULT_PUBLIC_LOST_CONFIRM_BODY"]
     PUBLIC_LOST_CONFIRM_ALLOWED_VARS = deps["PUBLIC_LOST_CONFIRM_ALLOWED_VARS"]
     ITEM_EMAIL_ALLOWED_VARS = deps["ITEM_EMAIL_ALLOWED_VARS"]
+    STATUSES = deps["STATUSES"]
     MIN_PASSWORD_LENGTH = deps["MIN_PASSWORD_LENGTH"]
 
     def _mail_subject_summary(subject: str):
@@ -417,6 +419,7 @@ def register_admin_routes(app, deps: dict):
         mail_ticket_settings = get_mail_ticket_settings(conn)
         if public_lost_confirm_settings is None:
             public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
+        auto_mail_rules = get_auto_mail_rules(conn)
         if legal_notice_text is None:
             legal_notice_text = get_setting(conn, "legal_notice_text", DEFAULT_LEGAL_NOTICE_TEXT) or DEFAULT_LEGAL_NOTICE_TEXT
         if privacy_policy_text is None:
@@ -435,9 +438,11 @@ def register_admin_routes(app, deps: dict):
             smtp_settings=smtp_settings,
             mail_ticket_settings=mail_ticket_settings,
             public_lost_confirm_settings=public_lost_confirm_settings,
+            auto_mail_rules=auto_mail_rules,
             public_lost_confirm_preview_subject=public_lost_confirm_preview_subject,
             public_lost_confirm_preview_body=public_lost_confirm_preview_body,
             public_lost_confirm_allowed_vars=PUBLIC_LOST_CONFIRM_ALLOWED_VARS,
+            statuses=STATUSES,
             legal_notice_text=legal_notice_text,
             privacy_policy_text=privacy_policy_text,
             item_mail_templates=item_mail_templates,
@@ -734,8 +739,8 @@ def register_admin_routes(app, deps: dict):
                 ),
             )
             conn.execute(
-                "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
-                (now_utc(), int(item["id"])),
+                "UPDATE items SET status='To be answered', status_changed_at=?, updated_at=? WHERE id=?",
+                (now_utc(), now_utc(), int(item["id"])),
             )
             conn.execute(
                 "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
@@ -832,8 +837,8 @@ def register_admin_routes(app, deps: dict):
             ),
         )
         conn.execute(
-            "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
-            (now_utc(), int(item["id"])),
+            "UPDATE items SET status='To be answered', status_changed_at=?, updated_at=? WHERE id=?",
+            (now_utc(), now_utc(), int(item["id"])),
         )
         conn.execute(
             "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
@@ -940,8 +945,8 @@ def register_admin_routes(app, deps: dict):
                 ),
             )
             conn.execute(
-                "UPDATE items SET status='Waiting for answer', updated_at=? WHERE id=?",
-                (now_utc(), int(linked_item["id"])),
+                "UPDATE items SET status='Waiting for answer', status_changed_at=?, updated_at=? WHERE id=?",
+                (now_utc(), now_utc(), int(linked_item["id"])),
             )
             conn.execute(
                 "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
@@ -1747,6 +1752,63 @@ def register_admin_routes(app, deps: dict):
             meta={"preview_subject": preview_subject},
         )
         flash("Public lost confirmation mail settings updated.", "success")
+        return _redirect_admin_settings("auto-mail")
+
+    @app.post("/admin/settings/auto-mail-rules")
+    @require_permission("admin.settings")
+    def admin_set_auto_mail_rules():
+        conn = get_db()
+        current_rules = get_auto_mail_rules(conn)
+        rules_by_id = {rule["id"]: rule for rule in current_rules}
+        old_state = {}
+        new_state = {}
+
+        for rule in current_rules:
+            rule_id = rule["id"]
+            prefix = f"auto_mail_{rule_id}_"
+            enabled = (request.form.get(f"{prefix}enabled") or "") == "1"
+            days_raw = (request.form.get(f"{prefix}days") or "").strip()
+            statuses = [s for s in request.form.getlist(f"{prefix}statuses") if s in STATUSES]
+            subject = (request.form.get(f"{prefix}subject") or "").strip()
+            body = (request.form.get(f"{prefix}body") or "").strip()
+
+            try:
+                days = int(days_raw or str(rule["days"]))
+            except ValueError:
+                conn.close()
+                flash(f"AutoMail '{rule['name']}': days must be a number.", "danger")
+                return _render_admin_settings(active_settings_section="auto-mail")
+            days = max(1, min(3650, days))
+            if not statuses:
+                conn.close()
+                flash(f"AutoMail '{rule['name']}': select at least one status.", "danger")
+                return _render_admin_settings(active_settings_section="auto-mail")
+            ok_subject, unknown_subject = validate_mail_template_variables(subject, set(ITEM_EMAIL_ALLOWED_VARS))
+            ok_body, unknown_body = validate_mail_template_variables(body, set(ITEM_EMAIL_ALLOWED_VARS))
+            unknown_all = sorted(set(unknown_subject) | set(unknown_body))
+            if unknown_all:
+                conn.close()
+                flash("Unknown auto mail variable(s): " + ", ".join(unknown_all), "danger")
+                return _render_admin_settings(active_settings_section="auto-mail")
+
+            old_state[rule_id] = rules_by_id[rule_id]
+            new_state[rule_id] = {
+                "enabled": enabled,
+                "days": days,
+                "statuses": statuses,
+                "subject": subject,
+                "body": body,
+            }
+            set_setting(conn, prefix + "enabled", "1" if enabled else "0")
+            set_setting(conn, prefix + "days", str(days))
+            set_setting(conn, prefix + "statuses", ",".join(statuses))
+            set_setting(conn, prefix + "subject", subject)
+            set_setting(conn, prefix + "body", body)
+
+        conn.commit()
+        conn.close()
+        audit("auto_mail_rules", "settings", None, "updated", old_values=old_state, new_values=new_state)
+        flash("AutoMail rules updated.", "success")
         return _redirect_admin_settings("auto-mail")
 
     @app.post("/admin/settings/legal-privacy")

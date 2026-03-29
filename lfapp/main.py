@@ -170,6 +170,10 @@ Our team will review your request as soon as possible.
 Best regards
 Lost & Found Team
 """
+DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT = "Ihr Gegenstand {{ item_id }} wurde noch nicht gefunden"
+DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY = """Der Gegenstand wurde leider noch nicht gefunden.
+
+Wir hören danach auf, aktiv zu suchen."""
 MAIL_TEMPLATE_VAR_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
     "item_id",
@@ -203,6 +207,18 @@ ITEM_EMAIL_ALLOWED_VARS = {
     "receipt_no",
     "public_url",
 }
+AUTO_MAIL_RULE_DEFS = [
+    {
+        "id": "still_not_found",
+        "name": "Still Not Found",
+        "default_enabled": False,
+        "default_days": 90,
+        "default_statuses": ["Lost"],
+        "default_subject": DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT,
+        "default_body": DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY,
+        "description": "Send once after an item has remained in the selected status for the configured number of days.",
+    },
+]
 
 STATUSES = [
     "Lost",
@@ -652,6 +668,45 @@ def create_app(config: dict | None = None):
             if own_conn:
                 conn.close()
 
+    def get_auto_mail_rules(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            rules = []
+            for rule_def in AUTO_MAIL_RULE_DEFS:
+                prefix = f"auto_mail_{rule_def['id']}_"
+                enabled_raw = get_setting(conn, prefix + "enabled", "1" if rule_def["default_enabled"] else "0")
+                days_raw = get_setting(conn, prefix + "days", str(rule_def["default_days"]))
+                statuses_raw = get_setting(conn, prefix + "statuses", ",".join(rule_def["default_statuses"])) or ""
+                subject = get_setting(conn, prefix + "subject", rule_def["default_subject"]) or rule_def["default_subject"]
+                body = get_setting(conn, prefix + "body", rule_def["default_body"]) or rule_def["default_body"]
+                try:
+                    days = int(days_raw or rule_def["default_days"])
+                except ValueError:
+                    days = int(rule_def["default_days"])
+                days = max(1, min(3650, days))
+                statuses = [s.strip() for s in statuses_raw.split(",") if s.strip() in STATUSES]
+                if not statuses:
+                    statuses = list(rule_def["default_statuses"])
+                rules.append(
+                    {
+                        "id": rule_def["id"],
+                        "name": rule_def["name"],
+                        "description": rule_def["description"],
+                        "enabled": _is_truthy(enabled_raw),
+                        "days": days,
+                        "statuses": statuses,
+                        "subject": subject,
+                        "body": body,
+                    }
+                )
+            return rules
+        finally:
+            if own_conn:
+                conn.close()
+
     def get_item_email_templates(conn=None, active_only=False):
         own_conn = False
         if conn is None:
@@ -695,6 +750,127 @@ def create_app(config: dict | None = None):
                 "legal_notice_text": legal_notice_text,
                 "privacy_policy_text": privacy_policy_text,
             }
+        finally:
+            if own_conn:
+                conn.close()
+
+    def build_auto_mail_context(item_row):
+        first_name = (item_row["lost_first_name"] or "").strip()
+        last_name = (item_row["lost_last_name"] or "").strip()
+        full_name = " ".join(part for part in [first_name, last_name] if part).strip() or "Customer"
+        public_url = ""
+        if item_row["public_token"]:
+            public_url = public_base_url().rstrip("/") + "/p/" + str(item_row["public_token"])
+        return {
+            "item_id": item_row["public_id"] or f"ID{item_row['id']}",
+            "ticket_ref": build_ticket_reference(item_row),
+            "title": item_row["title"] or "",
+            "status": item_row["status"] or "",
+            "category": item_row["category"] or "",
+            "location": item_row["location"] or "",
+            "event_date": item_row["event_date"] or "",
+            "kind": item_row["kind"] or "",
+            "first_name": first_name,
+            "last_name": last_name,
+            "full_name": full_name,
+            "email": item_row["lost_email"] or "",
+            "phone": item_row["lost_phone"] or "",
+            "receipt_no": "",
+            "public_url": public_url,
+        }
+
+    def run_auto_mails_once(conn=None):
+        own_conn = False
+        if conn is None:
+            conn = get_db()
+            own_conn = True
+        try:
+            smtp_cfg = get_smtp_settings(conn)
+            if not (smtp_cfg["enabled"] and smtp_cfg["from"]):
+                return 0
+            ticket_cfg = get_mail_ticket_settings(conn)
+            sent_count = 0
+            for rule in get_auto_mail_rules(conn):
+                if not rule["enabled"]:
+                    continue
+                placeholders = ",".join("?" for _ in rule["statuses"])
+                template_name = f"auto_mail:{rule['id']}"
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=int(rule["days"]))).strftime("%Y-%m-%dT%H:%M:%S")
+                rows = conn.execute(
+                    f"""
+                    SELECT i.*
+                    FROM items i
+                    WHERE i.status IN ({placeholders})
+                      AND coalesce(i.status_changed_at, i.updated_at, i.created_at) IS NOT NULL
+                      AND coalesce(i.status_changed_at, i.updated_at, i.created_at) <= ?
+                      AND coalesce(i.lost_email, '') <> ''
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM item_mail_messages m
+                          WHERE m.item_id=i.id
+                            AND m.direction='outgoing'
+                            AND m.template_name=?
+                      )
+                    ORDER BY coalesce(i.status_changed_at, i.updated_at, i.created_at) ASC, i.id ASC
+                    """,
+                    (*rule["statuses"], cutoff, template_name),
+                ).fetchall()
+                for item in rows:
+                    context = build_auto_mail_context(item)
+                    subject = render_mail_template(rule["subject"], context).strip()
+                    body = render_mail_template(rule["body"], context).strip()
+                    if not subject or not body:
+                        continue
+                    ticket_ref = build_ticket_reference(item)
+                    extra_headers = {}
+                    if ticket_cfg["enabled"]:
+                        extra_headers["X-LostFound-Ticket-Ref"] = ticket_ref
+                        if f"[{ticket_ref}]".lower() not in subject.lower():
+                            subject = f"[{ticket_ref}] {subject}".strip()
+                    ok, msg, mail_meta = send_smtp_mail(
+                        item["lost_email"],
+                        subject,
+                        body,
+                        attachments=None,
+                        extra_headers=extra_headers,
+                        mailbox_append_folder=(ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None),
+                        return_metadata=True,
+                    )
+                    if not ok:
+                        app.logger.warning("AutoMail '%s' failed for item_id=%s: %s", rule["id"], item["id"], msg)
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO item_mail_messages (
+                            item_id, actor_user_id, direction, sender, recipient, subject, body,
+                            ticket_ref, template_name, receipt_filename, message_id, in_reply_to,
+                            mailbox_folder, created_at
+                        )
+                        VALUES (?, NULL, 'outgoing', ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)
+                        """,
+                        (
+                            int(item["id"]),
+                            smtp_cfg["from"],
+                            item["lost_email"],
+                            subject,
+                            body,
+                            ticket_ref if ticket_cfg["enabled"] else None,
+                            template_name,
+                            (mail_meta or {}).get("message_id"),
+                            ticket_cfg["imap_sent_folder"] if ticket_cfg["enabled"] else None,
+                            now_utc(),
+                        ),
+                    )
+                    audit(
+                        "auto_mail_sent",
+                        "item",
+                        int(item["id"]),
+                        f"rule={rule['id']} to={item['lost_email']}",
+                        meta={"rule_id": rule["id"], "recipient": item["lost_email"]},
+                    )
+                    sent_count += 1
+            conn.commit()
+            return sent_count
         finally:
             if own_conn:
                 conn.close()
@@ -1495,8 +1671,8 @@ def create_app(config: dict | None = None):
                     ),
                 )
                 conn.execute(
-                    "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
-                    (now_utc(), int(item["id"])),
+                    "UPDATE items SET status='To be answered', status_changed_at=?, updated_at=? WHERE id=?",
+                    (now_utc(), now_utc(), int(item["id"])),
                 )
                 conn.execute(
                     "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
@@ -1614,6 +1790,7 @@ def create_app(config: dict | None = None):
             "audit_retention_days": audit_retention_days,
             "audit_max_rows": audit_max_rows,
             "poll_ticket_mailbox_once": poll_ticket_mailbox_once,
+            "run_auto_mails_once": run_auto_mails_once,
         },
     )
 
@@ -1989,6 +2166,7 @@ def create_app(config: dict | None = None):
             "encrypt_setting_secret": encrypt_setting_secret,
             "settings_encryption_ready": settings_encryption_ready,
             "get_public_lost_confirmation_settings": get_public_lost_confirmation_settings,
+            "get_auto_mail_rules": get_auto_mail_rules,
             "get_item_email_templates": get_item_email_templates,
             "validate_mail_template_variables": validate_mail_template_variables,
             "render_mail_template": render_mail_template,
@@ -2004,6 +2182,7 @@ def create_app(config: dict | None = None):
             "DEFAULT_PUBLIC_LOST_CONFIRM_BODY": DEFAULT_PUBLIC_LOST_CONFIRM_BODY,
             "PUBLIC_LOST_CONFIRM_ALLOWED_VARS": sorted(PUBLIC_LOST_CONFIRM_ALLOWED_VARS),
             "ITEM_EMAIL_ALLOWED_VARS": sorted(ITEM_EMAIL_ALLOWED_VARS),
+            "STATUSES": STATUSES,
             "MIN_PASSWORD_LENGTH": min_password_length,
             "issue_roundcube_sso_token": issue_roundcube_sso_token,
             "verify_roundcube_sso_token": verify_roundcube_sso_token,

@@ -354,6 +354,7 @@ def ensure_fk_migrations(conn):
                 event_date TEXT,
                 contact TEXT,
                 status TEXT NOT NULL DEFAULT 'Lost',
+                status_changed_at TEXT,
                 created_by INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
@@ -384,7 +385,7 @@ def ensure_fk_migrations(conn):
             """,
             [
                 "id", "kind", "title", "description", "category", "location", "event_date", "contact",
-                "status", "created_by", "created_at", "updated_at", "lost_what", "lost_last_name",
+                "status", "status_changed_at", "created_by", "created_at", "updated_at", "lost_what", "lost_last_name",
                 "lost_first_name", "lost_group_leader", "lost_street", "lost_number", "lost_additional",
                 "lost_postcode", "lost_town", "lost_country", "lost_email", "lost_phone",
                 "lost_leaving_date", "lost_contact_way", "lost_notes", "postage_price", "postage_paid",
@@ -1121,6 +1122,7 @@ def init_db(db_path: str):
     ensure_column(conn, "items", "public_id", "TEXT")
     ensure_column(conn, "items", "public_enabled", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "items", "public_photos_enabled", "INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "items", "status_changed_at", "TEXT")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_public_id ON items(public_id)")
 
     ensure_column(conn, "items", "lost_what", "TEXT")
@@ -1150,6 +1152,7 @@ def init_db(db_path: str):
     conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
     conn.execute("UPDATE items SET status='Waiting for answer' WHERE status='In contact'")
     conn.execute("UPDATE items SET status='To be answered' WHERE status='Answer received'")
+    conn.execute("UPDATE items SET status_changed_at=coalesce(updated_at, created_at) WHERE status_changed_at IS NULL")
 
     try:
         conn.execute(
@@ -1351,12 +1354,12 @@ def auto_mark_lost_forever(conn):
     cur = conn.execute(
         """
         UPDATE items
-        SET status='Lost forever', updated_at=?
+        SET status='Lost forever', status_changed_at=?, updated_at=?
         WHERE status='Lost'
           AND event_date IS NOT NULL
           AND event_date <= ?
         """,
-        (now_utc(), cutoff),
+        (now_utc(), now_utc(), cutoff),
     )
     return cur.rowcount or 0
 

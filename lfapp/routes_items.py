@@ -627,7 +627,7 @@ def register_item_routes(app, deps: dict):
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
+                status, status_changed_at, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -635,7 +635,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -644,7 +644,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, None, public_token, public_token_expires_at, public_id, now_utc(), 1,
+                    status, now_utc(), None, public_token, public_token_expires_at, public_id, now_utc(), 1,
                     lost.get("lost_what"),
                     lost.get("lost_last_name"),
                     lost.get("lost_first_name"),
@@ -875,7 +875,7 @@ def register_item_routes(app, deps: dict):
                 """
                 INSERT INTO items (
                 kind, title, description, category, location, event_date,
-                status, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
+                status, status_changed_at, created_by, public_token, public_token_expires_at, public_id, created_at, review_pending,
                 lost_what, lost_last_name, lost_first_name, lost_group_leader,
                 lost_street, lost_number, lost_additional, lost_postcode, lost_town, lost_country,
                 lost_email, lost_phone, lost_leaving_date, lost_contact_way, lost_notes,
@@ -883,7 +883,7 @@ def register_item_routes(app, deps: dict):
                 )
                 VALUES (
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
@@ -892,7 +892,7 @@ def register_item_routes(app, deps: dict):
                 """,
                 (
                     kind, title, description, category, location, event_date,
-                    status, u["id"], public_token, public_token_expires_at, public_id, now_utc(), 0,
+                    status, now_utc(), u["id"], public_token, public_token_expires_at, public_id, now_utc(), 0,
                     (lost.get("lost_what") if kind == "lost" else None),
                     (lost.get("lost_last_name") if kind == "lost" else None),
                     (lost.get("lost_first_name") if kind == "lost" else None),
@@ -1228,8 +1228,8 @@ def register_item_routes(app, deps: dict):
             )
             if ticket_cfg["enabled"]:
                 conn.execute(
-                    "UPDATE items SET status='Waiting for answer', updated_at=? WHERE id=?",
-                    (now_utc(), item_id),
+                    "UPDATE items SET status='Waiting for answer', status_changed_at=?, updated_at=? WHERE id=?",
+                    (now_utc(), now_utc(), item_id),
                 )
                 conn.execute(
                     "UPDATE reminders SET is_done=1, done_at=? WHERE item_id=? AND reminder_type='followup' AND is_done=0",
@@ -1434,7 +1434,7 @@ def register_item_routes(app, deps: dict):
         conn.execute(
             """
             UPDATE items
-            SET kind=?, title=?, description=?, category=?, location=?, event_date=?, status=?, updated_at=?,
+            SET kind=?, title=?, description=?, category=?, location=?, event_date=?, status=?, status_changed_at=?, updated_at=?,
                 lost_what=?, lost_last_name=?, lost_first_name=?, lost_group_leader=?,
                 lost_street=?, lost_number=?, lost_additional=?, lost_postcode=?, lost_town=?, lost_country=?,
                 lost_email=?, lost_phone=?, lost_leaving_date=?, lost_contact_way=?, lost_notes=?,
@@ -1442,7 +1442,9 @@ def register_item_routes(app, deps: dict):
             WHERE id=?
             """,
             (
-                kind, title, description, category, location, event_date, status, now_utc(),
+                kind, title, description, category, location, event_date, status,
+                (now_utc() if status != existing["status"] else existing["status_changed_at"]),
+                now_utc(),
                 (lost.get("lost_what") if kind == "lost" else None),
                 (lost.get("lost_last_name") if kind == "lost" else None),
                 (lost.get("lost_first_name") if kind == "lost" else None),
@@ -1548,8 +1550,8 @@ def register_item_routes(app, deps: dict):
         ).fetchall()
         old_status_map = {int(r["id"]): r["status"] for r in old_rows}
         placeholders = ",".join(["?"] * len(ids))
-        params = [new_status, now_utc()] + ids
-        conn.execute(f"UPDATE items SET status=?, updated_at=? WHERE id IN ({placeholders})", params)
+        params = [new_status, now_utc(), now_utc()] + ids
+        conn.execute(f"UPDATE items SET status=?, status_changed_at=?, updated_at=? WHERE id IN ({placeholders})", params)
         synced_total = 0
         for iid in ids:
             synced_total += max(0, sync_linked_group_status(conn, iid, new_status, STATUSES, now_utc) - 1)

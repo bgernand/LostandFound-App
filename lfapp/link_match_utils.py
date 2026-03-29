@@ -197,9 +197,9 @@ def sync_linked_group_status(conn, item_id: int, new_status: str, statuses: list
     if len(group_ids) <= 1:
         return 0
     placeholders = ",".join(["?"] * len(group_ids))
-    params = [new_status, now_utc_fn()] + [int(i) for i in sorted(group_ids)]
+    params = [new_status, now_utc_fn(), now_utc_fn()] + [int(i) for i in sorted(group_ids)]
     conn.execute(
-        f"UPDATE items SET status=?, updated_at=? WHERE id IN ({placeholders})",
+        f"UPDATE items SET status=?, status_changed_at=?, updated_at=? WHERE id IN ({placeholders})",
         params,
     )
     return len(group_ids)
