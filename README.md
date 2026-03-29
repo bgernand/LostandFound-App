@@ -225,6 +225,12 @@ The local Docker run mirrors the CI job:
 - `pytest -q`
 - `ruff check lfapp tests app.py`
 
+Implementation detail:
+
+- host scripts only start Docker
+- the actual CI-like test sequence runs inside `scripts/test-ci-in-container.sh`
+- this avoids PowerShell quoting problems on Windows
+
 ## Project Structure
 
 ```text
