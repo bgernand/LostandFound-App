@@ -44,6 +44,16 @@ server {
   }
 
   location /webmail/ {
+    set $laf_force_webmail_login 0;
+    if ($arg__task = login) {
+      set $laf_force_webmail_login 1;
+    }
+    if ($arg__action = plugin.lostandfound_bridge.login) {
+      set $laf_force_webmail_login 0;
+    }
+    if ($laf_force_webmail_login = 1) {
+      return 302 /webmail-login;
+    }
     proxy_pass http://lostfound_roundcube/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
