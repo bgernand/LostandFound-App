@@ -609,7 +609,8 @@ def register_admin_routes(app, deps: dict):
             abort(403)
         folder = (request.args.get("folder") or "").strip()
         uid = (request.args.get("uid") or "").strip()
-        move_to_processed = _is_truthy(request.args.get("move_to_processed"))
+        move_raw = request.args.get("move_to_processed")
+        move_to_processed = True if move_raw is None else _is_truthy(move_raw)
         selected_message, row, _linked_item, _detected_ticket_ref = _resolve_roundcube_message(folder, uid)
         if not selected_message or not row:
             abort(404)
