@@ -745,7 +745,12 @@ def ensure_item_search_schema(conn):
         return False
 
 
-def init_db(db_path: str):
+def init_db(
+    db_path: str,
+    *,
+    initial_admin_username: str | None = None,
+    initial_admin_password: str | None = None,
+):
     conn = get_db(db_path)
 
     conn.execute(
@@ -1294,8 +1299,13 @@ Lost & Found Team""",
 
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
-        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
-        initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+        initial_admin_username = (
+            (initial_admin_username if initial_admin_username is not None else os.environ.get("INITIAL_ADMIN_USERNAME"))
+            or "admin"
+        ).strip() or "admin"
+        initial_admin_password = (
+            initial_admin_password if initial_admin_password is not None else os.environ.get("INITIAL_ADMIN_PASSWORD")
+        )
         if not initial_admin_password:
             conn.close()
             raise RuntimeError("INITIAL_ADMIN_PASSWORD environment variable is required for first startup.")
@@ -1313,7 +1323,10 @@ Lost & Found Team""",
         )
         conn.commit()
     else:
-        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
+        initial_admin_username = (
+            (initial_admin_username if initial_admin_username is not None else os.environ.get("INITIAL_ADMIN_USERNAME"))
+            or "admin"
+        ).strip() or "admin"
         has_root = conn.execute("SELECT id FROM users WHERE is_root_admin=1 LIMIT 1").fetchone()
         if not has_root:
             root_candidate = conn.execute(

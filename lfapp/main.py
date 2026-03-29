@@ -1835,7 +1835,11 @@ def create_app(config: dict | None = None):
     has_permission = auth_helpers["has_permission"]
     require_permission = auth_helpers["require_permission"]
     audit = auth_helpers["audit"]
-    db_init_db(db_path)
+    db_init_db(
+        db_path,
+        initial_admin_username=app.config.get("INITIAL_ADMIN_USERNAME"),
+        initial_admin_password=app.config.get("INITIAL_ADMIN_PASSWORD"),
+    )
     app.extensions["lostfound_worker"] = build_worker_tasks(
         app,
         {
