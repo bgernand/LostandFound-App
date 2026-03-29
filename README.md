@@ -300,6 +300,12 @@ Notes:
 ## Documentation
 - Deployment details: `DeploymentGuide.md`
 
+## Third-Party Software
+- This project integrates Roundcube Webmail for the optional `/webmail/` workflow.
+- Roundcube is third-party software and is licensed separately under `GPL-3.0-or-later`.
+- Upstream project: `https://github.com/roundcube/roundcubemail`
+- When distributing this project with Roundcube enabled, keep Roundcube copyright and license notices intact.
+
 ## Disclaimer
 This project is provided without any warranty. No liability is assumed for any direct or indirect damages, data loss, outages, or any other consequences resulting from the use, operation, or distribution of this software. Use of this software is entirely at your own risk.
 
