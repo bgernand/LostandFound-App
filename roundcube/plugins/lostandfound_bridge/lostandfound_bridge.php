@@ -23,8 +23,8 @@ class lostandfound_bridge extends rcube_plugin
         if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
             $this->login_action();
         }
-        if ($task === 'login' && !$rcmail->user) {
-            $this->render_login_notice();
+        if (!$rcmail->user && ($task === '' || $task === 'login')) {
+            $this->redirect_to_webmail_entry();
         }
 
         return $args;
@@ -181,6 +181,16 @@ class lostandfound_bridge extends rcube_plugin
     {
         $base = $this->app_base_url();
         return ($base ?: '') . '/webmail-login';
+    }
+
+    private function redirect_to_webmail_entry(): void
+    {
+        $target = $this->webmail_entry_url();
+        if (!$target) {
+            $this->render_login_notice();
+        }
+        header('Location: ' . $target);
+        exit;
     }
 
     private function render_login_notice(): void

@@ -122,6 +122,7 @@ services:
     depends_on:
       - app
     environment:
+      - BASE_URL=${BASE_URL}
       - ROUNDCUBE_SHARED_SECRET=${ROUNDCUBE_SHARED_SECRET:-}
       - ROUNDCUBE_DES_KEY=${ROUNDCUBE_DES_KEY:-}
       - ROUNDCUBE_REQUEST_PATH=${ROUNDCUBE_REQUEST_PATH:-/webmail/}
