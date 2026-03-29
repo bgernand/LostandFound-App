@@ -22,11 +22,6 @@ wait_for_roundcube() {
 
 wait_for_roundcube
 
-mkdir -p "${TARGET_ROOT}/plugins/lostandfound_bridge"
-cp /opt/lostfound-roundcube/plugins/lostandfound_bridge/lostandfound_bridge.php "${TARGET_ROOT}/plugins/lostandfound_bridge/lostandfound_bridge.php"
-cp /opt/lostfound-roundcube/plugins/lostandfound_bridge/lostandfound_bridge.js "${TARGET_ROOT}/plugins/lostandfound_bridge/lostandfound_bridge.js"
-chown -R www-data:www-data "${TARGET_ROOT}/plugins/lostandfound_bridge"
-
 if ! grep -q "lostandfound_bridge" "${TARGET_ROOT}/config/config.inc.php" 2>/dev/null; then
   cat /opt/lostfound-roundcube/config/config.inc.php >> "${TARGET_ROOT}/config/config.inc.php"
 fi
