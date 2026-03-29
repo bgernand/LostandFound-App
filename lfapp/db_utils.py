@@ -1170,6 +1170,15 @@ def init_db(db_path: str):
     conn.execute("UPDATE items SET status='Waiting for answer' WHERE status='In contact'")
     conn.execute("UPDATE items SET status='To be answered' WHERE status='Answer received'")
     conn.execute("UPDATE items SET status_changed_at=coalesce(updated_at, created_at) WHERE status_changed_at IS NULL")
+    conn.execute(
+        """
+        UPDATE auto_mail_rules
+        SET subject_template=?
+        WHERE name='Still Not Found'
+          AND subject_template='Ihr Gegenstand {{ item_id }} wurde noch nicht gefunden'
+        """,
+        ("Update on your lost item {{ item_id }}",),
+    )
 
     try:
         conn.execute(
