@@ -7,6 +7,7 @@ import secrets
 import smtplib
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
@@ -18,40 +19,28 @@ from flask import Flask, abort, flash, g, jsonify, redirect, render_template, re
 from itsdangerous import BadSignature, BadTimeSignature, URLSafeTimedSerializer
 
 from lfapp.auth_core import build_auth_helpers
-from lfapp.category_utils import (
-    category_names as cat_category_names,
-)
-from lfapp.category_utils import (
-    get_categories as cat_get_categories,
-)
-from lfapp.category_utils import (
-    safe_default_category as cat_safe_default_category,
-)
+from lfapp.category_utils import category_names as cat_category_names
+from lfapp.category_utils import get_categories as cat_get_categories
+from lfapp.category_utils import safe_default_category as cat_safe_default_category
 from lfapp.crypto_utils import decrypt_secret, encrypt_secret
 from lfapp.db_utils import (
+    DEFAULT_ROLE_PERMISSIONS,
     RBAC_PERMISSION_KEYS,
+    SYSTEM_ROLES,
     auto_create_followup_reminders,
     auto_delete_stale_items,
     auto_mark_lost_forever,
     ensure_item_links_schema,
     get_setting,
     now_utc,
-    public_token_expiry,
     prune_audit_log,
+    public_token_expiry,
     set_setting,
 )
-from lfapp.db_utils import (
-    get_db as db_get_db,
-)
-from lfapp.db_utils import (
-    get_roles as db_get_roles,
-)
-from lfapp.db_utils import (
-    init_db as db_init_db,
-)
-from lfapp.db_utils import (
-    is_totp_mandatory as db_is_totp_mandatory,
-)
+from lfapp.db_utils import get_db as db_get_db
+from lfapp.db_utils import get_roles as db_get_roles
+from lfapp.db_utils import init_db as db_init_db
+from lfapp.db_utils import is_totp_mandatory as db_is_totp_mandatory
 from lfapp.filter_utils import (
     build_filters,
     clean_saved_query_string,
@@ -86,9 +75,9 @@ from lfapp.security_utils import (
     client_ip,
     is_login_blocked,
     is_public_submit_blocked,
+    rate_limit,
     record_login_attempt,
     record_public_submit_attempt,
-    rate_limit,
     safe_next_url,
 )
 from lfapp.totp_utils import (
@@ -100,6 +89,14 @@ from lfapp.totp_utils import (
     verify_totp,
 )
 from lfapp.worker_tasks import build_worker_tasks
+
+__all__ = [
+    "app",
+    "create_app",
+    "RBAC_PERMISSION_KEYS",
+    "DEFAULT_ROLE_PERMISSIONS",
+    "SYSTEM_ROLES",
+]
 
 DEFAULT_DATA_DIR = "/app/data"
 DEFAULT_UPLOAD_DIR = "/app/uploads"
@@ -151,7 +148,7 @@ Please contact the responsible organization listed in the legal notice.
 
 This is a template privacy policy and should be adapted to local legal requirements.
 """
-DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = "Lost Request received (Item ID {{ item_id }})"
+DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = "Lost item report received (Item ID {{ item_id }})"
 DEFAULT_PUBLIC_LOST_CONFIRM_BODY = """Hello {{ first_name }} {{ last_name }},
 
 we received your lost request.
@@ -309,6 +306,12 @@ def create_app(config: dict | None = None):
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     if config:
         app.config.update(config)
+    if not app.config.get("INITIAL_ADMIN_PASSWORD") and (
+        bool(app.config.get("TESTING")) or os.environ.get("CI", "").strip().lower() == "true"
+    ):
+        # CI and test factory smoke checks should not depend on a production
+        # first-start password being present in process environment.
+        app.config["INITIAL_ADMIN_PASSWORD"] = "ci-bootstrap-initial-admin-password"
 
     secret_key = app.config.get("SECRET_KEY") or os.environ.get("SECRET_KEY")
     if not secret_key:
@@ -1509,7 +1512,7 @@ def create_app(config: dict | None = None):
                 "unassigned": 0,
                 "duplicates": 0,
                 "errors": 0,
-                "message": "Mail ticket workflow or inbound IMAP polling is not configured.",
+                "message": "Ticket mail workflow or inbound IMAP polling is not configured.",
                 "locked": False,
             }
 
@@ -1794,7 +1797,7 @@ def create_app(config: dict | None = None):
     def test_imap_connection_once():
         cfg = get_mail_ticket_settings()
         if not cfg["enabled"]:
-            return False, "Mail ticket workflow is disabled."
+            return False, "Ticket mail workflow is disabled."
         if not cfg["imap_enabled"]:
             return False, "Inbound IMAP polling is disabled."
         if not cfg["imap_host"] or not cfg["imap_username"] or not cfg["imap_password"]:
@@ -1835,7 +1838,23 @@ def create_app(config: dict | None = None):
     has_permission = auth_helpers["has_permission"]
     require_permission = auth_helpers["require_permission"]
     audit = auth_helpers["audit"]
-    db_init_db(db_path)
+    db_init_db(
+        db_path,
+        initial_admin_username=app.config.get("INITIAL_ADMIN_USERNAME"),
+        initial_admin_password=app.config.get("INITIAL_ADMIN_PASSWORD"),
+        mail_ticketing_enabled_default=mail_ticketing_enabled_default,
+        imap_enabled_default=imap_enabled_default,
+        imap_host_default=imap_host_default,
+        imap_port_default=imap_port_default,
+        imap_username_default=imap_username_default,
+        imap_use_ssl_default=imap_use_ssl_default,
+        imap_timeout_default=imap_timeout_default,
+        imap_inbox_folder_default=imap_inbox_folder_default,
+        imap_sent_folder_default=imap_sent_folder_default,
+        imap_processed_folder_default=imap_processed_folder_default,
+        imap_unassigned_folder_default=imap_unassigned_folder_default,
+        mail_ticket_poll_interval_default=mail_ticket_poll_interval_default,
+    )
     app.extensions["lostfound_worker"] = build_worker_tasks(
         app,
         {
@@ -1914,7 +1933,12 @@ def create_app(config: dict | None = None):
         can_regenerate_public = bool(has_permission("items.public_regenerate", user=u))
         can_delete_item = bool(has_permission("items.delete", user=u))
         can_send_email = bool(has_permission("items.send_email", user=u))
-        can_access_webmail = bool(roundcube_enabled and can_send_email and can_view_pii)
+        can_access_webmail = bool(
+            roundcube_enabled
+            and has_permission("items.webmail", user=u)
+            and can_send_email
+            and can_view_pii
+        )
         mailbox_unassigned_count = 0
         mailbox_unread_total = 0
         mailbox_read_total = 0
@@ -2263,7 +2287,14 @@ def create_app(config: dict | None = None):
     return app
 
 
-app = create_app()
+try:
+    app = create_app()
+except RuntimeError as exc:
+    if "INITIAL_ADMIN_PASSWORD environment variable is required for first startup." not in str(exc):
+        raise
+    # Allow importing `create_app` in environments that intentionally pass
+    # first-start credentials via config overrides instead of process env.
+    app = None
 
 
 if __name__ == "__main__":

@@ -969,7 +969,7 @@ def register_item_routes(app, deps: dict):
                 f"mail_unassigned_id={unassigned_mail_link['message_id']} ticket_ref={unassigned_mail_link['ticket_ref']}",
                 meta=unassigned_mail_link,
             )
-            flash("Inbound mail was linked to the new item.", "info")
+            flash("The inbound mail was linked to the new item.", "info")
             if unassigned_mail_link.get("move_to_processed"):
                 processed_folder = (get_mail_ticket_settings().get("imap_processed_folder") or "").strip()
                 source_folder = (unassigned_mail_link.get("mailbox_folder") or "").strip()

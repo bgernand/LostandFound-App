@@ -32,6 +32,7 @@ RBAC_PERMISSION_KEYS = [
     "items.public_regenerate",
     "items.delete",
     "items.send_email",
+    "items.webmail",
     "reminders.manage",
 ]
 
@@ -52,6 +53,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.photo_delete",
         "items.public_manage",
         "items.send_email",
+        "items.webmail",
         "reminders.manage",
     },
     "found-staff": {
@@ -65,6 +67,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "items.edit_lost",
         "items.view_pii",
         "items.send_email",
+        "items.webmail",
     },
     "viewer": {
         "items.view_lost",
@@ -742,7 +745,24 @@ def ensure_item_search_schema(conn):
         return False
 
 
-def init_db(db_path: str):
+def init_db(
+    db_path: str,
+    *,
+    initial_admin_username: str | None = None,
+    initial_admin_password: str | None = None,
+    mail_ticketing_enabled_default: bool = False,
+    imap_enabled_default: bool = False,
+    imap_host_default: str = "",
+    imap_port_default: int = 993,
+    imap_username_default: str = "",
+    imap_use_ssl_default: bool = True,
+    imap_timeout_default: int = 15,
+    imap_inbox_folder_default: str = "INBOX",
+    imap_sent_folder_default: str = "LostFound/Send",
+    imap_processed_folder_default: str = "LostFound/Proceeded",
+    imap_unassigned_folder_default: str = "ToDo",
+    mail_ticket_poll_interval_default: int = 300,
+):
     conn = get_db(db_path)
 
     conn.execute(
@@ -1101,7 +1121,7 @@ def init_db(db_path: str):
         (now_utc(),),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_subject', 'Lost Request received (Item ID {{ item_id }})', ?)",
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_subject', 'Lost item report received (Item ID {{ item_id }})', ?)",
         (now_utc(),),
     )
     conn.execute(
@@ -1109,19 +1129,19 @@ def init_db(db_path: str):
         (now_utc(),),
     )
     for key, value in [
-        ("mail_ticketing_enabled", "0"),
-        ("imap_enabled", "0"),
-        ("imap_host", ""),
-        ("imap_port", "993"),
-        ("imap_username", ""),
+        ("mail_ticketing_enabled", "1" if mail_ticketing_enabled_default else "0"),
+        ("imap_enabled", "1" if imap_enabled_default else "0"),
+        ("imap_host", imap_host_default),
+        ("imap_port", str(imap_port_default)),
+        ("imap_username", imap_username_default),
         ("imap_password_enc", ""),
-        ("imap_use_ssl", "1"),
-        ("imap_timeout", "15"),
-        ("imap_inbox_folder", "INBOX"),
-        ("imap_sent_folder", "LostFound/Send"),
-        ("imap_processed_folder", "LostFound/Proceeded"),
-        ("imap_unassigned_folder", "ToDo"),
-        ("mail_ticket_poll_interval_seconds", "300"),
+        ("imap_use_ssl", "1" if imap_use_ssl_default else "0"),
+        ("imap_timeout", str(imap_timeout_default)),
+        ("imap_inbox_folder", imap_inbox_folder_default),
+        ("imap_sent_folder", imap_sent_folder_default),
+        ("imap_processed_folder", imap_processed_folder_default),
+        ("imap_unassigned_folder", imap_unassigned_folder_default),
+        ("mail_ticket_poll_interval_seconds", str(mail_ticket_poll_interval_default)),
         ("mail_ticket_poll_lock_until", "0"),
         ("mail_ticket_poll_lock_token", ""),
         ("mail_ticket_last_poll_at", ""),
@@ -1291,8 +1311,13 @@ Lost & Found Team""",
 
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count == 0:
-        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
-        initial_admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+        initial_admin_username = (
+            (initial_admin_username if initial_admin_username is not None else os.environ.get("INITIAL_ADMIN_USERNAME"))
+            or "admin"
+        ).strip() or "admin"
+        initial_admin_password = (
+            initial_admin_password if initial_admin_password is not None else os.environ.get("INITIAL_ADMIN_PASSWORD")
+        )
         if not initial_admin_password:
             conn.close()
             raise RuntimeError("INITIAL_ADMIN_PASSWORD environment variable is required for first startup.")
@@ -1310,7 +1335,10 @@ Lost & Found Team""",
         )
         conn.commit()
     else:
-        initial_admin_username = (os.environ.get("INITIAL_ADMIN_USERNAME") or "admin").strip() or "admin"
+        initial_admin_username = (
+            (initial_admin_username if initial_admin_username is not None else os.environ.get("INITIAL_ADMIN_USERNAME"))
+            or "admin"
+        ).strip() or "admin"
         has_root = conn.execute("SELECT id FROM users WHERE is_root_admin=1 LIMIT 1").fetchone()
         if not has_root:
             root_candidate = conn.execute(
@@ -1344,6 +1372,12 @@ Lost & Found Team""",
             "INSERT INTO categories (name, is_active, sort_order, created_at) VALUES (?, ?, ?, ?)",
             (name, active, order, now_utc()),
         )
+
+    # Be defensive on legacy databases: these columns are used immediately below
+    # and must exist even if an older schema path skipped earlier migration steps.
+    ensure_column(conn, "items", "public_token", "TEXT")
+    ensure_column(conn, "items", "public_token_expires_at", "TEXT")
+    ensure_column(conn, "items", "public_id", "TEXT")
 
     rows = conn.execute("SELECT id, public_token, public_token_expires_at FROM items").fetchall()
     for r in rows:

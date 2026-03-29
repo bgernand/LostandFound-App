@@ -296,6 +296,7 @@ def register_admin_routes(app, deps: dict):
         "items.public_regenerate": "Regenerate public link",
         "items.delete": "Delete items",
         "items.send_email": "Send mail",
+        "items.webmail": "Access Webmail",
         "reminders.manage": "Manage reminders",
     }
     permission_groups = [
@@ -336,6 +337,7 @@ def register_admin_routes(app, deps: dict):
                 "items.photo_delete",
                 "items.delete",
                 "items.send_email",
+                "items.webmail",
                 "reminders.manage",
             ],
         },
@@ -406,17 +408,18 @@ def register_admin_routes(app, deps: dict):
         active_settings_section=None,
     ):
         allowed_sections = {"general", "mail", "auto-mail", "templates", "legal-pages"}
-        if active_settings_section not in allowed_sections:
-            active_settings_section = "general"
+        section_is_valid = active_settings_section in allowed_sections
         can_manage_mail_templates = bool(has_permission("admin.access", user=current_user()))
-        if active_settings_section == "templates" and not can_manage_mail_templates:
-            active_settings_section = "general"
         conn = get_db()
         if description_quality_settings is None:
             description_quality_settings = get_description_quality_settings(conn)
         if smtp_settings is None:
             smtp_settings = get_smtp_settings(conn)
         mail_ticket_settings = get_mail_ticket_settings(conn)
+        if not section_is_valid:
+            active_settings_section = "mail" if mail_ticket_settings["enabled"] else "general"
+        if active_settings_section == "templates" and not can_manage_mail_templates:
+            active_settings_section = "mail" if mail_ticket_settings["enabled"] else "general"
         if public_lost_confirm_settings is None:
             public_lost_confirm_settings = get_public_lost_confirmation_settings(conn)
         auto_mail_rules = get_auto_mail_rules(conn)
@@ -499,7 +502,7 @@ def register_admin_routes(app, deps: dict):
         return redirect(url_for("roundcube_login"))
 
     @app.get("/webmail-login")
-    @require_permission("items.send_email", "items.view_pii")
+    @require_permission("items.webmail", "items.send_email", "items.view_pii")
     def roundcube_login():
         if not roundcube_enabled:
             abort(404)
@@ -636,7 +639,7 @@ def register_admin_routes(app, deps: dict):
                 "move_to_processed": move_to_processed,
             },
         }
-        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        flash(f"A draft for a new {'Lost Request' if kind == 'lost' else 'Found Item'} was prepared.", "info")
         return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
 
     @app.get("/roundcube/bridge/assign")
@@ -1100,7 +1103,7 @@ def register_admin_routes(app, deps: dict):
                 "received_at": row["received_at"] or row["created_at"],
             },
         }
-        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        flash(f"A draft for a new {'Lost Request' if kind == 'lost' else 'Found Item'} was prepared.", "info")
         return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
 
     @app.post("/admin/settings/mail-templates")
@@ -1592,7 +1595,7 @@ def register_admin_routes(app, deps: dict):
                 "imap_password_enc": "***set***" if (imap_password or old_state.get("imap_password_enc")) else "",
             },
         )
-        flash("Mail ticket workflow settings updated.", "success")
+        flash("Ticket mail workflow settings updated.", "success")
         return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/smtp-test")
@@ -1692,7 +1695,7 @@ def register_admin_routes(app, deps: dict):
             )
 
         if enabled and (not subject or not body):
-            flash("Subject and body are required when confirmation mail is enabled.", "danger")
+            flash("Subject and body are required when the public lost submission confirmation is enabled.", "danger")
             return _redirect_admin_settings("auto-mail")
 
         sample_ctx = {
@@ -1751,7 +1754,7 @@ def register_admin_routes(app, deps: dict):
             },
             meta={"preview_subject": preview_subject},
         )
-        flash("Public lost confirmation mail settings updated.", "success")
+        flash("Public lost submission confirmation updated.", "success")
         return _redirect_admin_settings("auto-mail")
 
     @app.post("/admin/settings/auto-mail-rules")
