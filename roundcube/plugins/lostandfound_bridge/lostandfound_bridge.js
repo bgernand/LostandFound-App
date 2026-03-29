@@ -29,6 +29,24 @@
     return baseUrl + "?folder=" + encodeURIComponent(folder) + "&uid=" + encodeURIComponent(uid);
   }
 
+  function addBackButton() {
+    if (!window.rcmail || !rcmail.env || !rcmail.env.laf_bridge || !rcmail.env.laf_bridge.dashboard_url) {
+      return;
+    }
+
+    var toolbar = qs("#toolbar-menu") || qs("#toolbar") || qs(".toolbar");
+    if (!toolbar || qs("#laf-back-button")) {
+      return;
+    }
+
+    var btn = document.createElement("a");
+    btn.id = "laf-back-button";
+    btn.href = rcmail.env.laf_bridge.dashboard_url;
+    btn.textContent = "Back to Lost & Found";
+    btn.style.cssText = "display:inline-flex;align-items:center;padding:6px 10px;margin-right:8px;border:1px solid #adb5bd;border-radius:6px;text-decoration:none;color:#212529;background:#fff;font-size:13px;font-weight:600;";
+    toolbar.insertBefore(btn, toolbar.firstChild);
+  }
+
   function addButtonRow() {
     if (!window.rcmail || !rcmail.env || !rcmail.env.laf_bridge || !rcmail.env.laf_bridge.enabled) {
       return;
@@ -74,5 +92,8 @@
     target.insertBefore(wrapper, target.firstChild);
   }
 
-  document.addEventListener("DOMContentLoaded", addButtonRow);
+  document.addEventListener("DOMContentLoaded", function () {
+    addBackButton();
+    addButtonRow();
+  });
 })();
