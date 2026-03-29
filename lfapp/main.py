@@ -29,7 +29,9 @@ from lfapp.category_utils import (
 )
 from lfapp.crypto_utils import decrypt_secret, encrypt_secret
 from lfapp.db_utils import (
+    DEFAULT_ROLE_PERMISSIONS,
     RBAC_PERMISSION_KEYS,
+    SYSTEM_ROLES,
     auto_create_followup_reminders,
     auto_delete_stale_items,
     auto_mark_lost_forever,
@@ -100,6 +102,14 @@ from lfapp.totp_utils import (
     verify_totp,
 )
 from lfapp.worker_tasks import build_worker_tasks
+
+__all__ = [
+    "app",
+    "create_app",
+    "RBAC_PERMISSION_KEYS",
+    "DEFAULT_ROLE_PERMISSIONS",
+    "SYSTEM_ROLES",
+]
 
 DEFAULT_DATA_DIR = "/app/data"
 DEFAULT_UPLOAD_DIR = "/app/uploads"
@@ -1845,6 +1855,18 @@ def create_app(config: dict | None = None):
         db_path,
         initial_admin_username=app.config.get("INITIAL_ADMIN_USERNAME"),
         initial_admin_password=app.config.get("INITIAL_ADMIN_PASSWORD"),
+        mail_ticketing_enabled_default=mail_ticketing_enabled_default,
+        imap_enabled_default=imap_enabled_default,
+        imap_host_default=imap_host_default,
+        imap_port_default=imap_port_default,
+        imap_username_default=imap_username_default,
+        imap_use_ssl_default=imap_use_ssl_default,
+        imap_timeout_default=imap_timeout_default,
+        imap_inbox_folder_default=imap_inbox_folder_default,
+        imap_sent_folder_default=imap_sent_folder_default,
+        imap_processed_folder_default=imap_processed_folder_default,
+        imap_unassigned_folder_default=imap_unassigned_folder_default,
+        mail_ticket_poll_interval_default=mail_ticket_poll_interval_default,
     )
     app.extensions["lostfound_worker"] = build_worker_tasks(
         app,
