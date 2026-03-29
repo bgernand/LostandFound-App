@@ -216,14 +216,19 @@ class lostandfound_bridge extends rcube_plugin
 
     private function render_autologin_form(string $user, string $pass, string $host, string $folder): void
     {
+        $rcmail = rcmail::get_instance();
+        $token = $rcmail->get_request_token();
         http_response_code(200);
         echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
         echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<title>Signing in…</title></head><body>';
         echo '<form id="laf-autologin" method="post" action="./">';
+        echo '<input type="hidden" name="_token" value="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">';
         echo '<input type="hidden" name="_task" value="mail">';
         echo '<input type="hidden" name="_action" value="login">';
         echo '<input type="hidden" name="_autologin" value="1">';
+        echo '<input type="hidden" name="_timezone" value="_default_">';
+        echo '<input type="hidden" name="_url" value="">';
         echo '<input type="hidden" name="_user" value="' . htmlspecialchars($user, ENT_QUOTES, 'UTF-8') . '">';
         echo '<input type="hidden" name="_pass" value="' . htmlspecialchars($pass, ENT_QUOTES, 'UTF-8') . '">';
         echo '<input type="hidden" name="_host" value="' . htmlspecialchars($host, ENT_QUOTES, 'UTF-8') . '">';
