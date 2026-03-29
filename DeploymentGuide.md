@@ -63,6 +63,7 @@ Recommended security settings:
 - `ROUNDCUBE_SHARED_SECRET=\"<long-random-secret>\"`
 - `ROUNDCUBE_DES_KEY=\"<long-random-secret>\"` (optional but recommended)
 - `ROUNDCUBE_EXTERNAL_URL=/webmail/`
+- `ROUNDCUBE_REQUEST_PATH=/webmail/`
 - `ROUNDCUBE_SSO_MAX_AGE_SECONDS=900`
 
 After first login as admin, configure SMTP, mail ticket workflow, item mail templates, description-quality settings, and Roundcube bridge access in:
