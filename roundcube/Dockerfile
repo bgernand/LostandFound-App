@@ -2,11 +2,13 @@ FROM roundcube/roundcubemail:latest
 
 USER root
 
-RUN mkdir -p /var/roundcube/db /var/roundcube/plugins/lostandfound_bridge
+RUN mkdir -p /opt/lostfound-roundcube/config /opt/lostfound-roundcube/plugins/lostandfound_bridge /var/roundcube/db
 
-COPY config/config.inc.php /var/roundcube/config/config.inc.php
-COPY plugins/lostandfound_bridge /var/roundcube/plugins/lostandfound_bridge
+COPY config/config.inc.php /opt/lostfound-roundcube/config/config.inc.php
+COPY plugins/lostandfound_bridge /opt/lostfound-roundcube/plugins/lostandfound_bridge
+COPY docker-entrypoint.sh /usr/local/bin/lostfound-roundcube-entrypoint.sh
 
-RUN chown -R www-data:www-data /var/roundcube/db /var/roundcube/plugins/lostandfound_bridge /var/roundcube/config/config.inc.php
+RUN chmod +x /usr/local/bin/lostfound-roundcube-entrypoint.sh \
+    && chown -R www-data:www-data /opt/lostfound-roundcube /var/roundcube/db
 
-USER www-data
+ENTRYPOINT ["/usr/local/bin/lostfound-roundcube-entrypoint.sh"]
