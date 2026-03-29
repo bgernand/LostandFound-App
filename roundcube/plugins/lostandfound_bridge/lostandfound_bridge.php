@@ -7,6 +7,7 @@ class lostandfound_bridge extends rcube_plugin
         $rcmail = rcmail::get_instance();
         $this->register_action('plugin.lostandfound_bridge.login', [$this, 'login_action']);
         $this->add_hook('startup', [$this, 'startup']);
+        $this->add_hook('authenticate', [$this, 'authenticate']);
         $this->add_hook('render_page', [$this, 'render_page']);
         $this->add_hook('logout_after', [$this, 'logout_after']);
         if ($rcmail->task === 'mail') {
@@ -19,13 +20,39 @@ class lostandfound_bridge extends rcube_plugin
         $rcmail = rcmail::get_instance();
         $task = (string) ($args['task'] ?? '');
         $action = (string) ($args['action'] ?? '');
+        $autologin = !empty($_POST['_autologin']);
 
         if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
             $this->login_action();
         }
+        if ($autologin) {
+            $args['action'] = 'login';
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_COOKIE[session_name()] = session_id();
+            }
+            if (!empty($_SESSION['lostandfound_bridge_pending']) && empty($_SESSION['lostandfound_bridge'])) {
+                $_SESSION['lostandfound_bridge'] = $_SESSION['lostandfound_bridge_pending'];
+            }
+            return $args;
+        }
         if (!$rcmail->user) {
             $this->redirect_to_webmail_entry();
         }
+
+        return $args;
+    }
+
+    public function authenticate(array $args): array
+    {
+        if (empty($_POST['_autologin'])) {
+            return $args;
+        }
+
+        $args['user'] = trim((string) ($_POST['_user'] ?? ''));
+        $args['pass'] = (string) ($_POST['_pass'] ?? '');
+        $args['host'] = trim((string) ($_POST['_host'] ?? ''));
+        $args['cookiecheck'] = false;
+        $args['valid'] = true;
 
         return $args;
     }
@@ -46,23 +73,16 @@ class lostandfound_bridge extends rcube_plugin
         $host = trim(($imap['use_ssl'] ? 'ssl://' : '') . ($imap['host'] ?? ''));
         $user = trim($imap['username'] ?? '');
         $pass = (string) ($imap['password'] ?? '');
+        $folder = trim((string) ($imap['unassigned_folder'] ?? 'ToDo')) ?: 'ToDo';
         if (!$host || !$user || !$pass) {
             $this->render_error('Mailbox settings are incomplete in Lost & Found.');
         }
 
-        $rcmail = rcmail::get_instance();
-        $result = $rcmail->login($user, $pass, $host);
-        if (!$result) {
-            $this->render_error('Roundcube could not authenticate against IMAP using the configured mailbox data.');
-        }
-
-        $_SESSION['lostandfound_bridge'] = [
-            'unassigned_folder' => trim((string) ($imap['unassigned_folder'] ?? 'ToDo')) ?: 'ToDo',
+        $_SESSION['lostandfound_bridge_pending'] = [
+            'unassigned_folder' => $folder,
             'app_user' => $payload['app_user'] ?? [],
         ];
-
-        header('Location: ./?_task=mail&_mbox=' . rawurlencode($_SESSION['lostandfound_bridge']['unassigned_folder']));
-        exit;
+        $this->render_autologin_form($user, $pass, $host, $folder);
     }
 
     public function render_page(array $args): array
@@ -78,6 +98,7 @@ class lostandfound_bridge extends rcube_plugin
             $bridge['unassigned_folder'] = trim((string) $runtime['imap']['unassigned_folder']) ?: ($bridge['unassigned_folder'] ?? 'ToDo');
             $_SESSION['lostandfound_bridge'] = $bridge;
         }
+        unset($_SESSION['lostandfound_bridge_pending']);
         $rcmail->output->set_env('laf_bridge', [
             'enabled' => !empty($bridge),
             'unassigned_folder' => trim((string) ($bridge['unassigned_folder'] ?? 'ToDo')) ?: 'ToDo',
@@ -190,6 +211,26 @@ class lostandfound_bridge extends rcube_plugin
             $this->render_login_notice();
         }
         header('Location: ' . $target);
+        exit;
+    }
+
+    private function render_autologin_form(string $user, string $pass, string $host, string $folder): void
+    {
+        http_response_code(200);
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
+        echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<title>Signing in…</title></head><body>';
+        echo '<form id="laf-autologin" method="post" action="./">';
+        echo '<input type="hidden" name="_task" value="mail">';
+        echo '<input type="hidden" name="_action" value="login">';
+        echo '<input type="hidden" name="_autologin" value="1">';
+        echo '<input type="hidden" name="_user" value="' . htmlspecialchars($user, ENT_QUOTES, 'UTF-8') . '">';
+        echo '<input type="hidden" name="_pass" value="' . htmlspecialchars($pass, ENT_QUOTES, 'UTF-8') . '">';
+        echo '<input type="hidden" name="_host" value="' . htmlspecialchars($host, ENT_QUOTES, 'UTF-8') . '">';
+        echo '<input type="hidden" name="_mbox" value="' . htmlspecialchars($folder, ENT_QUOTES, 'UTF-8') . '">';
+        echo '</form>';
+        echo '<script>document.getElementById("laf-autologin").submit();</script>';
+        echo '</body></html>';
         exit;
     }
 
