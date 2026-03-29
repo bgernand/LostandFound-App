@@ -1175,9 +1175,50 @@ def init_db(db_path: str):
         UPDATE auto_mail_rules
         SET subject_template=?
         WHERE name='Still Not Found'
-          AND subject_template='Ihr Gegenstand {{ item_id }} wurde noch nicht gefunden'
+          AND subject_template IN (
+              'Ihr Gegenstand {{ item_id }} wurde noch nicht gefunden',
+              'Update on your lost item {{ item_id }}'
+          )
         """,
-        ("Update on your lost item {{ item_id }}",),
+        ("Lost & Found update for item {{ item_id }}",),
+    )
+    conn.execute(
+        """
+        UPDATE auto_mail_rules
+        SET body_template=?
+        WHERE name='Still Not Found'
+          AND body_template='Unfortunately, your item has still not been found.
+
+At this point, we will stop actively searching for it.
+
+If your item is handed in later, we will contact you as soon as possible.
+
+Kind regards
+Lost & Found Team'
+        """,
+        (
+            """Hello {{ first_name }} {{ last_name }},
+
+we would like to give you a short update on your lost item.
+
+Unfortunately, your item has still not been found.
+
+Current information:
+- Item ID: {{ item_id }}
+- Title: {{ title }}
+- Status: {{ status }}
+- Category: {{ category }}
+- Location: {{ location }}
+- Date of loss: {{ event_date }}
+
+At this point, we will stop actively searching for it.
+If your item is handed in later, we will contact you as soon as possible.
+
+Public item link: {{ public_url }}
+
+Kind regards
+Lost & Found Team""",
+        ),
     )
 
     try:

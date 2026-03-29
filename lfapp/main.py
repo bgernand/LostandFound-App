@@ -170,12 +170,25 @@ Our team will review your request as soon as possible.
 Best regards
 Lost & Found Team
 """
-DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT = "Update on your lost item {{ item_id }}"
-DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY = """Unfortunately, your item has still not been found.
+DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT = "Lost & Found update for item {{ item_id }}"
+DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY = """Hello {{ first_name }} {{ last_name }},
+
+we would like to give you a short update on your lost item.
+
+Unfortunately, your item has still not been found.
+
+Current information:
+- Item ID: {{ item_id }}
+- Title: {{ title }}
+- Status: {{ status }}
+- Category: {{ category }}
+- Location: {{ location }}
+- Date of loss: {{ event_date }}
 
 At this point, we will stop actively searching for it.
-
 If your item is handed in later, we will contact you as soon as possible.
+
+Public item link: {{ public_url }}
 
 Kind regards
 Lost & Found Team"""
