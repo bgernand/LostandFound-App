@@ -733,7 +733,7 @@ def register_admin_routes(app, deps: dict):
                 ),
             )
             conn.execute(
-                "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+                "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
                 (now_utc(), int(item["id"])),
             )
             conn.execute(
@@ -831,7 +831,7 @@ def register_admin_routes(app, deps: dict):
             ),
         )
         conn.execute(
-            "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+            "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
             (now_utc(), int(item["id"])),
         )
         conn.execute(

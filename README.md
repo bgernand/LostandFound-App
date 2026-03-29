@@ -32,7 +32,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - Optional confirmation e-mail to requester after public lost submission (configurable template with preview in `Settings -> System Settings`)
 
 ## Status Behavior
-- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `Waiting for answer`, `Answer received`, `Ready to send`, `Handed over / Sent`, `Lost forever`
+- Available statuses: `Lost`, `Maybe Found -> Check`, `Found`, `Waiting for answer`, `To be answered`, `Ready to send`, `Handed over / Sent`, `Lost forever`
 - New items are always created with default status `Lost` (independent of type)
 - When a link is created between items, all items in the linked graph are set to `Found`
 - Changing the status of one linked item synchronizes that status to all linked items
@@ -77,7 +77,7 @@ Lost-and-found web app based on Flask, SQLite, Gunicorn, Nginx, and Certbot.
 - When ticket workflow is enabled:
   - sending a mail sets the item status to `Waiting for answer`
   - incoming replies are fetched from IMAP, matched by reference, and added to the item thread
-  - received replies set the item status to `Answer received`
+  - received replies set the item status to `To be answered`
   - outgoing messages are appended to the IMAP sent folder (default `LostFound/Send`)
   - processed incoming messages are moved to the IMAP processed folder (default `LostFound/Proceeded`)
   - incoming messages without a valid ticket reference are moved to the IMAP unassigned folder (default `ToDo`)

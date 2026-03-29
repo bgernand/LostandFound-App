@@ -1149,6 +1149,7 @@ def init_db(db_path: str):
     conn.execute("UPDATE items SET status='Lost' WHERE status='Found, not assigned'")
     conn.execute("UPDATE items SET status='Handed over / Sent' WHERE status IN ('Sent', 'Done')")
     conn.execute("UPDATE items SET status='Waiting for answer' WHERE status='In contact'")
+    conn.execute("UPDATE items SET status='To be answered' WHERE status='Answer received'")
 
     try:
         conn.execute(

@@ -209,7 +209,7 @@ STATUSES = [
     "Maybe Found -> Check",
     "Found",
     "Waiting for answer",
-    "Answer received",
+    "To be answered",
     "Ready to send",
     "Handed over / Sent",
     "Lost forever",
@@ -220,7 +220,7 @@ STATUS_COLORS = {
     "Maybe Found -> Check": "warning",
     "Found": "primary",
     "Waiting for answer": "info",
-    "Answer received": "primary",
+    "To be answered": "primary",
     "Ready to send": "secondary",
     "Handed over / Sent": "success",
     "Lost forever": "dark",
@@ -1495,7 +1495,7 @@ def create_app(config: dict | None = None):
                     ),
                 )
                 conn.execute(
-                    "UPDATE items SET status='Answer received', updated_at=? WHERE id=?",
+                    "UPDATE items SET status='To be answered', updated_at=? WHERE id=?",
                     (now_utc(), int(item["id"])),
                 )
                 conn.execute(

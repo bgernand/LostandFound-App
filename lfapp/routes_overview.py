@@ -134,7 +134,7 @@ def register_overview_routes(app, deps: dict):
                 """
                 SELECT COUNT(*) AS c
                 FROM items
-                WHERE status='Answer received'
+                WHERE status='To be answered'
                   AND kind IN ({})
                 """.format(",".join(["?"] * len(allowed_kinds))),
                 tuple(sorted(allowed_kinds)),
@@ -288,7 +288,7 @@ def register_overview_routes(app, deps: dict):
                 """
                 SELECT COUNT(*) AS c
                 FROM items
-                WHERE status='Answer received'
+                WHERE status='To be answered'
                   AND kind IN ({})
                 """.format(",".join(["?"] * len(allowed_kinds))),
                 tuple(sorted(allowed_kinds)),

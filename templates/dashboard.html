@@ -102,8 +102,8 @@
       <a class="btn btn-sm btn-outline-info" href="{{ url_for('index', status='Waiting for answer') }}">
         Waiting for answer <span class="badge text-bg-info ms-1">{{ waiting_answer_count }}</span>
       </a>
-      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('index', status='Answer received') }}">
-        Answer received <span class="badge text-bg-primary ms-1">{{ answer_received_count }}</span>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('index', status='To be answered') }}">
+        To be answered <span class="badge text-bg-primary ms-1">{{ answer_received_count }}</span>
       </a>
     </div>
     <h6 class="card-title">Follow-up Reminders</h6>

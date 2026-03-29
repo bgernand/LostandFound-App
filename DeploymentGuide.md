@@ -113,7 +113,7 @@ Functional checks after deploy:
 - If mail ticket workflow is enabled:
   - sending a Lost Request mail adds a `[LFT-<public_id>]` reference
   - item status changes to `Waiting for answer`
-  - incoming replies are imported into the item thread and move status to `Answer received`
+  - incoming replies are imported into the item thread and move status to `To be answered`
   - inbound mails without a valid reference are moved to `ToDo`
   - IMAP can be tested directly in the admin UI and a mailbox poll can be triggered manually
   - Webmail is handled in Roundcube and supports the Lost & Found bridge actions `Create Lost`, `Create Found`, and `Assign to Existing Item`

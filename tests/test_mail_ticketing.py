@@ -135,7 +135,7 @@ def test_ticket_poll_imports_referenced_reply(monkeypatch, tmp_path):
     ).fetchone()
     conn.close()
 
-    assert item["status"] == "Answer received"
+    assert item["status"] == "To be answered"
     assert mail["direction"] == "incoming"
     assert mail["ticket_ref"] == "LFT-20261200B1"
     assert "This is my wallet." in mail["body"]
@@ -231,7 +231,7 @@ def test_unassigned_mail_can_be_assigned_manually(monkeypatch, tmp_path):
     ).fetchone()
     conn.close()
 
-    assert item["status"] == "Answer received"
+    assert item["status"] == "To be answered"
     assert mail["direction"] == "incoming"
     assert mail["ticket_ref"] == "LFT-20261200B2"
     assert unassigned_after["assigned_item_id"] == item_id
