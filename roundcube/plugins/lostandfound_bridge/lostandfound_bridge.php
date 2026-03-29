@@ -100,6 +100,7 @@ class lostandfound_bridge extends rcube_plugin
             'unassigned_folder' => trim((string) ($bridge['unassigned_folder'] ?? 'ToDo')) ?: 'ToDo',
             'app_user' => $bridge['app_user'] ?? [],
             'dashboard_url' => $this->dashboard_url(),
+            'icon_url' => './plugins/lostandfound_bridge/lostandfound_bridge.png',
             'assign_url' => '/roundcube/bridge/assign',
             'create_lost_url' => '/roundcube/bridge/start-create/lost',
             'create_found_url' => '/roundcube/bridge/start-create/found',

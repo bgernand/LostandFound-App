@@ -55,12 +55,19 @@
 
     var link = document.createElement("a");
     link.href = rcmail.env.laf_bridge.dashboard_url;
-    link.textContent = "Lost & Found";
+    link.setAttribute("aria-label", "Back to Lost & Found");
     link.setAttribute("title", "Back to Lost & Found");
     link.addEventListener("click", function (event) {
       event.preventDefault();
       window.location.href = rcmail.env.laf_bridge.dashboard_url;
     });
+
+    var img = document.createElement("img");
+    img.src = (rcmail.env.laf_bridge.icon_url || "./plugins/lostandfound_bridge/lostandfound_bridge.png");
+    img.alt = "Lost & Found";
+    img.style.cssText = "width:20px;height:20px;display:block;object-fit:contain;";
+    link.appendChild(img);
+
     item.appendChild(link);
 
     if (referenceItem && referenceItem.tagName && referenceItem.tagName.toLowerCase() === "li" && referenceItem.parentNode === taskMenu) {
