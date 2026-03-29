@@ -1758,57 +1758,142 @@ def register_admin_routes(app, deps: dict):
     @require_permission("admin.settings")
     def admin_set_auto_mail_rules():
         conn = get_db()
-        current_rules = get_auto_mail_rules(conn)
-        rules_by_id = {rule["id"]: rule for rule in current_rules}
-        old_state = {}
-        new_state = {}
+        rule_id_raw = (request.form.get("rule_id") or "").strip()
+        name = (request.form.get("name") or "").strip()
+        enabled = (request.form.get("enabled") or "") == "1"
+        days_raw = (request.form.get("days") or "").strip()
+        statuses = [s for s in request.form.getlist("statuses") if s in STATUSES]
+        status_after_send = (request.form.get("status_after_send") or "").strip()
+        subject = (request.form.get("subject") or "").strip()
+        body = (request.form.get("body") or "").strip()
 
-        for rule in current_rules:
-            rule_id = rule["id"]
-            prefix = f"auto_mail_{rule_id}_"
-            enabled = (request.form.get(f"{prefix}enabled") or "") == "1"
-            days_raw = (request.form.get(f"{prefix}days") or "").strip()
-            statuses = [s for s in request.form.getlist(f"{prefix}statuses") if s in STATUSES]
-            subject = (request.form.get(f"{prefix}subject") or "").strip()
-            body = (request.form.get(f"{prefix}body") or "").strip()
+        try:
+            rule_id = int(rule_id_raw)
+        except ValueError:
+            conn.close()
+            abort(400)
 
-            try:
-                days = int(days_raw or str(rule["days"]))
-            except ValueError:
-                conn.close()
-                flash(f"AutoMail '{rule['name']}': days must be a number.", "danger")
-                return _render_admin_settings(active_settings_section="auto-mail")
-            days = max(1, min(3650, days))
-            if not statuses:
-                conn.close()
-                flash(f"AutoMail '{rule['name']}': select at least one status.", "danger")
-                return _render_admin_settings(active_settings_section="auto-mail")
-            ok_subject, unknown_subject = validate_mail_template_variables(subject, set(ITEM_EMAIL_ALLOWED_VARS))
-            ok_body, unknown_body = validate_mail_template_variables(body, set(ITEM_EMAIL_ALLOWED_VARS))
-            unknown_all = sorted(set(unknown_subject) | set(unknown_body))
-            if unknown_all:
-                conn.close()
-                flash("Unknown auto mail variable(s): " + ", ".join(unknown_all), "danger")
-                return _render_admin_settings(active_settings_section="auto-mail")
+        existing = conn.execute(
+            """
+            SELECT id, name, is_active, trigger_days, trigger_statuses, subject_template, body_template, status_after_send
+            FROM auto_mail_rules
+            WHERE id=?
+            """,
+            (rule_id,),
+        ).fetchone()
+        if not existing:
+            conn.close()
+            abort(404)
 
-            old_state[rule_id] = rules_by_id[rule_id]
-            new_state[rule_id] = {
-                "enabled": enabled,
-                "days": days,
-                "statuses": statuses,
-                "subject": subject,
-                "body": body,
-            }
-            set_setting(conn, prefix + "enabled", "1" if enabled else "0")
-            set_setting(conn, prefix + "days", str(days))
-            set_setting(conn, prefix + "statuses", ",".join(statuses))
-            set_setting(conn, prefix + "subject", subject)
-            set_setting(conn, prefix + "body", body)
+        if not name:
+            conn.close()
+            flash("AutoMail name is required.", "danger")
+            return _redirect_admin_settings("auto-mail")
+        try:
+            days = int(days_raw or str(existing["trigger_days"]))
+        except ValueError:
+            conn.close()
+            flash(f"AutoMail '{name}': days must be a number.", "danger")
+            return _redirect_admin_settings("auto-mail")
+        days = max(1, min(3650, days))
+        if not statuses:
+            conn.close()
+            flash(f"AutoMail '{name}': select at least one status.", "danger")
+            return _redirect_admin_settings("auto-mail")
+        if status_after_send and status_after_send not in STATUSES:
+            conn.close()
+            flash(f"AutoMail '{name}': invalid status after send.", "danger")
+            return _redirect_admin_settings("auto-mail")
+        ok_subject, unknown_subject = validate_mail_template_variables(subject, set(ITEM_EMAIL_ALLOWED_VARS))
+        ok_body, unknown_body = validate_mail_template_variables(body, set(ITEM_EMAIL_ALLOWED_VARS))
+        unknown_all = sorted(set(unknown_subject) | set(unknown_body))
+        if unknown_all:
+            conn.close()
+            flash("Unknown auto mail variable(s): " + ", ".join(unknown_all), "danger")
+            return _redirect_admin_settings("auto-mail")
 
+        old_state = row_to_dict(existing)
+        conn.execute(
+            """
+            UPDATE auto_mail_rules
+            SET name=?, is_active=?, trigger_days=?, trigger_statuses=?, subject_template=?, body_template=?,
+                status_after_send=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                name,
+                1 if enabled else 0,
+                days,
+                ",".join(statuses),
+                subject,
+                body,
+                status_after_send,
+                now_utc(),
+                rule_id,
+            ),
+        )
         conn.commit()
         conn.close()
-        audit("auto_mail_rules", "settings", None, "updated", old_values=old_state, new_values=new_state)
-        flash("AutoMail rules updated.", "success")
+        audit(
+            "auto_mail_rule_update",
+            "settings",
+            rule_id,
+            f"name={name}",
+            old_values=old_state,
+            new_values={
+                "name": name,
+                "is_active": 1 if enabled else 0,
+                "trigger_days": days,
+                "trigger_statuses": ",".join(statuses),
+                "subject_template": subject,
+                "body_template": body,
+                "status_after_send": status_after_send,
+            },
+        )
+        flash("AutoMail rule updated.", "success")
+        return _redirect_admin_settings("auto-mail")
+
+    @app.post("/admin/settings/auto-mail-rules/create")
+    @require_permission("admin.settings")
+    def admin_create_auto_mail_rule():
+        name = (request.form.get("name") or "").strip() or "New AutoMail"
+        conn = get_db()
+        conn.execute(
+            """
+            INSERT INTO auto_mail_rules (
+                name, is_active, trigger_days, trigger_statuses, subject_template, body_template, status_after_send, created_at, updated_at
+            )
+            VALUES (?, 0, 30, 'Lost', 'Update for item {{ item_id }}', '', '', ?, ?)
+            """,
+            (name, now_utc(), now_utc()),
+        )
+        new_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        conn.commit()
+        conn.close()
+        audit("auto_mail_rule_create", "settings", int(new_id), f"name={name}")
+        flash("AutoMail rule created.", "success")
+        return _redirect_admin_settings("auto-mail")
+
+    @app.post("/admin/settings/auto-mail-rules/<int:rule_id>/delete")
+    @require_permission("admin.settings")
+    def admin_delete_auto_mail_rule(rule_id: int):
+        conn = get_db()
+        existing = conn.execute(
+            """
+            SELECT id, name, is_active, trigger_days, trigger_statuses, subject_template, body_template, status_after_send
+            FROM auto_mail_rules
+            WHERE id=?
+            """,
+            (rule_id,),
+        ).fetchone()
+        if not existing:
+            conn.close()
+            abort(404)
+        conn.execute("DELETE FROM auto_mail_rules WHERE id=?", (rule_id,))
+        conn.commit()
+        conn.close()
+        audit("auto_mail_rule_delete", "settings", rule_id, f"name={existing['name']}", old_values=row_to_dict(existing))
+        flash("AutoMail rule deleted.", "warning")
         return _redirect_admin_settings("auto-mail")
 
     @app.post("/admin/settings/legal-privacy")

@@ -965,6 +965,22 @@ def init_db(db_path: str):
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS auto_mail_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            trigger_days INTEGER NOT NULL DEFAULT 90,
+            trigger_statuses TEXT NOT NULL,
+            subject_template TEXT NOT NULL,
+            body_template TEXT NOT NULL,
+            status_after_send TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS mail_unassigned_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender TEXT,
@@ -1111,6 +1127,7 @@ def init_db(db_path: str):
         ("mail_ticket_last_poll_at", ""),
         ("mail_ticket_last_poll_ok", ""),
         ("mail_ticket_last_poll_message", ""),
+        ("auto_mail_rules_seeded", "0"),
     ]:
         conn.execute(
             "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",

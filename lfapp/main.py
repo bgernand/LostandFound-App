@@ -171,9 +171,14 @@ Best regards
 Lost & Found Team
 """
 DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT = "Ihr Gegenstand {{ item_id }} wurde noch nicht gefunden"
-DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY = """Der Gegenstand wurde leider noch nicht gefunden.
+DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY = """Unfortunately, your item has still not been found.
 
-Wir hören danach auf, aktiv zu suchen."""
+At this point, we will stop actively searching for it.
+
+If your item is handed in later, we will contact you as soon as possible.
+
+Kind regards
+Lost & Found Team"""
 MAIL_TEMPLATE_VAR_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 PUBLIC_LOST_CONFIRM_ALLOWED_VARS = {
     "item_id",
@@ -216,6 +221,7 @@ AUTO_MAIL_RULE_DEFS = [
         "default_statuses": ["Lost"],
         "default_subject": DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_SUBJECT,
         "default_body": DEFAULT_AUTO_MAIL_STILL_NOT_FOUND_BODY,
+        "default_status_after_send": "Lost",
         "description": "Send once after an item has remained in the selected status for the configured number of days.",
     },
 ]
@@ -674,35 +680,71 @@ def create_app(config: dict | None = None):
             conn = get_db()
             own_conn = True
         try:
-            rules = []
-            for rule_def in AUTO_MAIL_RULE_DEFS:
-                prefix = f"auto_mail_{rule_def['id']}_"
-                enabled_raw = get_setting(conn, prefix + "enabled", "1" if rule_def["default_enabled"] else "0")
-                days_raw = get_setting(conn, prefix + "days", str(rule_def["default_days"]))
-                statuses_raw = get_setting(conn, prefix + "statuses", ",".join(rule_def["default_statuses"])) or ""
-                subject = get_setting(conn, prefix + "subject", rule_def["default_subject"]) or rule_def["default_subject"]
-                body = get_setting(conn, prefix + "body", rule_def["default_body"]) or rule_def["default_body"]
-                try:
-                    days = int(days_raw or rule_def["default_days"])
-                except ValueError:
-                    days = int(rule_def["default_days"])
-                days = max(1, min(3650, days))
-                statuses = [s.strip() for s in statuses_raw.split(",") if s.strip() in STATUSES]
-                if not statuses:
-                    statuses = list(rule_def["default_statuses"])
-                rules.append(
-                    {
-                        "id": rule_def["id"],
-                        "name": rule_def["name"],
-                        "description": rule_def["description"],
-                        "enabled": _is_truthy(enabled_raw),
-                        "days": days,
-                        "statuses": statuses,
-                        "subject": subject,
-                        "body": body,
-                    }
-                )
-            return rules
+            existing_count = conn.execute("SELECT COUNT(*) AS c FROM auto_mail_rules").fetchone()
+            seeded_raw = get_setting(conn, "auto_mail_rules_seeded", "0")
+            if int(existing_count["c"] or 0) == 0 and not _is_truthy(seeded_raw):
+                for rule_def in AUTO_MAIL_RULE_DEFS:
+                    prefix = f"auto_mail_{rule_def['id']}_"
+                    enabled_raw = get_setting(conn, prefix + "enabled", "1" if rule_def["default_enabled"] else "0")
+                    days_raw = get_setting(conn, prefix + "days", str(rule_def["default_days"]))
+                    statuses_raw = get_setting(conn, prefix + "statuses", ",".join(rule_def["default_statuses"])) or ""
+                    subject = get_setting(conn, prefix + "subject", rule_def["default_subject"]) or rule_def["default_subject"]
+                    body = get_setting(conn, prefix + "body", rule_def["default_body"]) or rule_def["default_body"]
+                    try:
+                        days = int(days_raw or rule_def["default_days"])
+                    except ValueError:
+                        days = int(rule_def["default_days"])
+                    days = max(1, min(3650, days))
+                    statuses = [s.strip() for s in statuses_raw.split(",") if s.strip() in STATUSES]
+                    if not statuses:
+                        statuses = list(rule_def["default_statuses"])
+                    conn.execute(
+                        """
+                        INSERT INTO auto_mail_rules (
+                            name, is_active, trigger_days, trigger_statuses, subject_template, body_template,
+                            status_after_send, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            rule_def["name"],
+                            1 if _is_truthy(enabled_raw) else 0,
+                            days,
+                            ",".join(statuses),
+                            subject,
+                            body,
+                            rule_def.get("default_status_after_send") or "",
+                            now_utc(),
+                            now_utc(),
+                        ),
+                    )
+                set_setting(conn, "auto_mail_rules_seeded", "1")
+                conn.commit()
+
+            rows = conn.execute(
+                """
+                SELECT id, name, is_active, trigger_days, trigger_statuses, subject_template,
+                       body_template, status_after_send, created_at, updated_at
+                FROM auto_mail_rules
+                ORDER BY lower(name) ASC, id ASC
+                """
+            ).fetchall()
+            return [
+                {
+                    "id": int(row["id"]),
+                    "name": row["name"],
+                    "description": "Send once after an item has remained in the selected status for the configured number of days.",
+                    "enabled": bool(int(row["is_active"] or 0) == 1),
+                    "days": max(1, min(3650, int(row["trigger_days"] or 90))),
+                    "statuses": [s.strip() for s in str(row["trigger_statuses"] or "").split(",") if s.strip() in STATUSES],
+                    "subject": row["subject_template"] or "",
+                    "body": row["body_template"] or "",
+                    "status_after_send": (row["status_after_send"] or "").strip(),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in rows
+            ]
         finally:
             if own_conn:
                 conn.close()
@@ -793,8 +835,10 @@ def create_app(config: dict | None = None):
             for rule in get_auto_mail_rules(conn):
                 if not rule["enabled"]:
                     continue
+                if not rule["statuses"]:
+                    continue
                 placeholders = ",".join("?" for _ in rule["statuses"])
-                template_name = f"auto_mail:{rule['id']}"
+                template_name = f"auto_mail_rule:{rule['id']}"
                 cutoff = (datetime.now(timezone.utc) - timedelta(days=int(rule["days"]))).strftime("%Y-%m-%dT%H:%M:%S")
                 rows = conn.execute(
                     f"""
@@ -861,6 +905,12 @@ def create_app(config: dict | None = None):
                             now_utc(),
                         ),
                     )
+                    status_after_send = (rule.get("status_after_send") or "").strip()
+                    if status_after_send and status_after_send in STATUSES:
+                        conn.execute(
+                            "UPDATE items SET status=?, status_changed_at=?, updated_at=? WHERE id=?",
+                            (status_after_send, now_utc(), now_utc(), int(item["id"])),
+                        )
                     audit(
                         "auto_mail_sent",
                         "item",

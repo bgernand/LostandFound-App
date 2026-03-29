@@ -337,60 +337,81 @@ If you received this message, SMTP settings are working.</textarea>
           {% if auto_mail_rules %}
             <hr>
             <div class="text-muted small mb-3">Configured automatic item mails</div>
-            <form method="post" action="{{ url_for('admin_set_auto_mail_rules') }}">
+            <form method="post" action="{{ url_for('admin_create_auto_mail_rule') }}" class="border rounded p-3 mb-3 bg-light">
               <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-              <div class="vstack gap-3">
-                {% for rule in auto_mail_rules %}
-                  {% set prefix = "auto_mail_" ~ rule['id'] ~ "_" %}
-                  <div class="border rounded p-3">
-                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                      <div>
-                        <div class="fw-semibold">{{ rule['name'] }}</div>
-                        <div class="small text-muted">{{ rule['description'] }}</div>
-                      </div>
-                      <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="{{ prefix }}enabled" name="{{ prefix }}enabled" value="1" {% if rule['enabled'] %}checked{% endif %}>
-                        <label class="form-check-label small" for="{{ prefix }}enabled">Enabled</label>
-                      </div>
-                    </div>
-                    <div class="row g-3 mt-1">
-                      <div class="col-12 col-lg-3">
-                        <label class="form-label small">Send after days in current status</label>
-                        <input class="form-control form-control-sm" type="number" min="1" max="3650" name="{{ prefix }}days" value="{{ rule['days'] }}">
-                      </div>
-                      <div class="col-12 col-lg-9">
-                        <label class="form-label small">Trigger statuses</label>
-                        <div class="d-flex flex-wrap gap-3">
-                          {% for status in statuses %}
-                            <div class="form-check">
-                              <input class="form-check-input" type="checkbox" id="{{ prefix }}status_{{ loop.index }}" name="{{ prefix }}statuses" value="{{ status }}" {% if status in rule['statuses'] %}checked{% endif %}>
-                              <label class="form-check-label small" for="{{ prefix }}status_{{ loop.index }}">{{ status }}</label>
-                            </div>
-                          {% endfor %}
-                        </div>
-                      </div>
-                      <div class="col-12">
-                        <label class="form-label small">Subject template</label>
-                        <input class="form-control form-control-sm" name="{{ prefix }}subject" value="{{ rule['subject'] }}">
-                      </div>
-                      <div class="col-12">
-                        <label class="form-label small">Body template</label>
-                        <textarea class="form-control form-control-sm" rows="5" name="{{ prefix }}body">{{ rule['body'] }}</textarea>
-                      </div>
-                    </div>
-                  </div>
-                {% endfor %}
-              </div>
-              <div class="small text-muted mt-3 mb-2">
-                Allowed variables:
-                {% for v in item_mail_template_allowed_vars %}
-                  <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
-                {% endfor %}
-              </div>
-              <div class="d-grid d-md-flex justify-content-md-end">
-                <button class="btn btn-sm btn-outline-primary" type="submit">Save auto mail rules</button>
+              <div class="row g-2 align-items-end">
+                <div class="col-12 col-lg-8">
+                  <label class="form-label small">New AutoMail name</label>
+                  <input class="form-control form-control-sm" name="name" placeholder="e.g. Still Not Found">
+                </div>
+                <div class="col-12 col-lg-4 d-grid">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Add AutoMail rule</button>
+                </div>
               </div>
             </form>
+            <div class="vstack gap-3">
+              {% for rule in auto_mail_rules %}
+                <form method="post" action="{{ url_for('admin_set_auto_mail_rules') }}" class="border rounded p-3">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="rule_id" value="{{ rule['id'] }}">
+                  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                    <div class="flex-grow-1">
+                      <label class="form-label small">Rule name</label>
+                      <input class="form-control form-control-sm" name="name" value="{{ rule['name'] }}" required>
+                      <div class="small text-muted mt-1">{{ rule['description'] }}</div>
+                    </div>
+                    <div class="form-check mt-4">
+                      <input class="form-check-input" type="checkbox" id="autoMailEnabled{{ rule['id'] }}" name="enabled" value="1" {% if rule['enabled'] %}checked{% endif %}>
+                      <label class="form-check-label small" for="autoMailEnabled{{ rule['id'] }}">Enabled</label>
+                    </div>
+                  </div>
+                  <div class="row g-3 mt-1">
+                    <div class="col-12 col-lg-3">
+                      <label class="form-label small">Send after days in current status</label>
+                      <input class="form-control form-control-sm" type="number" min="1" max="3650" name="days" value="{{ rule['days'] }}">
+                    </div>
+                    <div class="col-12 col-lg-3">
+                      <label class="form-label small">Status after send</label>
+                      <select class="form-select form-select-sm" name="status_after_send">
+                        <option value="">Keep current status</option>
+                        {% for status in statuses %}
+                          <option value="{{ status }}" {% if rule.get('status_after_send') == status %}selected{% endif %}>{{ status }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12 col-lg-6">
+                      <label class="form-label small">Trigger statuses</label>
+                      <div class="d-flex flex-wrap gap-3">
+                        {% for status in statuses %}
+                          <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="autoMail{{ rule['id'] }}Status{{ loop.index }}" name="statuses" value="{{ status }}" {% if status in rule['statuses'] %}checked{% endif %}>
+                            <label class="form-check-label small" for="autoMail{{ rule['id'] }}Status{{ loop.index }}">{{ status }}</label>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <div class="col-12">
+                      <label class="form-label small">Subject template</label>
+                      <input class="form-control form-control-sm" name="subject" value="{{ rule['subject'] }}">
+                    </div>
+                    <div class="col-12">
+                      <label class="form-label small">Body template</label>
+                      <textarea class="form-control form-control-sm" rows="6" name="body">{{ rule['body'] }}</textarea>
+                    </div>
+                  </div>
+                  <div class="d-grid d-md-flex justify-content-md-end gap-2 mt-3">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Save rule</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" formmethod="post" formaction="{{ url_for('admin_delete_auto_mail_rule', rule_id=rule['id']) }}" onclick="return confirm('Delete this AutoMail rule?');">Delete</button>
+                  </div>
+                </form>
+              {% endfor %}
+            </div>
+            <div class="small text-muted mt-3 mb-2">
+              Allowed variables:
+              {% for v in item_mail_template_allowed_vars %}
+                <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
           {% endif %}
         </div>
       </div>
