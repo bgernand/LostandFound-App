@@ -75,7 +75,7 @@ chmod +x deploy.sh
 ```
 
 What this does:
-- creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`, `roundcube/data`)
+- creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`, `roundcube/data`, `roundcube/sessions`)
 - validates `.env`
 - builds and starts `app`, `worker`, `nginx`, and `certbot`
 - also starts `roundcube` when `ROUNDCUBE_ENABLED=true` is set in `.env`

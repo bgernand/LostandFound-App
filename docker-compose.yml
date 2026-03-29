@@ -127,6 +127,7 @@ services:
       - LAF_APP_INTERNAL_URL=http://app:8000
     volumes:
       - ./roundcube/data:/var/roundcube/db
+      - ./roundcube/sessions:/var/roundcube/sessions
     restart: unless-stopped
 
   certbot:

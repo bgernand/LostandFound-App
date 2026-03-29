@@ -56,7 +56,7 @@ cd "$PROJECT_ROOT"
 
 echo "==> LostandFound deployment starting..."
 
-mkdir -p data uploads certbot/www certbot/conf nginx/templates roundcube/data
+mkdir -p data uploads certbot/www certbot/conf nginx/templates roundcube/data roundcube/sessions
 
 # Ensure mounted runtime directories are writable by the non-root app user (uid/gid 10001).
 APP_UID="${APP_UID:-10001}"
@@ -67,6 +67,7 @@ chown -R "${APP_UID}:${APP_GID}" data uploads
 ROUNDCUBE_UID="${ROUNDCUBE_UID:-33}"
 ROUNDCUBE_GID="${ROUNDCUBE_GID:-33}"
 chown -R "${ROUNDCUBE_UID}:${ROUNDCUBE_GID}" roundcube/data
+chown -R "${ROUNDCUBE_UID}:${ROUNDCUBE_GID}" roundcube/sessions
 
 if [[ ! -f ".env" ]]; then
   if [[ -f ".env.example" ]]; then
