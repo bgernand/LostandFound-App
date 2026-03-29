@@ -43,49 +43,37 @@
       return;
     }
 
-    var reference =
+    var referenceItem =
       qs("#task-mail") ||
       qs("#task-addressbook") ||
-      taskMenu.querySelector("a, li");
+      taskMenu.querySelector("li") ||
+      taskMenu.querySelector("a");
 
-    var entry = reference ? reference.cloneNode(true) : document.createElement("a");
-    if (entry.tagName && entry.tagName.toLowerCase() !== "li") {
-      entry.id = "task-lostfound";
-      entry.href = rcmail.env.laf_bridge.dashboard_url;
-      entry.textContent = "Lost & Found";
-      entry.className = entry.className || "";
-      entry.removeAttribute("aria-current");
-      entry.style.removeProperty("display");
-      entry.style.removeProperty("visibility");
-    } else {
-      entry.id = "task-lostfound";
-      var link = entry.querySelector("a") || document.createElement("a");
-      link.href = rcmail.env.laf_bridge.dashboard_url;
-      link.textContent = "Lost & Found";
-      if (!link.parentNode) {
-        entry.appendChild(link);
-      }
-      entry.classList.remove("selected", "active");
-      entry.querySelectorAll("[aria-current='page']").forEach(function (node) {
-        node.removeAttribute("aria-current");
-      });
-    }
+    var item = document.createElement("li");
+    item.id = "task-lostfound";
+    item.className = "button lostfound";
 
-    entry.querySelectorAll && entry.querySelectorAll("span, .inner").forEach(function (node) {
-      if (node.children.length === 0) {
-        node.textContent = "Lost & Found";
-      }
+    var link = document.createElement("a");
+    link.href = rcmail.env.laf_bridge.dashboard_url;
+    link.textContent = "Lost & Found";
+    link.setAttribute("title", "Back to Lost & Found");
+    link.addEventListener("click", function (event) {
+      event.preventDefault();
+      window.location.href = rcmail.env.laf_bridge.dashboard_url;
     });
+    item.appendChild(link);
 
-    if (reference && reference.parentNode === taskMenu) {
-      reference.parentNode.insertBefore(entry, reference.nextSibling);
+    if (referenceItem && referenceItem.tagName && referenceItem.tagName.toLowerCase() === "li" && referenceItem.parentNode === taskMenu) {
+      taskMenu.insertBefore(item, referenceItem.nextSibling);
       return;
     }
-    if (reference && reference.parentNode && reference.parentNode.parentNode === taskMenu) {
-      reference.parentNode.parentNode.insertBefore(entry, reference.parentNode.nextSibling);
+
+    if (referenceItem && referenceItem.parentNode && referenceItem.parentNode.tagName && referenceItem.parentNode.tagName.toLowerCase() === "li" && referenceItem.parentNode.parentNode === taskMenu) {
+      taskMenu.insertBefore(item, referenceItem.parentNode.nextSibling);
       return;
     }
-    taskMenu.appendChild(entry);
+
+    taskMenu.appendChild(item);
   }
 
   function addButtonRow() {
