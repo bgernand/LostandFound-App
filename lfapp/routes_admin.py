@@ -396,7 +396,14 @@ def register_admin_routes(app, deps: dict):
         item_mail_templates=None,
         item_mail_template_allowed_vars=None,
         unassigned_mail_count=None,
+        active_settings_section=None,
     ):
+        allowed_sections = {"general", "mail", "auto-mail", "templates", "legal-pages"}
+        if active_settings_section not in allowed_sections:
+            active_settings_section = "general"
+        can_manage_mail_templates = bool(has_permission("admin.access", user=current_user()))
+        if active_settings_section == "templates" and not can_manage_mail_templates:
+            active_settings_section = "general"
         conn = get_db()
         if description_quality_settings is None:
             description_quality_settings = get_description_quality_settings(conn)
@@ -430,9 +437,13 @@ def register_admin_routes(app, deps: dict):
             privacy_policy_text=privacy_policy_text,
             item_mail_templates=item_mail_templates,
             item_mail_template_allowed_vars=item_mail_template_allowed_vars or ITEM_EMAIL_ALLOWED_VARS,
-            can_manage_mail_templates=bool(has_permission("admin.access", user=current_user())),
+            can_manage_mail_templates=can_manage_mail_templates,
             unassigned_mail_count=unassigned_mail_count,
+            active_settings_section=active_settings_section,
         )
+
+    def _redirect_admin_settings(section: str):
+        return redirect(url_for("admin_settings", section=section))
 
     @app.get("/admin/users")
     @require_permission("admin.users")
@@ -466,7 +477,8 @@ def register_admin_routes(app, deps: dict):
     @app.get("/admin/settings")
     @require_permission("admin.settings")
     def admin_settings():
-        return _render_admin_settings()
+        section = (request.args.get("section") or "").strip().lower()
+        return _render_admin_settings(active_settings_section=section)
 
     @app.get("/mailbox")
     @app.get("/admin/mail-ticket/unassigned")
@@ -895,13 +907,13 @@ def register_admin_routes(app, deps: dict):
 
         if not name:
             flash("Template name is required.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
         if not subject_template:
             flash("Subject template is required.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
         if not body_template:
             flash("Body template is required.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
 
         unknown = sorted(
             set(validate_mail_template_variables(subject_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
@@ -909,7 +921,7 @@ def register_admin_routes(app, deps: dict):
         )
         if unknown:
             flash("Unknown mail template variable(s): " + ", ".join(unknown), "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
 
         conn = get_db()
         try:
@@ -925,7 +937,7 @@ def register_admin_routes(app, deps: dict):
         except sqlite3.IntegrityError:
             conn.close()
             flash("Template name already exists.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
         conn.close()
         audit(
             "mail_template_create",
@@ -940,7 +952,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Mail template created.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("templates")
 
     @app.post("/admin/settings/mail-templates/<int:template_id>")
     @require_permission("admin.access")
@@ -952,7 +964,7 @@ def register_admin_routes(app, deps: dict):
 
         if not name or not subject_template or not body_template:
             flash("Template name, subject template and body template are required.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
 
         unknown = sorted(
             set(validate_mail_template_variables(subject_template, set(ITEM_EMAIL_ALLOWED_VARS))[1])
@@ -960,7 +972,7 @@ def register_admin_routes(app, deps: dict):
         )
         if unknown:
             flash("Unknown mail template variable(s): " + ", ".join(unknown), "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
 
         conn = get_db()
         existing = conn.execute(
@@ -983,7 +995,7 @@ def register_admin_routes(app, deps: dict):
         except sqlite3.IntegrityError:
             conn.close()
             flash("Template name already exists.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("templates")
         conn.close()
         audit(
             "mail_template_update",
@@ -1004,7 +1016,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Mail template updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("templates")
 
     @app.post("/admin/settings/mail-templates/<int:template_id>/delete")
     @require_permission("admin.access")
@@ -1033,7 +1045,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Mail template deleted.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("templates")
 
     @app.post("/admin/users")
     @require_permission("admin.users")
@@ -1120,17 +1132,17 @@ def register_admin_routes(app, deps: dict):
             score_threshold = int(score_threshold_raw)
         except ValueError:
             flash("Description quality settings must be numeric where required.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("general")
 
         if min_chars < 10 or min_chars > 300:
             flash("Description minimum characters must be between 10 and 300.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("general")
         if min_words < 3 or min_words > 30:
             flash("Description minimum words must be between 3 and 30.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("general")
         if score_threshold < 0 or score_threshold > 100:
             flash("Description score threshold must be between 0 and 100.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("general")
 
         conn = get_db()
         old_state = {
@@ -1166,7 +1178,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Description quality settings updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("general")
 
     @app.post("/admin/settings/smtp")
     @require_permission("admin.settings")
@@ -1186,23 +1198,23 @@ def register_admin_routes(app, deps: dict):
             timeout = int(timeout_raw)
         except ValueError:
             flash("SMTP port and timeout must be numeric.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
 
         if port < 1 or port > 65535:
             flash("SMTP port must be between 1 and 65535.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if timeout < 3 or timeout > 120:
             flash("SMTP timeout must be between 3 and 120 seconds.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if use_ssl and use_tls:
             flash("SMTP TLS and SSL cannot both be enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if enabled and not host:
             flash("SMTP host is required when SMTP is enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if enabled and not from_addr:
             flash("SMTP from address is required when SMTP is enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
 
         conn = get_db()
         old_state = {
@@ -1224,12 +1236,12 @@ def register_admin_routes(app, deps: dict):
             if not settings_encryption_ready():
                 conn.close()
                 flash("SETTINGS_ENCRYPTION_KEY is required to store SMTP password securely.", "danger")
-                return redirect(url_for("admin_settings"))
+                return _redirect_admin_settings("mail")
             encrypted_password = encrypt_setting_secret(password)
             if not encrypted_password:
                 conn.close()
                 flash("Failed to encrypt SMTP password.", "danger")
-                return redirect(url_for("admin_settings"))
+                return _redirect_admin_settings("mail")
             set_setting(conn, "smtp_password_enc", encrypted_password)
             set_setting(conn, "smtp_password", "")
         else:
@@ -1265,7 +1277,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("SMTP settings updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/mail-ticketing")
     @require_permission("admin.settings")
@@ -1290,23 +1302,23 @@ def register_admin_routes(app, deps: dict):
             poll_interval = int(poll_interval_raw)
         except ValueError:
             flash("IMAP port, timeout and poll interval must be numeric.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
 
         if imap_port < 1 or imap_port > 65535:
             flash("IMAP port must be between 1 and 65535.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if imap_timeout < 3 or imap_timeout > 120:
             flash("IMAP timeout must be between 3 and 120 seconds.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if poll_interval < 60 or poll_interval > 86400:
             flash("Mail ticket poll interval must be between 60 and 86400 seconds.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if enabled and imap_enabled and not imap_host:
             flash("IMAP host is required when inbound ticket mail is enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
         if enabled and imap_enabled and not imap_username:
             flash("IMAP username is required when inbound ticket mail is enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
 
         conn = get_db()
         old_state = {
@@ -1333,12 +1345,12 @@ def register_admin_routes(app, deps: dict):
             if not settings_encryption_ready():
                 conn.close()
                 flash("SETTINGS_ENCRYPTION_KEY is required to store IMAP password securely.", "danger")
-                return redirect(url_for("admin_settings"))
+                return _redirect_admin_settings("mail")
             encrypted_password = encrypt_setting_secret(imap_password)
             if not encrypted_password:
                 conn.close()
                 flash("Failed to encrypt IMAP password.", "danger")
-                return redirect(url_for("admin_settings"))
+                return _redirect_admin_settings("mail")
             set_setting(conn, "imap_password_enc", encrypted_password)
         else:
             existing_pw_enc = get_setting(conn, "imap_password_enc", "")
@@ -1375,7 +1387,7 @@ def register_admin_routes(app, deps: dict):
             },
         )
         flash("Mail ticket workflow settings updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/smtp-test")
     @require_permission("admin.settings")
@@ -1389,7 +1401,7 @@ def register_admin_routes(app, deps: dict):
 
         if not recipient or "@" not in recipient:
             flash("Please enter a valid test recipient e-mail address.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("mail")
 
         ok, msg = send_smtp_mail(recipient, subject, body)
         if ok:
@@ -1402,7 +1414,7 @@ def register_admin_routes(app, deps: dict):
             flash(f"Test e-mail sent to {recipient}.", "success")
         else:
             flash(f"Test e-mail could not be sent: {msg}", "danger")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/mail-ticketing/test-imap")
     @require_permission("admin.settings")
@@ -1413,7 +1425,7 @@ def register_admin_routes(app, deps: dict):
             flash(msg, "success")
         else:
             flash(f"IMAP test failed: {msg}", "danger")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/mail-ticketing/poll")
     @require_permission("admin.settings")
@@ -1441,7 +1453,7 @@ def register_admin_routes(app, deps: dict):
                     item_q=redirect_item_q or None,
                 )
             )
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/smtp-public-lost-confirmation")
     @require_permission("admin.settings")
@@ -1470,11 +1482,12 @@ def register_admin_routes(app, deps: dict):
                 },
                 public_lost_confirm_preview_subject=None,
                 public_lost_confirm_preview_body=None,
+                active_settings_section="auto-mail",
             )
 
         if enabled and (not subject or not body):
             flash("Subject and body are required when confirmation mail is enabled.", "danger")
-            return redirect(url_for("admin_settings"))
+            return _redirect_admin_settings("auto-mail")
 
         sample_ctx = {
             "item_id": "202610A",
@@ -1505,6 +1518,7 @@ def register_admin_routes(app, deps: dict):
                 },
                 public_lost_confirm_preview_subject=preview_subject,
                 public_lost_confirm_preview_body=preview_body,
+                active_settings_section="auto-mail",
             )
 
         conn = get_db()
@@ -1532,7 +1546,7 @@ def register_admin_routes(app, deps: dict):
             meta={"preview_subject": preview_subject},
         )
         flash("Public lost confirmation mail settings updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("auto-mail")
 
     @app.post("/admin/settings/legal-privacy")
     @require_permission("admin.settings")
@@ -1562,7 +1576,7 @@ def register_admin_routes(app, deps: dict):
             new_values={"legal_notice_text": legal_notice_text, "privacy_policy_text": privacy_policy_text},
         )
         flash("Legal notice and privacy policy updated.", "success")
-        return redirect(url_for("admin_settings"))
+        return _redirect_admin_settings("legal-pages")
 
     @app.post("/admin/users/<int:user_id>/reset-password")
     @require_permission("admin.users")

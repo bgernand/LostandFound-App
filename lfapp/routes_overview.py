@@ -248,7 +248,7 @@ def register_overview_routes(app, deps: dict):
         allowed_kinds = allowed_item_kinds_for_user(u)
         if not allowed_kinds:
             abort(403)
-        sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
+        sql, params, q, kinds, statuses_selected, categories_selected, paid_state, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,
             active_categories=category_names(active_only=True),
@@ -307,6 +307,7 @@ def register_overview_routes(app, deps: dict):
             kinds_selected=kinds,
             statuses_selected=statuses_selected,
             categories_selected=categories_selected,
+            paid_state=paid_state,
             linked_state=linked_state,
             include_lost_forever=include_lost_forever,
             date_from=date_from,
@@ -336,9 +337,15 @@ def register_overview_routes(app, deps: dict):
         source_statuses_selected = get_multi_values(request.args, "source_status", set(STATUSES))
         candidate_statuses_selected = get_multi_values(request.args, "candidate_status", set(STATUSES))
         categories_selected = get_multi_values(request.args, "category", set(category_names(active_only=True)))
+        source_paid_state = (request.args.get("source_paid") or "").strip().lower()
+        candidate_paid_state = (request.args.get("candidate_paid") or "").strip().lower()
         include_linked = 1 if (request.args.get("include_linked") == "1") else 0
         date_from = (request.args.get("date_from") or "").strip()
         date_to = (request.args.get("date_to") or "").strip()
+        if source_paid_state not in {"yes", "no"}:
+            source_paid_state = ""
+        if candidate_paid_state not in {"yes", "no"}:
+            candidate_paid_state = ""
         min_score = _safe_int_arg(request.args, "min_score", 35, 0, 200)
         max_score = _safe_int_arg(request.args, "max_score", 200, 0, 200)
         if max_score < min_score:
@@ -385,6 +392,11 @@ def register_overview_routes(app, deps: dict):
             source_sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
             source_params += categories_selected
 
+        if source_paid_state == "yes":
+            source_sql += " AND coalesce(postage_paid, 0) = 1"
+        elif source_paid_state == "no":
+            source_sql += " AND coalesce(postage_paid, 0) = 0"
+
         if date_from:
             source_sql += " AND event_date IS NOT NULL AND event_date >= ?"
             source_params.append(date_from)
@@ -413,6 +425,10 @@ def register_overview_routes(app, deps: dict):
             )
             for cand in found:
                 if candidate_statuses_selected and cand["status"] not in candidate_statuses_selected:
+                    continue
+                if candidate_paid_state == "yes" and int(cand["postage_paid"] or 0) != 1:
+                    continue
+                if candidate_paid_state == "no" and int(cand["postage_paid"] or 0) != 0:
                     continue
                 if int(cand.get("match_score") or 0) < min_score:
                     continue
@@ -451,6 +467,8 @@ def register_overview_routes(app, deps: dict):
             source_statuses_selected=source_statuses_selected,
             candidate_statuses_selected=candidate_statuses_selected,
             categories_selected=categories_selected,
+            source_paid_state=source_paid_state,
+            candidate_paid_state=candidate_paid_state,
             include_linked=include_linked,
             date_from=date_from,
             date_to=date_to,

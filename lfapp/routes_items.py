@@ -1909,7 +1909,7 @@ def register_item_routes(app, deps: dict):
         allowed_kinds = allowed_item_kinds_for_user(u)
         if not allowed_kinds:
             abort(403)
-        sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to = build_filters(
+        sql, params, q, kinds, statuses_selected, categories_selected, _paid_state, linked_state, include_lost_forever, date_from, date_to = build_filters(
             request.args,
             statuses=STATUSES,
             active_categories=category_names(active_only=True),

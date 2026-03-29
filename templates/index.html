@@ -36,6 +36,14 @@
         </select>
       </div>
       <div class="col-12 col-md-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Paid</label>
+        <select class="form-select" name="paid">
+          <option value="" {% if not paid_state %}selected{% endif %}>All</option>
+          <option value="yes" {% if paid_state == 'yes' %}selected{% endif %}>Paid</option>
+          <option value="no" {% if paid_state == 'no' %}selected{% endif %}>Not paid</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
         <label class="form-label small text-muted mb-1">Linked</label>
         <select class="form-select" name="linked">
           <option value="" {% if not linked_state %}selected{% endif %}>All</option>
@@ -117,6 +125,7 @@
       {% for v in categories_selected %}
         <input type="hidden" name="category" value="{{ v }}">
       {% endfor %}
+      <input type="hidden" name="paid" value="{{ paid_state }}">
       <input type="hidden" name="linked" value="{{ linked_state }}">
       <input type="hidden" name="include_lost_forever" value="{{ include_lost_forever }}">
       <input type="hidden" name="date_from" value="{{ date_from }}">
@@ -202,6 +211,7 @@
   {% for v in categories_selected %}
     <input type="hidden" name="category" value="{{ v }}">
   {% endfor %}
+  <input type="hidden" name="paid" value="{{ paid_state }}">
   <input type="hidden" name="linked" value="{{ linked_state }}">
   <input type="hidden" name="date_from" value="{{ date_from }}">
   <input type="hidden" name="date_to" value="{{ date_to }}">

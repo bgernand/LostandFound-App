@@ -226,13 +226,15 @@ STATUS_COLORS = {
 CONTACT_WAYS = ["Yellow sheet", "E-Mail", "Other (Put in note)", "Online Form"]
 SAVED_SEARCH_SCOPES = {"index", "matches"}
 SAVED_SEARCH_ALLOWED_KEYS = {
-    "index": {"q", "kind", "status", "category", "linked", "date_from", "date_to", "include_lost_forever"},
+    "index": {"q", "kind", "status", "category", "paid", "linked", "date_from", "date_to", "include_lost_forever"},
     "matches": {
         "q",
         "kind",
         "source_status",
         "candidate_status",
         "category",
+        "source_paid",
+        "candidate_paid",
         "include_linked",
         "date_from",
         "date_to",

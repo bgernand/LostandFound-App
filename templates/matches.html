@@ -43,6 +43,22 @@
           {% endfor %}
         </select>
       </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Source paid</label>
+        <select class="form-select" name="source_paid">
+          <option value="" {% if not source_paid_state %}selected{% endif %}>All</option>
+          <option value="yes" {% if source_paid_state == 'yes' %}selected{% endif %}>Paid</option>
+          <option value="no" {% if source_paid_state == 'no' %}selected{% endif %}>Not paid</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Candidate paid</label>
+        <select class="form-select" name="candidate_paid">
+          <option value="" {% if not candidate_paid_state %}selected{% endif %}>All</option>
+          <option value="yes" {% if candidate_paid_state == 'yes' %}selected{% endif %}>Paid</option>
+          <option value="no" {% if candidate_paid_state == 'no' %}selected{% endif %}>Not paid</option>
+        </select>
+      </div>
 
       <div class="col-12 col-md-4 col-lg-2">
         <label class="form-label small text-muted mb-1">Min score</label>

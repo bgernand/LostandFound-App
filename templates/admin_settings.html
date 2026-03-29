@@ -3,275 +3,341 @@
 
 {% if can_admin_settings %}
 <div class="row g-3">
-  <div class="col-12 col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h5 class="card-title">Description Quality</h5>
-        <form method="post" action="{{ url_for('admin_set_description_quality') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="row g-2 mb-2">
-            <div class="col-12 col-md-4">
-              <label class="form-label small">Min characters</label>
-              <input class="form-control form-control-sm" type="number" min="10" max="300"
-                     name="description_min_chars"
-                     value="{{ description_quality_settings['min_chars'] }}">
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label small">Min words</label>
-              <input class="form-control form-control-sm" type="number" min="3" max="30"
-                     name="description_min_words"
-                     value="{{ description_quality_settings['min_words'] }}">
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label small">Score threshold</label>
-              <input class="form-control form-control-sm" type="number" min="0" max="100"
-                     name="description_score_threshold"
-                     value="{{ description_quality_settings['score_threshold'] }}">
-            </div>
-          </div>
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="descriptionQualityStrict" name="description_quality_strict" value="1"
-                   {% if description_quality_settings['strict_mode'] %}checked{% endif %}>
-            <label class="form-check-label small" for="descriptionQualityStrict">
-              Strict mode: block save when quality score is below threshold
-            </label>
-          </div>
-          <div class="mb-2">
-            <label class="form-label small">Additional blacklist terms (one per line)</label>
-            <textarea class="form-control form-control-sm" rows="6" name="description_blacklist_extra"
-                      placeholder="unknown item&#10;random stuff&#10;no details">{{ description_quality_settings['blacklist_extra_raw'] }}</textarea>
-          </div>
-          <div class="d-grid d-md-flex justify-content-md-end">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save description settings</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-lg-6">
-    <div class="card h-100">
-      <div class="card-body">
-        <h5 class="card-title">SMTP Mail</h5>
-        <form method="post" action="{{ url_for('admin_set_smtp_settings') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="smtpEnabled" name="smtp_enabled" value="1"
-                   {% if smtp_settings['enabled'] %}checked{% endif %}>
-            <label class="form-check-label small" for="smtpEnabled">Enable SMTP mail sending</label>
-          </div>
-
-          <div class="row g-2">
-            <div class="col-12">
-              <label class="form-label small">SMTP host</label>
-              <input class="form-control form-control-sm" name="smtp_host" value="{{ smtp_settings['host'] }}">
-            </div>
-            <div class="col-6">
-              <label class="form-label small">SMTP port</label>
-              <input class="form-control form-control-sm" type="number" min="1" max="65535"
-                     name="smtp_port" value="{{ smtp_settings['port'] }}">
-            </div>
-            <div class="col-6">
-              <label class="form-label small">Timeout (s)</label>
-              <input class="form-control form-control-sm" type="number" min="3" max="120"
-                     name="smtp_timeout" value="{{ smtp_settings['timeout'] }}">
-            </div>
-            <div class="col-12">
-              <label class="form-label small">SMTP username</label>
-              <input class="form-control form-control-sm" name="smtp_username" value="{{ smtp_settings['username'] }}">
-            </div>
-            <div class="col-12">
-              <label class="form-label small">SMTP password</label>
-              <input class="form-control form-control-sm" type="password" name="smtp_password" placeholder="Leave empty to keep current password">
-              <div class="form-text small">
-                {% if smtp_settings['password_encrypted'] %}
-                  Encrypted SMTP password is currently stored.
-                {% elif not smtp_settings['settings_encryption_ready'] %}
-                  No encrypted SMTP password can be stored until `SETTINGS_ENCRYPTION_KEY` is configured.
-                {% else %}
-                  No SMTP password is currently stored.
-                {% endif %}
-              </div>
-            </div>
-            <div class="col-12">
-              <label class="form-label small">From address</label>
-              <input class="form-control form-control-sm" name="smtp_from" value="{{ smtp_settings['from'] }}">
-            </div>
-          </div>
-
-          <div class="form-check mt-3">
-            <input class="form-check-input" type="checkbox" id="smtpUseTls" name="smtp_use_tls" value="1"
-                   {% if smtp_settings['use_tls'] %}checked{% endif %}>
-            <label class="form-check-label small" for="smtpUseTls">Use TLS (STARTTLS)</label>
-          </div>
-          <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="smtpUseSsl" name="smtp_use_ssl" value="1"
-                   {% if smtp_settings['use_ssl'] %}checked{% endif %}>
-            <label class="form-check-label small" for="smtpUseSsl">Use SSL</label>
-          </div>
-
-          <div class="d-grid d-md-flex justify-content-md-end">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save SMTP settings</button>
-          </div>
-        </form>
-
-        <hr>
-
-        <form method="post" action="{{ url_for('admin_send_smtp_test_mail') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="row g-2">
-            <div class="col-12">
-              <label class="form-label small">Test recipient</label>
-              <input class="form-control form-control-sm" type="email" name="smtp_test_recipient"
-                     placeholder="test@example.com" required>
-            </div>
-            <div class="col-12">
-              <label class="form-label small">Test subject</label>
-              <input class="form-control form-control-sm" name="smtp_test_subject"
-                     value="Lost & Found SMTP test">
-            </div>
-            <div class="col-12">
-              <label class="form-label small">Test message</label>
-              <textarea class="form-control form-control-sm" rows="4" name="smtp_test_body">This is a test e-mail from Lost & Found.
-
-If you received this message, SMTP settings are working.</textarea>
-            </div>
-          </div>
-
-          <div class="d-grid d-md-flex justify-content-md-end mt-3">
-            <button class="btn btn-sm btn-outline-secondary" type="submit">Send test e-mail</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12">
+  <div class="col-12 col-xl-3">
     <div class="card">
       <div class="card-body">
-        <h5 class="card-title">Mail Ticket Workflow</h5>
-        <form method="post" action="{{ url_for('admin_set_mail_ticket_settings') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="mailTicketingEnabled" name="mail_ticketing_enabled" value="1"
-                   {% if mail_ticket_settings['enabled'] %}checked{% endif %}>
-            <label class="form-check-label small" for="mailTicketingEnabled">Enable IT-style mail ticket workflow</label>
-          </div>
-          <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="imapEnabled" name="imap_enabled" value="1"
-                   {% if mail_ticket_settings['imap_enabled'] %}checked{% endif %}>
-            <label class="form-check-label small" for="imapEnabled">Enable inbound IMAP polling</label>
-          </div>
-
-          <div class="row g-2">
-            <div class="col-12 col-lg-6">
-              <label class="form-label small">IMAP host</label>
-              <input class="form-control form-control-sm" name="imap_host" value="{{ mail_ticket_settings['imap_host'] }}">
-            </div>
-            <div class="col-6 col-lg-3">
-              <label class="form-label small">IMAP port</label>
-              <input class="form-control form-control-sm" type="number" min="1" max="65535" name="imap_port" value="{{ mail_ticket_settings['imap_port'] }}">
-            </div>
-            <div class="col-6 col-lg-3">
-              <label class="form-label small">Timeout (s)</label>
-              <input class="form-control form-control-sm" type="number" min="3" max="120" name="imap_timeout" value="{{ mail_ticket_settings['imap_timeout'] }}">
-            </div>
-            <div class="col-12 col-lg-6">
-              <label class="form-label small">IMAP username</label>
-              <input class="form-control form-control-sm" name="imap_username" value="{{ mail_ticket_settings['imap_username'] }}">
-            </div>
-            <div class="col-12 col-lg-6">
-              <label class="form-label small">IMAP password</label>
-              <input class="form-control form-control-sm" type="password" name="imap_password" placeholder="Leave empty to keep current password">
-              <div class="form-text small">
-                {% if mail_ticket_settings['imap_password_encrypted'] %}
-                  Encrypted IMAP password is currently stored.
-                {% elif not mail_ticket_settings['settings_encryption_ready'] %}
-                  No encrypted IMAP password can be stored until `SETTINGS_ENCRYPTION_KEY` is configured.
-                {% else %}
-                  No IMAP password is currently stored.
-                {% endif %}
-              </div>
-            </div>
-            <div class="col-12 col-lg-4">
-              <label class="form-label small">Inbox folder</label>
-              <input class="form-control form-control-sm" name="imap_inbox_folder" value="{{ mail_ticket_settings['imap_inbox_folder'] }}">
-            </div>
-            <div class="col-12 col-lg-4">
-              <label class="form-label small">Sent folder</label>
-              <input class="form-control form-control-sm" name="imap_sent_folder" value="{{ mail_ticket_settings['imap_sent_folder'] }}">
-            </div>
-            <div class="col-12 col-lg-4">
-              <label class="form-label small">Processed folder</label>
-              <input class="form-control form-control-sm" name="imap_processed_folder" value="{{ mail_ticket_settings['imap_processed_folder'] }}">
-            </div>
-            <div class="col-12 col-lg-4">
-              <label class="form-label small">Unassigned folder</label>
-              <input class="form-control form-control-sm" name="imap_unassigned_folder" value="{{ mail_ticket_settings['imap_unassigned_folder'] }}">
-            </div>
-            <div class="col-12 col-lg-4">
-              <label class="form-label small">Poll interval (s)</label>
-              <input class="form-control form-control-sm" type="number" min="60" max="86400" name="mail_ticket_poll_interval_seconds" value="{{ mail_ticket_settings['poll_interval_seconds'] }}">
-            </div>
-          </div>
-
-          <div class="form-check mt-3">
-            <input class="form-check-input" type="checkbox" id="imapUseSsl" name="imap_use_ssl" value="1"
-                   {% if mail_ticket_settings['imap_use_ssl'] %}checked{% endif %}>
-            <label class="form-check-label small" for="imapUseSsl">Use IMAP SSL</label>
-          </div>
-
-        <div class="small text-muted mt-3">
-            Ticket references are added to outgoing subjects as <code>[LFT-ITEMID]</code>. Replies are matched automatically by this reference.
-          </div>
-
-          <div class="small text-muted mt-2">
-            Last poll:
-            {% if mail_ticket_settings['last_poll_at'] %}
-              {{ mail_ticket_settings['last_poll_at'] }}
-              {% if mail_ticket_settings['last_poll_ok'] == '1' %}
-                · <span class="text-success">OK</span>
-              {% elif mail_ticket_settings['last_poll_ok'] == '0' %}
-                · <span class="text-danger">Failed</span>
-              {% endif %}
-              {% if mail_ticket_settings['last_poll_message'] %}· {{ mail_ticket_settings['last_poll_message'] }}{% endif %}
-            {% else %}
-              Never
-            {% endif %}
-          </div>
-
-          <div class="d-grid d-md-flex justify-content-md-end mt-3">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save mail ticket settings</button>
-          </div>
-        </form>
-
-        <hr>
-
-        <div class="d-flex flex-wrap gap-2 justify-content-md-end">
-          <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin_mail_ticket_unassigned') }}">
-            Mailbox{% if unassigned_mail_count %} · Unassigned {{ unassigned_mail_count }}{% endif %}
-          </a>
-          <form method="post" action="{{ url_for('admin_test_mail_ticket_imap') }}">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-outline-secondary" type="submit">Test IMAP connection</button>
-          </form>
-          <form method="post" action="{{ url_for('admin_poll_mail_ticket_mailbox') }}">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Run mailbox poll now</button>
-          </form>
+        <h5 class="card-title mb-3">System Settings</h5>
+        <div class="nav nav-pills flex-column gap-2">
+          <a class="nav-link {% if active_settings_section == 'general' %}active{% endif %}"
+             href="{{ url_for('admin_settings', section='general') }}">General</a>
+          <a class="nav-link {% if active_settings_section == 'mail' %}active{% endif %}"
+             href="{{ url_for('admin_settings', section='mail') }}">Mail</a>
+          <a class="nav-link {% if active_settings_section == 'auto-mail' %}active{% endif %}"
+             href="{{ url_for('admin_settings', section='auto-mail') }}">AutoMail</a>
+          {% if can_manage_mail_templates %}
+            <a class="nav-link {% if active_settings_section == 'templates' %}active{% endif %}"
+               href="{{ url_for('admin_settings', section='templates') }}">Templates</a>
+          {% endif %}
+          <a class="nav-link {% if active_settings_section == 'legal-pages' %}active{% endif %}"
+             href="{{ url_for('admin_settings', section='legal-pages') }}">Legal Pages</a>
         </div>
       </div>
     </div>
   </div>
- </div>
-{% endif %}
 
-<div class="row g-3{% if can_admin_settings %} mt-1{% endif %}">
-  {% if can_manage_mail_templates %}
-    <div class="col-12">
+  <div class="col-12 col-xl-9">
+    {% if active_settings_section == 'general' %}
       <div class="card">
         <div class="card-body">
-          <h5 class="card-title">Item Mail Templates</h5>
+          <h5 class="card-title">General</h5>
+          <div class="text-muted small mb-3">Description Quality</div>
+          <form method="post" action="{{ url_for('admin_set_description_quality') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-2 mb-2">
+              <div class="col-12 col-md-4">
+                <label class="form-label small">Min characters</label>
+                <input class="form-control form-control-sm" type="number" min="10" max="300"
+                       name="description_min_chars"
+                       value="{{ description_quality_settings['min_chars'] }}">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small">Min words</label>
+                <input class="form-control form-control-sm" type="number" min="3" max="30"
+                       name="description_min_words"
+                       value="{{ description_quality_settings['min_words'] }}">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small">Score threshold</label>
+                <input class="form-control form-control-sm" type="number" min="0" max="100"
+                       name="description_score_threshold"
+                       value="{{ description_quality_settings['score_threshold'] }}">
+              </div>
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="descriptionQualityStrict" name="description_quality_strict" value="1"
+                     {% if description_quality_settings['strict_mode'] %}checked{% endif %}>
+              <label class="form-check-label small" for="descriptionQualityStrict">
+                Strict mode: block save when quality score is below threshold
+              </label>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">Additional blacklist terms (one per line)</label>
+              <textarea class="form-control form-control-sm" rows="6" name="description_blacklist_extra"
+                        placeholder="unknown item&#10;random stuff&#10;no details">{{ description_quality_settings['blacklist_extra_raw'] }}</textarea>
+            </div>
+            <div class="d-grid d-md-flex justify-content-md-end">
+              <button class="btn btn-sm btn-outline-primary" type="submit">Save description settings</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% elif active_settings_section == 'mail' %}
+      <div class="vstack gap-3">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Mail</h5>
+            <div class="text-muted small mb-3">SMTP Mail</div>
+            <form method="post" action="{{ url_for('admin_set_smtp_settings') }}">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="smtpEnabled" name="smtp_enabled" value="1"
+                       {% if smtp_settings['enabled'] %}checked{% endif %}>
+                <label class="form-check-label small" for="smtpEnabled">Enable SMTP mail sending</label>
+              </div>
+
+              <div class="row g-2">
+                <div class="col-12">
+                  <label class="form-label small">SMTP host</label>
+                  <input class="form-control form-control-sm" name="smtp_host" value="{{ smtp_settings['host'] }}">
+                </div>
+                <div class="col-6">
+                  <label class="form-label small">SMTP port</label>
+                  <input class="form-control form-control-sm" type="number" min="1" max="65535"
+                         name="smtp_port" value="{{ smtp_settings['port'] }}">
+                </div>
+                <div class="col-6">
+                  <label class="form-label small">Timeout (s)</label>
+                  <input class="form-control form-control-sm" type="number" min="3" max="120"
+                         name="smtp_timeout" value="{{ smtp_settings['timeout'] }}">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small">SMTP username</label>
+                  <input class="form-control form-control-sm" name="smtp_username" value="{{ smtp_settings['username'] }}">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small">SMTP password</label>
+                  <input class="form-control form-control-sm" type="password" name="smtp_password" placeholder="Leave empty to keep current password">
+                  <div class="form-text small">
+                    {% if smtp_settings['password_encrypted'] %}
+                      Encrypted SMTP password is currently stored.
+                    {% elif not smtp_settings['settings_encryption_ready'] %}
+                      No encrypted SMTP password can be stored until `SETTINGS_ENCRYPTION_KEY` is configured.
+                    {% else %}
+                      No SMTP password is currently stored.
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small">From address</label>
+                  <input class="form-control form-control-sm" name="smtp_from" value="{{ smtp_settings['from'] }}">
+                </div>
+              </div>
+
+              <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="smtpUseTls" name="smtp_use_tls" value="1"
+                       {% if smtp_settings['use_tls'] %}checked{% endif %}>
+                <label class="form-check-label small" for="smtpUseTls">Use TLS (STARTTLS)</label>
+              </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="smtpUseSsl" name="smtp_use_ssl" value="1"
+                       {% if smtp_settings['use_ssl'] %}checked{% endif %}>
+                <label class="form-check-label small" for="smtpUseSsl">Use SSL</label>
+              </div>
+
+              <div class="d-grid d-md-flex justify-content-md-end">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Save SMTP settings</button>
+              </div>
+            </form>
+
+            <hr>
+
+            <form method="post" action="{{ url_for('admin_send_smtp_test_mail') }}">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <div class="row g-2">
+                <div class="col-12">
+                  <label class="form-label small">Test recipient</label>
+                  <input class="form-control form-control-sm" type="email" name="smtp_test_recipient"
+                         placeholder="test@example.com" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small">Test subject</label>
+                  <input class="form-control form-control-sm" name="smtp_test_subject"
+                         value="Lost & Found SMTP test">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small">Test message</label>
+                  <textarea class="form-control form-control-sm" rows="4" name="smtp_test_body">This is a test e-mail from Lost & Found.
+
+If you received this message, SMTP settings are working.</textarea>
+                </div>
+              </div>
+
+              <div class="d-grid d-md-flex justify-content-md-end mt-3">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Send test e-mail</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Mail</h5>
+            <div class="text-muted small mb-3">Mail Ticket Workflow</div>
+            <form method="post" action="{{ url_for('admin_set_mail_ticket_settings') }}">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="mailTicketingEnabled" name="mail_ticketing_enabled" value="1"
+                       {% if mail_ticket_settings['enabled'] %}checked{% endif %}>
+                <label class="form-check-label small" for="mailTicketingEnabled">Enable IT-style mail ticket workflow</label>
+              </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="imapEnabled" name="imap_enabled" value="1"
+                       {% if mail_ticket_settings['imap_enabled'] %}checked{% endif %}>
+                <label class="form-check-label small" for="imapEnabled">Enable inbound IMAP polling</label>
+              </div>
+
+              <div class="row g-2">
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small">IMAP host</label>
+                  <input class="form-control form-control-sm" name="imap_host" value="{{ mail_ticket_settings['imap_host'] }}">
+                </div>
+                <div class="col-6 col-lg-3">
+                  <label class="form-label small">IMAP port</label>
+                  <input class="form-control form-control-sm" type="number" min="1" max="65535" name="imap_port" value="{{ mail_ticket_settings['imap_port'] }}">
+                </div>
+                <div class="col-6 col-lg-3">
+                  <label class="form-label small">Timeout (s)</label>
+                  <input class="form-control form-control-sm" type="number" min="3" max="120" name="imap_timeout" value="{{ mail_ticket_settings['imap_timeout'] }}">
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small">IMAP username</label>
+                  <input class="form-control form-control-sm" name="imap_username" value="{{ mail_ticket_settings['imap_username'] }}">
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small">IMAP password</label>
+                  <input class="form-control form-control-sm" type="password" name="imap_password" placeholder="Leave empty to keep current password">
+                  <div class="form-text small">
+                    {% if mail_ticket_settings['imap_password_encrypted'] %}
+                      Encrypted IMAP password is currently stored.
+                    {% elif not mail_ticket_settings['settings_encryption_ready'] %}
+                      No encrypted IMAP password can be stored until `SETTINGS_ENCRYPTION_KEY` is configured.
+                    {% else %}
+                      No IMAP password is currently stored.
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label small">Inbox folder</label>
+                  <input class="form-control form-control-sm" name="imap_inbox_folder" value="{{ mail_ticket_settings['imap_inbox_folder'] }}">
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label small">Sent folder</label>
+                  <input class="form-control form-control-sm" name="imap_sent_folder" value="{{ mail_ticket_settings['imap_sent_folder'] }}">
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label small">Processed folder</label>
+                  <input class="form-control form-control-sm" name="imap_processed_folder" value="{{ mail_ticket_settings['imap_processed_folder'] }}">
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label small">Unassigned folder</label>
+                  <input class="form-control form-control-sm" name="imap_unassigned_folder" value="{{ mail_ticket_settings['imap_unassigned_folder'] }}">
+                </div>
+                <div class="col-12 col-lg-4">
+                  <label class="form-label small">Poll interval (s)</label>
+                  <input class="form-control form-control-sm" type="number" min="60" max="86400" name="mail_ticket_poll_interval_seconds" value="{{ mail_ticket_settings['poll_interval_seconds'] }}">
+                </div>
+              </div>
+
+              <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="imapUseSsl" name="imap_use_ssl" value="1"
+                       {% if mail_ticket_settings['imap_use_ssl'] %}checked{% endif %}>
+                <label class="form-check-label small" for="imapUseSsl">Use IMAP SSL</label>
+              </div>
+
+              <div class="small text-muted mt-3">
+                Ticket references are added to outgoing subjects as <code>[LFT-ITEMID]</code>. Replies are matched automatically by this reference.
+              </div>
+
+              <div class="small text-muted mt-2">
+                Last poll:
+                {% if mail_ticket_settings['last_poll_at'] %}
+                  {{ mail_ticket_settings['last_poll_at'] }}
+                  {% if mail_ticket_settings['last_poll_ok'] == '1' %}
+                    · <span class="text-success">OK</span>
+                  {% elif mail_ticket_settings['last_poll_ok'] == '0' %}
+                    · <span class="text-danger">Failed</span>
+                  {% endif %}
+                  {% if mail_ticket_settings['last_poll_message'] %}· {{ mail_ticket_settings['last_poll_message'] }}{% endif %}
+                {% else %}
+                  Never
+                {% endif %}
+              </div>
+
+              <div class="d-grid d-md-flex justify-content-md-end mt-3">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Save mail ticket settings</button>
+              </div>
+            </form>
+
+            <hr>
+
+            <div class="d-flex flex-wrap gap-2 justify-content-md-end">
+              <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin_mail_ticket_unassigned') }}">
+                Mailbox{% if unassigned_mail_count %} · Unassigned {{ unassigned_mail_count }}{% endif %}
+              </a>
+              <form method="post" action="{{ url_for('admin_test_mail_ticket_imap') }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Test IMAP connection</button>
+              </form>
+              <form method="post" action="{{ url_for('admin_poll_mail_ticket_mailbox') }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Run mailbox poll now</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% elif active_settings_section == 'auto-mail' %}
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">AutoMail</h5>
+          <div class="text-muted small mb-3">Public Lost Confirmation Mail</div>
+          <form method="post" action="{{ url_for('admin_set_smtp_public_lost_confirmation') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="smtpPublicLostConfirmEnabled" name="smtp_public_lost_confirm_enabled" value="1"
+                     {% if public_lost_confirm_settings['enabled'] %}checked{% endif %}>
+              <label class="form-check-label small" for="smtpPublicLostConfirmEnabled">
+                Send confirmation mail after public lost submission
+              </label>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small">Subject template</label>
+              <input class="form-control form-control-sm" name="smtp_public_lost_confirm_subject"
+                     value="{{ public_lost_confirm_settings['subject'] }}">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">Body template</label>
+              <textarea class="form-control form-control-sm" rows="10" name="smtp_public_lost_confirm_body">{{ public_lost_confirm_settings['body'] }}</textarea>
+            </div>
+
+            <div class="small text-muted mb-2">
+              Allowed variables:
+              {% for v in public_lost_confirm_allowed_vars %}
+                <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
+
+            <div class="d-grid d-md-flex justify-content-md-end gap-2">
+              <button class="btn btn-sm btn-outline-secondary" type="submit" name="form_action" value="preview">Preview</button>
+              <button class="btn btn-sm btn-outline-primary" type="submit" name="form_action" value="save">Save confirmation mail settings</button>
+            </div>
+          </form>
+
+          {% if public_lost_confirm_preview_subject or public_lost_confirm_preview_body %}
+            <hr>
+            <div class="fw-semibold mb-1">Preview</div>
+            <div class="small mb-1"><strong>Subject:</strong> {{ public_lost_confirm_preview_subject }}</div>
+            <div class="small"><strong>Body:</strong></div>
+            <pre class="small bg-light border rounded p-2 mb-0">{{ public_lost_confirm_preview_body }}</pre>
+          {% endif %}
+        </div>
+      </div>
+    {% elif active_settings_section == 'templates' and can_manage_mail_templates %}
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">Templates</h5>
+          <div class="text-muted small mb-3">Item Mail Templates</div>
           <p class="small text-muted mb-3">These templates are available in the item mail popup. Variables are rendered with the current item data before sending.</p>
 
           <div class="small text-muted mb-3">
@@ -348,84 +414,32 @@ If you received this message, SMTP settings are working.</textarea>
           {% endif %}
         </div>
       </div>
-    </div>
-  {% endif %}
-
-  {% if can_admin_settings %}
-    <div class="col-12">
-      <div class="card">
-        <div class="card-body">
-          <h5 class="card-title">Public Lost Confirmation Mail</h5>
-          <form method="post" action="{{ url_for('admin_set_smtp_public_lost_confirmation') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="smtpPublicLostConfirmEnabled" name="smtp_public_lost_confirm_enabled" value="1"
-                   {% if public_lost_confirm_settings['enabled'] %}checked{% endif %}>
-            <label class="form-check-label small" for="smtpPublicLostConfirmEnabled">
-              Send confirmation mail after public lost submission
-            </label>
-          </div>
-
-          <div class="mb-2">
-            <label class="form-label small">Subject template</label>
-            <input class="form-control form-control-sm" name="smtp_public_lost_confirm_subject"
-                   value="{{ public_lost_confirm_settings['subject'] }}">
-          </div>
-          <div class="mb-2">
-            <label class="form-label small">Body template</label>
-            <textarea class="form-control form-control-sm" rows="10" name="smtp_public_lost_confirm_body">{{ public_lost_confirm_settings['body'] }}</textarea>
-          </div>
-
-          <div class="small text-muted mb-2">
-            Allowed variables:
-            {% for v in public_lost_confirm_allowed_vars %}
-              <code>{{ "{{ " ~ v ~ " }}" }}</code>{% if not loop.last %}, {% endif %}
-            {% endfor %}
-          </div>
-
-          <div class="d-grid d-md-flex justify-content-md-end gap-2">
-            <button class="btn btn-sm btn-outline-secondary" type="submit" name="form_action" value="preview">Preview</button>
-            <button class="btn btn-sm btn-outline-primary" type="submit" name="form_action" value="save">Save confirmation mail settings</button>
-          </div>
-        </form>
-
-        {% if public_lost_confirm_preview_subject or public_lost_confirm_preview_body %}
-          <hr>
-          <div class="fw-semibold mb-1">Preview</div>
-          <div class="small mb-1"><strong>Subject:</strong> {{ public_lost_confirm_preview_subject }}</div>
-          <div class="small"><strong>Body:</strong></div>
-          <pre class="small bg-light border rounded p-2 mb-0">{{ public_lost_confirm_preview_body }}</pre>
-        {% endif %}
-        </div>
-      </div>
-    </div>
-  {% endif %}
-
-  {% if can_admin_settings %}
-    <div class="col-12">
+    {% elif active_settings_section == 'legal-pages' %}
       <div class="card">
         <div class="card-body">
           <h5 class="card-title">Legal Pages</h5>
+          <div class="text-muted small mb-3">Legal Pages</div>
           <form method="post" action="{{ url_for('admin_set_legal_privacy_settings') }}">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <div class="row g-3">
-            <div class="col-12 col-lg-6">
-              <label class="form-label small">Legal Notice (footer link)</label>
-              <textarea class="form-control form-control-sm" rows="14" name="legal_notice_text">{{ legal_notice_text }}</textarea>
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-3">
+              <div class="col-12 col-lg-6">
+                <label class="form-label small">Legal Notice (footer link)</label>
+                <textarea class="form-control form-control-sm" rows="14" name="legal_notice_text">{{ legal_notice_text }}</textarea>
+              </div>
+              <div class="col-12 col-lg-6">
+                <label class="form-label small">Privacy Policy (footer link)</label>
+                <textarea class="form-control form-control-sm" rows="14" name="privacy_policy_text">{{ privacy_policy_text }}</textarea>
+              </div>
             </div>
-            <div class="col-12 col-lg-6">
-              <label class="form-label small">Privacy Policy (footer link)</label>
-              <textarea class="form-control form-control-sm" rows="14" name="privacy_policy_text">{{ privacy_policy_text }}</textarea>
+            <div class="d-grid d-md-flex justify-content-md-end mt-3">
+              <button class="btn btn-sm btn-outline-primary" type="submit">Save legal pages</button>
             </div>
-          </div>
-          <div class="d-grid d-md-flex justify-content-md-end mt-3">
-            <button class="btn btn-sm btn-outline-primary" type="submit">Save legal pages</button>
-          </div>
-        </form>
+          </form>
         </div>
       </div>
-    </div>
-  {% endif %}
+    {% endif %}
+  </div>
 </div>
+{% endif %}
 
 {% endblock %}

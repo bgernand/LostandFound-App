@@ -26,10 +26,13 @@ def build_filters(args, statuses: list[str], active_categories: list[str]):
     kinds = get_multi_values(args, "kind", {"lost", "found"})
     statuses_selected = get_multi_values(args, "status", set(statuses))
     categories_selected = get_multi_values(args, "category", set(active_categories))
+    paid_state = (args.get("paid") or "").strip().lower()
     linked_state = (args.get("linked") or "").strip()
     include_lost_forever = 1 if (args.get("include_lost_forever") == "1") else 0
     date_from = (args.get("date_from") or "").strip()
     date_to = (args.get("date_to") or "").strip()
+    if paid_state not in {"yes", "no"}:
+        paid_state = ""
     if linked_state not in {"linked", "unlinked"}:
         linked_state = ""
     if date_from and not parse_iso_date(date_from):
@@ -71,6 +74,11 @@ def build_filters(args, statuses: list[str], active_categories: list[str]):
         sql += " AND category IN (" + ",".join(["?"] * len(categories_selected)) + ")"
         params += categories_selected
 
+    if paid_state == "yes":
+        sql += " AND coalesce(postage_paid, 0) = 1"
+    elif paid_state == "no":
+        sql += " AND coalesce(postage_paid, 0) = 0"
+
     if date_from:
         sql += " AND event_date IS NOT NULL AND event_date >= ?"
         params.append(date_from)
@@ -87,7 +95,7 @@ def build_filters(args, statuses: list[str], active_categories: list[str]):
         sql += " AND status <> 'Lost forever'"
 
     sql += " ORDER BY created_at DESC"
-    return sql, params, q, kinds, statuses_selected, categories_selected, linked_state, include_lost_forever, date_from, date_to
+    return sql, params, q, kinds, statuses_selected, categories_selected, paid_state, linked_state, include_lost_forever, date_from, date_to
 
 
 def saved_search_target(scope: str):
@@ -130,6 +138,8 @@ def clean_saved_query_string(scope: str, raw_query: str, valid_scopes: set[str],
                 iv = min(200, max(5, iv))
             val = str(iv)
         if key == "linked" and val not in {"linked", "unlinked"}:
+            continue
+        if key in {"paid", "source_paid", "candidate_paid"} and val not in {"yes", "no"}:
             continue
         if len(val) > 300:
             val = val[:300]
