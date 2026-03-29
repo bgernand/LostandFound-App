@@ -497,7 +497,7 @@ def register_admin_routes(app, deps: dict):
             abort(404)
         token = issue_roundcube_sso_token(current_user())
         target = roundcube_external_url.rstrip("/") or "/webmail"
-        return redirect(f"{target}/?_task=mail&_action=plugin.lostandfound_bridge.login&_laf_token={token}")
+        return redirect(f"{target}/?_task=login&_action=plugin.lostandfound_bridge.login&_laf_token={token}")
 
     @app.post("/api/roundcube/sso-config")
     def roundcube_sso_config():
