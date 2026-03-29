@@ -4,6 +4,7 @@ $config['language'] = 'en_US';
 $config['language_selector'] = false;
 $config['enable_installer'] = false;
 $config['session_lifetime'] = 28800;
+$config['use_subscriptions'] = false;
 $config['request_path'] = rtrim(getenv('ROUNDCUBE_REQUEST_PATH') ?: '/webmail/', '/') . '/';
 $config['session_path'] = rtrim(getenv('ROUNDCUBE_REQUEST_PATH') ?: '/webmail/', '/') . '/';
 $config['des_key'] = getenv('ROUNDCUBE_DES_KEY') ?: hash('sha256', getenv('ROUNDCUBE_SHARED_SECRET') ?: 'lostfound-roundcube');
