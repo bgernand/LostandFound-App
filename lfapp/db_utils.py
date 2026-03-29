@@ -1104,7 +1104,7 @@ def init_db(db_path: str):
         (now_utc(),),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_subject', 'Lost Request received (Item ID {{ item_id }})', ?)",
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('smtp_public_lost_confirm_subject', 'Lost item report received (Item ID {{ item_id }})', ?)",
         (now_utc(),),
     )
     conn.execute(

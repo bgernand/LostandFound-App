@@ -449,6 +449,7 @@ docker compose exec app python -m lfapp.cli reset-initial-admin-password --passw
 ## Documentation
 
 - deployment: `DeploymentGuide.md`
+- terminology and wording: `docs/STYLEGUIDE.md`
 
 ## Third-Party Software
 

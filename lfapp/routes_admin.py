@@ -638,7 +638,7 @@ def register_admin_routes(app, deps: dict):
                 "move_to_processed": move_to_processed,
             },
         }
-        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        flash(f"A draft for a new {'Lost Request' if kind == 'lost' else 'Found Item'} was prepared.", "info")
         return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
 
     @app.get("/roundcube/bridge/assign")
@@ -1102,7 +1102,7 @@ def register_admin_routes(app, deps: dict):
                 "received_at": row["received_at"] or row["created_at"],
             },
         }
-        flash(f"Mail draft prepared for new {'Lost Request' if kind == 'lost' else 'Found Item'}.", "info")
+        flash(f"A draft for a new {'Lost Request' if kind == 'lost' else 'Found Item'} was prepared.", "info")
         return redirect(url_for("new_lost_item" if kind == "lost" else "new_found_item"))
 
     @app.post("/admin/settings/mail-templates")
@@ -1594,7 +1594,7 @@ def register_admin_routes(app, deps: dict):
                 "imap_password_enc": "***set***" if (imap_password or old_state.get("imap_password_enc")) else "",
             },
         )
-        flash("Mail ticket workflow settings updated.", "success")
+        flash("Ticket mail workflow settings updated.", "success")
         return _redirect_admin_settings("mail")
 
     @app.post("/admin/settings/smtp-test")
@@ -1694,7 +1694,7 @@ def register_admin_routes(app, deps: dict):
             )
 
         if enabled and (not subject or not body):
-            flash("Subject and body are required when confirmation mail is enabled.", "danger")
+            flash("Subject and body are required when the public lost submission confirmation is enabled.", "danger")
             return _redirect_admin_settings("auto-mail")
 
         sample_ctx = {
@@ -1753,7 +1753,7 @@ def register_admin_routes(app, deps: dict):
             },
             meta={"preview_subject": preview_subject},
         )
-        flash("Public lost confirmation mail settings updated.", "success")
+        flash("Public lost submission confirmation updated.", "success")
         return _redirect_admin_settings("auto-mail")
 
     @app.post("/admin/settings/auto-mail-rules")

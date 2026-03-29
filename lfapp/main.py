@@ -151,7 +151,7 @@ Please contact the responsible organization listed in the legal notice.
 
 This is a template privacy policy and should be adapted to local legal requirements.
 """
-DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = "Lost Request received (Item ID {{ item_id }})"
+DEFAULT_PUBLIC_LOST_CONFIRM_SUBJECT = "Lost item report received (Item ID {{ item_id }})"
 DEFAULT_PUBLIC_LOST_CONFIRM_BODY = """Hello {{ first_name }} {{ last_name }},
 
 we received your lost request.
@@ -1509,7 +1509,7 @@ def create_app(config: dict | None = None):
                 "unassigned": 0,
                 "duplicates": 0,
                 "errors": 0,
-                "message": "Mail ticket workflow or inbound IMAP polling is not configured.",
+                "message": "Ticket mail workflow or inbound IMAP polling is not configured.",
                 "locked": False,
             }
 
@@ -1794,7 +1794,7 @@ def create_app(config: dict | None = None):
     def test_imap_connection_once():
         cfg = get_mail_ticket_settings()
         if not cfg["enabled"]:
-            return False, "Mail ticket workflow is disabled."
+            return False, "Ticket mail workflow is disabled."
         if not cfg["imap_enabled"]:
             return False, "Inbound IMAP polling is disabled."
         if not cfg["imap_host"] or not cfg["imap_username"] or not cfg["imap_password"]:
