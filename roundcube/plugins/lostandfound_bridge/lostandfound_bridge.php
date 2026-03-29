@@ -6,10 +6,22 @@ class lostandfound_bridge extends rcube_plugin
     {
         $rcmail = rcmail::get_instance();
         $this->register_action('plugin.lostandfound_bridge.login', [$this, 'login_action']);
+        $this->add_hook('startup', [$this, 'startup']);
         $this->add_hook('render_page', [$this, 'render_page']);
         if ($rcmail->task === 'mail') {
             $this->include_script('lostandfound_bridge.js');
         }
+    }
+
+    public function startup(array $args): array
+    {
+        $task = (string) ($args['task'] ?? '');
+        $action = (string) ($args['action'] ?? '');
+        if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
+            $this->login_action();
+        }
+
+        return $args;
     }
 
     public function login_action(): void
