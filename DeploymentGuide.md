@@ -244,19 +244,7 @@ Pragmatic recommendation:
 - snapshot the whole project directory excluding transient build cache
 - or archive the persistent directories daily with host-level cron / systemd timer
 
-## 11. Visual Documentation Assets
-
-The repository now reserves `docs/media/` for UI screenshots and short GIFs.
-
-Suggested assets:
-
-- `mail-thread.png`
-- `auto-mail-settings.png`
-- `webmail-unassigned.gif`
-
-Expected capture scopes are documented in `docs/media/README.md`.
-
-## 12. Security notes
+## 11. Security notes
 
 - keep `.env` out of version control
 - rotate `SECRET_KEY`, `SETTINGS_ENCRYPTION_KEY`, and Roundcube shared secrets if exposed
@@ -265,7 +253,7 @@ Expected capture scopes are documented in `docs/media/README.md`.
 - use HTTPS only in production
 - verify `BASE_URL` is correct, because public links and webmail redirects depend on it
 
-## 13. Troubleshooting
+## 12. Troubleshooting
 
 ### Roundcube login page appears instead of SSO
 

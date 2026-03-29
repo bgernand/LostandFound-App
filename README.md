@@ -395,18 +395,6 @@ git pull origin main
 docker compose exec app python -m lfapp.cli reset-initial-admin-password
 ```
 
-## Visual Guide
-
-The repository is prepared for visual documentation assets under `docs/media/`.
-
-Planned assets:
-
-- `docs/media/mail-thread.png`
-- `docs/media/auto-mail-settings.png`
-- `docs/media/webmail-unassigned.gif`
-
-See `docs/media/README.md` for the expected file names and capture scope.
-
 ## Local Development
 
 ```bash
