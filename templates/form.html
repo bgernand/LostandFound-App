@@ -38,7 +38,7 @@
         {% if unassigned_mail_origin.get('can_move_to_processed') %}
           <div class="form-check mt-2">
             <input class="form-check-input" type="checkbox" name="move_mail_to_processed" id="moveMailToProcessed"
-                   value="1" {% if unassigned_mail_origin.get('move_to_processed') %}checked{% endif %}>
+                   value="1" {% if unassigned_mail_origin.get('move_to_processed', true) %}checked{% endif %}>
             <label class="form-check-label small" for="moveMailToProcessed">Move mail to Processed folder after saving</label>
           </div>
         {% endif %}
