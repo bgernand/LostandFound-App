@@ -1361,6 +1361,12 @@ Lost & Found Team""",
             (name, active, order, now_utc()),
         )
 
+    # Be defensive on legacy databases: these columns are used immediately below
+    # and must exist even if an older schema path skipped earlier migration steps.
+    ensure_column(conn, "items", "public_token", "TEXT")
+    ensure_column(conn, "items", "public_token_expires_at", "TEXT")
+    ensure_column(conn, "items", "public_id", "TEXT")
+
     rows = conn.execute("SELECT id, public_token, public_token_expires_at FROM items").fetchall()
     for r in rows:
         if not r["public_token"]:
