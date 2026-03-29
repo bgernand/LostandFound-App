@@ -189,13 +189,15 @@ nano .env
 chmod +x deploy.sh
 ./deploy.sh
 ```
-This starts `app`, `worker`, `nginx`, and `certbot`.
-4. Optional: request initial Let's Encrypt certificate:
+This starts `app`, `worker`, `nginx`, and `certbot`. If `ROUNDCUBE_ENABLED=true` is set in `.env`, it also starts `roundcube`.
+4. Optional: request the initial Let's Encrypt certificate:
 ```bash
 ./deploy.sh --init-letsencrypt --email you@example.com
 ```
+The script requests a certificate only if none exists yet for the configured `DOMAIN`. On later runs it skips certificate creation and just redeploys/updates the stack.
 
 ## Environment Variables
+- Secret values in `.env` should be wrapped in double quotes, for example `SECRET_KEY=\"...\"` and `INITIAL_ADMIN_PASSWORD=\"...\"`.
 - `SECRET_KEY` (required)
 - `INITIAL_ADMIN_USERNAME` (default: `admin`)
 - `INITIAL_ADMIN_PASSWORD` (required on first startup)

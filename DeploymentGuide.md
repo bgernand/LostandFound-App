@@ -58,10 +58,10 @@ Recommended security settings:
 - `AUDIT_RETENTION_DAYS=180` (daily cleanup by age; set `0` to disable)
 - `AUDIT_MAX_ROWS=200000` (daily cap by row count; set `0` to disable)
 - `AUDIT_REDACT_ENABLED=true`
-- `SETTINGS_ENCRYPTION_KEY=<long-random-secret>` (required for encrypted SMTP password storage)
+- `SETTINGS_ENCRYPTION_KEY=\"<long-random-secret>\"` (required for encrypted SMTP password storage)
 - `ROUNDCUBE_ENABLED=true` (to show the Webmail menu entry and enable SSO to Roundcube)
-- `ROUNDCUBE_SHARED_SECRET=<long-random-secret>`
-- `ROUNDCUBE_DES_KEY=<long-random-secret>` (optional but recommended)
+- `ROUNDCUBE_SHARED_SECRET=\"<long-random-secret>\"`
+- `ROUNDCUBE_DES_KEY=\"<long-random-secret>\"` (optional but recommended)
 - `ROUNDCUBE_EXTERNAL_URL=/webmail/`
 
 After first login as admin, configure SMTP, mail ticket workflow, item mail templates, description-quality settings, and Roundcube bridge access in:
@@ -76,14 +76,15 @@ chmod +x deploy.sh
 What this does:
 - creates required folders (`data`, `uploads`, `certbot/www`, `certbot/conf`)
 - validates `.env`
-- builds and starts `app`, `worker`, `nginx`, `roundcube`, and `certbot`
+- builds and starts `app`, `worker`, `nginx`, and `certbot`
+- also starts `roundcube` when `ROUNDCUBE_ENABLED=true` is set in `.env`
 
 ## 4. Initial Let's Encrypt Certificate (Optional in same script)
 ```bash
 ./deploy.sh --init-letsencrypt --email you@example.com
 ```
 
-This requests the initial certificate and reloads Nginx with symlinked cert files.
+This requests the initial certificate only if none exists yet for the configured domain. On later runs the script skips certificate issuance and only redeploys/updates the stack, then reloads Nginx.
 
 ## 5. Verify Deployment
 ```bash
