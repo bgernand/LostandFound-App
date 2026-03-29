@@ -25,6 +25,10 @@ class lostandfound_bridge extends rcube_plugin
         if ($task === 'login' && $action === 'plugin.lostandfound_bridge.login') {
             $this->login_action();
         }
+        if ($task === 'addressbook' || $task === 'contact') {
+            header('Location: ./?_task=mail');
+            exit;
+        }
         if ($autologin) {
             $args['action'] = 'login';
             if (session_status() === PHP_SESSION_ACTIVE) {

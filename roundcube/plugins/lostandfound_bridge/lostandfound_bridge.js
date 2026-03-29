@@ -3,6 +3,22 @@
     return document.querySelector(sel);
   }
 
+  function qsa(sel) {
+    return Array.prototype.slice.call(document.querySelectorAll(sel));
+  }
+
+  function hideContactsUi() {
+    qsa('a[href*="_task=addressbook"], a[href*="_task=contact"], .task-addressbook, .task-contacts').forEach(function (el) {
+      if (el && el.style) {
+        el.style.display = "none";
+      }
+      var item = el && el.closest ? el.closest("li,span,a") : null;
+      if (item && item.style) {
+        item.style.display = "none";
+      }
+    });
+  }
+
   function selectedUid() {
     if (window.rcmail && rcmail.env && rcmail.env.uid) {
       return rcmail.env.uid;
@@ -30,6 +46,8 @@
   }
 
   function addButtonRow() {
+    hideContactsUi();
+
     if (!window.rcmail || !rcmail.env || !rcmail.env.laf_bridge || !rcmail.env.laf_bridge.enabled) {
       return;
     }
@@ -74,5 +92,8 @@
     target.insertBefore(wrapper, target.firstChild);
   }
 
-  document.addEventListener("DOMContentLoaded", addButtonRow);
+  document.addEventListener("DOMContentLoaded", function () {
+    hideContactsUi();
+    addButtonRow();
+  });
 })();
